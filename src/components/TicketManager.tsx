@@ -231,14 +231,14 @@ export const TicketManager: React.FC<TicketManagerProps> = ({ onBack }) => {
 
   const handleDownloadSpacesCsv = () => {
     const link = document.createElement('a');
-    link.href = '/data/planon_spaces.csv';
+    link.href = `${import.meta.env.BASE_URL}data/planon_spaces.csv`;
     link.download = 'planon_spaces.csv';
     link.click();
   };
 
   const handleDownloadLocationsCsv = () => {
     const link = document.createElement('a');
-    link.href = '/data/planon_locations.csv';
+    link.href = `${import.meta.env.BASE_URL}data/planon_locations.csv`;
     link.download = 'planon_locations.csv';
     link.click();
   };

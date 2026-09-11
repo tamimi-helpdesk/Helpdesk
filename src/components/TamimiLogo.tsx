@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { TAMIMI_LOGO_DATA_URL } from '../data/tamimiLogoBase64';
 
-export const TAMIMI_LOCAL_IMAGE = '/images/tamimi-logo.png';
+export const TAMIMI_LOCAL_IMAGE = `${import.meta.env.BASE_URL}images/tamimi-logo.png`;
 export const TAMIMI_CDN_IMAGE = 'https://plain-eeur-prod-public.komododecks.com/202608/31/3ApmrfD8CZImEixpibgo/image.png';
 export { TAMIMI_LOGO_DATA_URL };
 
