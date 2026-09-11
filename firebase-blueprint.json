@@ -1,0 +1,173 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "entities": {
+    "Booking": {
+      "title": "Booking",
+      "description": "Camp facility reservation record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "facilityId": { "type": "string" },
+        "facilityName": { "type": "string" },
+        "stage": { "type": "string" },
+        "date": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "customerName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "status": { "type": "string" },
+        "recurringGroupId": { "type": "string" },
+        "notes": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "facilityId", "date", "startTime", "endTime"]
+    },
+    "IsolationRoom": {
+      "title": "IsolationRoom",
+      "description": "Medical isolation room status and patient logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "buildingNumber": { "type": "string" },
+        "roomNumber": { "type": "string" },
+        "status": { "type": "string" },
+        "occupants": { "type": "array" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "roomNumber", "status"]
+    },
+    "Handover": {
+      "title": "Handover",
+      "description": "Daily security and operations shift handover record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "shift": { "type": "string" },
+        "staffName": { "type": "string" },
+        "summary": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "date", "shift", "staffName"]
+    },
+    "Parcel": {
+      "title": "Parcel",
+      "description": "Camp resident inbound/outbound parcel package record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "recipientName": { "type": "string" },
+        "trackingNumber": { "type": "string" },
+        "status": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "recipientName", "status"]
+    },
+    "LostFound": {
+      "title": "LostFound",
+      "description": "Lost and found camp item record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "itemDescription": { "type": "string" },
+        "locationFound": { "type": "string" },
+        "status": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "itemDescription", "status"]
+    },
+    "DisasterBackup": {
+      "title": "DisasterBackup",
+      "description": "Complete disaster recovery system snapshot for instant migration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "backupTimestamp": { "type": "string" },
+        "version": { "type": "number" },
+        "totalBookings": { "type": "number" },
+        "snapshotData": { "type": "string" },
+        "originUrl": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "backupTimestamp", "snapshotData"]
+    },
+    "SystemMeta": {
+      "title": "SystemMeta",
+      "description": "Global sync metadata and cloud connection heartbeat",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "lastHeartbeat": { "type": "string" },
+        "activeVenuesCount": { "type": "number" },
+        "hubVersion": { "type": "number" }
+      },
+      "required": ["id", "lastHeartbeat"]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Planon and village operations support tickets",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ticketNumber": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "priority": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "status"]
+    },
+    "InvoiceRecord": {
+      "title": "InvoiceRecord",
+      "description": "Universal invoices and ZATCA compliance records",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "invoiceNumber"]
+    }
+  },
+  "firestore": {
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Camp reservations"
+    },
+    "/isolationRooms/{roomId}": {
+      "schema": "IsolationRoom",
+      "description": "Isolation rooms state"
+    },
+    "/handovers/{handoverId}": {
+      "schema": "Handover",
+      "description": "Shift handovers"
+    },
+    "/parcels/{parcelId}": {
+      "schema": "Parcel",
+      "description": "Parcel logs"
+    },
+    "/lostFound/{itemId}": {
+      "schema": "LostFound",
+      "description": "Lost and found records"
+    },
+    "/supportTickets/{ticketId}": {
+      "schema": "SupportTicket",
+      "description": "Support and Planon work order tickets"
+    },
+    "/invoices/{invoiceId}": {
+      "schema": "InvoiceRecord",
+      "description": "Invoice and billing records"
+    },
+    "/disasterBackups/{backupId}": {
+      "schema": "DisasterBackup",
+      "description": "Full system migration and disaster recovery snapshots"
+    },
+    "/systemMeta/{metaId}": {
+      "schema": "SystemMeta",
+      "description": "System heartbeat and synchronization metadata"
+    }
+  }
+}

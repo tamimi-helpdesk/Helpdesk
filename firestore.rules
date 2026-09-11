@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if true;
+      allow create, update: if isValidId(bookingId);
+      allow delete: if isValidId(bookingId);
+    }
+
+    match /isolationRooms/{roomId} {
+      allow read: if true;
+      allow create, update: if isValidId(roomId);
+      allow delete: if isValidId(roomId);
+    }
+
+    match /handovers/{handoverId} {
+      allow read: if true;
+      allow create, update: if isValidId(handoverId);
+      allow delete: if isValidId(handoverId);
+    }
+
+    match /parcels/{parcelId} {
+      allow read: if true;
+      allow create, update: if isValidId(parcelId);
+      allow delete: if isValidId(parcelId);
+    }
+
+    match /lostFound/{itemId} {
+      allow read: if true;
+      allow create, update: if isValidId(itemId);
+      allow delete: if isValidId(itemId);
+    }
+
+    match /supportTickets/{ticketId} {
+      allow read: if true;
+      allow create, update: if isValidId(ticketId);
+      allow delete: if isValidId(ticketId);
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if true;
+      allow create, update: if isValidId(invoiceId);
+      allow delete: if isValidId(invoiceId);
+    }
+
+    match /disasterBackups/{backupId} {
+      allow read: if true;
+      allow create, update: if isValidId(backupId);
+      allow delete: if isValidId(backupId);
+    }
+
+    match /systemMeta/{metaId} {
+      allow read: if true;
+      allow create, update: if isValidId(metaId);
+      allow delete: if isValidId(metaId);
+    }
+
+    // Health check test path
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+
+    // Comprehensive fallback for cloud synchronization and disaster recovery
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Executive Facility Booking Portal",
+  "description": "Enterprise-grade executive facility booking portal with real-time slot management, instant search caching, Google Sheets \u0026 Google Apps Script integration for 12 distinct facilities.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
