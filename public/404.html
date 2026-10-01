@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Redirecting to Executive Facility Booking Portal...</title>
+    <script>
+      // Single Page Application redirect script for GitHub Pages
+      // Keeps the path and query string when redirecting to base repository URL
+      var pathSegmentsToKeep = 1; // 1 segment for https://username.github.io/reponame/
+      var l = window.location;
+      var repoPath = '/' + l.pathname.split('/')[1] + '/';
+      
+      // If we are already at or near repoPath, redirect to repoPath with query params
+      l.replace(
+        l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+        repoPath +
+        '?p=' + encodeURIComponent(l.pathname.slice(repoPath.length) + l.search + l.hash)
+      );
+    </script>
+  </head>
+  <body>
+    <p style="font-family:sans-serif;text-align:center;margin-top:50px;color:#64748b;">
+      Redirecting to portal...
+    </p>
+  </body>
+</html>

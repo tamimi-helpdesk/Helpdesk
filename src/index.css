@@ -1,0 +1,817 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --primary-color: #0284c7;
+  --primary-hover: #0369a1;
+  --primary-rgb: 2, 132, 199;
+  --accent-color: #2563eb;
+  --accent-rgb: 37, 99, 235;
+  --theme-radius: 1rem;
+}
+
+@layer base {
+  html {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  body {
+    @apply bg-slate-100/90 text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+}
+
+/* Theme Fonts */
+[data-theme-font="plus-jakarta"] {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+[data-theme-font="inter"] {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+[data-theme-font="outfit"] {
+  font-family: 'Outfit', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+[data-theme-font="poppins"] {
+  font-family: 'Poppins', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+[data-theme-font="jetbrains"] {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+}
+
+/* Theme Border Radii */
+[data-theme-radius="sharp"] .rounded-2xl,
+[data-theme-radius="sharp"] .rounded-3xl,
+[data-theme-radius="sharp"] .rounded-xl {
+  border-radius: 0.35rem !important;
+}
+[data-theme-radius="normal"] .rounded-2xl,
+[data-theme-radius="normal"] .rounded-3xl {
+  border-radius: 0.75rem !important;
+}
+[data-theme-radius="rounded"] .rounded-2xl {
+  border-radius: 1rem !important;
+}
+[data-theme-radius="rounded"] .rounded-3xl {
+  border-radius: 1.5rem !important;
+}
+[data-theme-radius="soft"] .rounded-2xl {
+  border-radius: 1.35rem !important;
+}
+[data-theme-radius="soft"] .rounded-3xl {
+  border-radius: 1.85rem !important;
+}
+
+/* True AMOLED Deep Black */
+html.amoled body {
+  background-color: #000000 !important;
+  color: #f4f4f5 !important;
+}
+html.amoled .bg-slate-950,
+html.amoled .dark\:bg-slate-950,
+html.amoled .bg-slate-900,
+html.amoled .dark\:bg-slate-900 {
+  background-color: #050505 !important;
+}
+html.amoled .bg-slate-900\/95,
+html.amoled .dark\:bg-slate-900\/95,
+html.amoled .bg-slate-900\/90,
+html.amoled .dark\:bg-slate-900\/90 {
+  background-color: #080808 !important;
+}
+html.amoled .border-slate-800,
+html.amoled .dark\:border-slate-800,
+html.amoled .border-slate-800\/90 {
+  border-color: #1f1f23 !important;
+}
+html.amoled .bg-slate-800,
+html.amoled .dark\:bg-slate-800 {
+  background-color: #121215 !important;
+}
+
+/* Theme Primary & Accent Utility Classes */
+.theme-btn-primary {
+  background-color: var(--primary-color, #0284c7) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 14px -2px rgba(var(--primary-rgb, 2, 132, 199), 0.45);
+}
+.theme-btn-primary:hover {
+  background-color: var(--primary-hover, #0369a1) !important;
+  box-shadow: 0 6px 20px -2px rgba(var(--primary-rgb, 2, 132, 199), 0.6);
+}
+.theme-text-primary {
+  color: var(--primary-color, #0284c7) !important;
+}
+.theme-border-primary {
+  border-color: var(--primary-color, #0284c7) !important;
+}
+.theme-ring-primary {
+  --tw-ring-color: rgba(var(--primary-rgb, 2, 132, 199), 0.5) !important;
+}
+.theme-glow {
+  box-shadow: 0 0 25px -2px rgba(var(--primary-rgb, 2, 132, 199), 0.4), 0 0 10px 0px rgba(var(--accent-rgb, 37, 99, 235), 0.3) !important;
+}
+
+/* ==========================================================================
+   DEEP FULL-SYSTEM THEME TRANSFORMATION PRESETS (A TO Z SYSTEM OVERRIDES)
+   ========================================================================== */
+
+/* --- 1. EMERALD OASIS (Heritage Green & Amber Gold) --- */
+html[data-theme-preset="emerald-oasis"] {
+  --primary-color: #059669;
+  --primary-hover: #047857;
+  --primary-rgb: 5, 150, 105;
+  --accent-color: #d97706;
+  --accent-rgb: 217, 119, 6;
+}
+html[data-theme-preset="emerald-oasis"] body {
+  background-color: #f1f9f5 !important;
+}
+html[data-theme-preset="emerald-oasis"].dark body {
+  background-color: #031812 !important;
+}
+html[data-theme-preset="emerald-oasis"] .bg-sky-600,
+html[data-theme-preset="emerald-oasis"] .bg-sky-500,
+html[data-theme-preset="emerald-oasis"] .bg-blue-600,
+html[data-theme-preset="emerald-oasis"] .bg-blue-500 {
+  background-color: #059669 !important;
+}
+html[data-theme-preset="emerald-oasis"] .hover\:bg-sky-700:hover,
+html[data-theme-preset="emerald-oasis"] .hover\:bg-sky-600:hover,
+html[data-theme-preset="emerald-oasis"] .hover\:bg-blue-700:hover {
+  background-color: #047857 !important;
+}
+html[data-theme-preset="emerald-oasis"] .text-sky-600,
+html[data-theme-preset="emerald-oasis"] .text-sky-500,
+html[data-theme-preset="emerald-oasis"] .text-blue-600 {
+  color: #059669 !important;
+}
+html[data-theme-preset="emerald-oasis"] .text-sky-400,
+html[data-theme-preset="emerald-oasis"] .dark\:text-sky-400 {
+  color: #34d399 !important;
+}
+html[data-theme-preset="emerald-oasis"] .border-sky-500,
+html[data-theme-preset="emerald-oasis"] .border-sky-400,
+html[data-theme-preset="emerald-oasis"] .border-sky-600 {
+  border-color: #059669 !important;
+}
+html[data-theme-preset="emerald-oasis"] .bg-sky-50,
+html[data-theme-preset="emerald-oasis"] .bg-sky-100 {
+  background-color: #ecfdf5 !important;
+}
+html[data-theme-preset="emerald-oasis"] .dark\:bg-sky-950\/40,
+html[data-theme-preset="emerald-oasis"] .dark\:bg-sky-950\/50,
+html[data-theme-preset="emerald-oasis"] .dark\:bg-sky-950 {
+  background-color: rgba(6, 78, 59, 0.4) !important;
+}
+html[data-theme-preset="emerald-oasis"] .slot-widget-selected {
+  background: linear-gradient(135deg, #059669 0%, #0d9488 50%, #15803d 100%) !important;
+  border-color: #6ee7b7 !important;
+  box-shadow: 0 10px 25px -3px rgba(5, 150, 105, 0.4) !important;
+}
+html[data-theme-preset="emerald-oasis"] .slot-widget-next {
+  border-color: #059669 !important;
+  box-shadow: 0 8px 20px -2px rgba(5, 150, 105, 0.3) !important;
+}
+html[data-theme-preset="emerald-oasis"] .from-sky-600 {
+  --tw-gradient-from: #059669 var(--tw-gradient-from-position) !important;
+}
+html[data-theme-preset="emerald-oasis"] .to-indigo-700,
+html[data-theme-preset="emerald-oasis"] .to-blue-700 {
+  --tw-gradient-to: #047857 var(--tw-gradient-to-position) !important;
+}
+
+/* --- 2. IMPERIAL LUXURY GOLD (VIP Prestige Velvet & Warm Amber Gold) --- */
+html[data-theme-preset="imperial-gold"] {
+  --primary-color: #f59e0b;
+  --primary-hover: #d97706;
+  --primary-rgb: 245, 158, 11;
+  --accent-color: #fbbf24;
+  --accent-rgb: 251, 191, 36;
+}
+html[data-theme-preset="imperial-gold"] body {
+  background-color: #fdfaf3 !important;
+}
+html[data-theme-preset="imperial-gold"].dark body {
+  background-color: #09080e !important;
+}
+html[data-theme-preset="imperial-gold"] .bg-sky-600,
+html[data-theme-preset="imperial-gold"] .bg-sky-500,
+html[data-theme-preset="imperial-gold"] .bg-blue-600 {
+  background-color: #f59e0b !important;
+  color: #18181b !important;
+  font-weight: 800;
+}
+html[data-theme-preset="imperial-gold"] .hover\:bg-sky-700:hover,
+html[data-theme-preset="imperial-gold"] .hover\:bg-sky-600:hover,
+html[data-theme-preset="imperial-gold"] .hover\:bg-blue-700:hover {
+  background-color: #d97706 !important;
+}
+html[data-theme-preset="imperial-gold"] .text-sky-600,
+html[data-theme-preset="imperial-gold"] .text-sky-500,
+html[data-theme-preset="imperial-gold"] .text-blue-600 {
+  color: #d97706 !important;
+}
+html[data-theme-preset="imperial-gold"] .text-sky-400,
+html[data-theme-preset="imperial-gold"] .dark\:text-sky-400 {
+  color: #fbbf24 !important;
+}
+html[data-theme-preset="imperial-gold"] .border-sky-500,
+html[data-theme-preset="imperial-gold"] .border-sky-400,
+html[data-theme-preset="imperial-gold"] .border-sky-600 {
+  border-color: #f59e0b !important;
+}
+html[data-theme-preset="imperial-gold"] .bg-sky-50,
+html[data-theme-preset="imperial-gold"] .bg-sky-100 {
+  background-color: #fffbeb !important;
+}
+html[data-theme-preset="imperial-gold"] .dark\:bg-sky-950\/40,
+html[data-theme-preset="imperial-gold"] .dark\:bg-sky-950\/50,
+html[data-theme-preset="imperial-gold"] .dark\:bg-sky-950 {
+  background-color: rgba(120, 53, 15, 0.4) !important;
+}
+html[data-theme-preset="imperial-gold"] .slot-widget-selected {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #78350f 100%) !important;
+  border-color: #fde68a !important;
+  color: #ffffff !important;
+  box-shadow: 0 10px 25px -3px rgba(245, 158, 11, 0.45) !important;
+}
+html[data-theme-preset="imperial-gold"] .slot-widget-next {
+  border-color: #f59e0b !important;
+  box-shadow: 0 8px 20px -2px rgba(245, 158, 11, 0.35) !important;
+}
+html[data-theme-preset="imperial-gold"].dark .bg-slate-900,
+html[data-theme-preset="imperial-gold"].dark .bg-slate-950 {
+  background-color: #100f17 !important;
+}
+html[data-theme-preset="imperial-gold"].dark .border-slate-800 {
+  border-color: #2b251f !important;
+}
+
+/* --- 3. CYBERPUNK NEON MATRIX (Electric Violet, Cyan Glow & Matrix Grid) --- */
+html[data-theme-preset="cyber-neon"] {
+  --primary-color: #8b5cf6;
+  --primary-hover: #7c3aed;
+  --primary-rgb: 139, 92, 246;
+  --accent-color: #06b6d4;
+  --accent-rgb: 6, 182, 212;
+}
+html[data-theme-preset="cyber-neon"] body {
+  background-color: #f6f7fc !important;
+}
+html[data-theme-preset="cyber-neon"].dark body {
+  background-color: #060813 !important;
+  background-image: radial-gradient(rgba(139, 92, 246, 0.12) 1px, transparent 0) !important;
+  background-size: 24px 24px !important;
+}
+html[data-theme-preset="cyber-neon"] .bg-sky-600,
+html[data-theme-preset="cyber-neon"] .bg-sky-500,
+html[data-theme-preset="cyber-neon"] .bg-blue-600 {
+  background-color: #8b5cf6 !important;
+  box-shadow: 0 0 18px rgba(139, 92, 246, 0.55);
+}
+html[data-theme-preset="cyber-neon"] .hover\:bg-sky-700:hover,
+html[data-theme-preset="cyber-neon"] .hover\:bg-sky-600:hover {
+  background-color: #7c3aed !important;
+}
+html[data-theme-preset="cyber-neon"] .text-sky-600,
+html[data-theme-preset="cyber-neon"] .text-sky-500 {
+  color: #8b5cf6 !important;
+}
+html[data-theme-preset="cyber-neon"] .text-sky-400,
+html[data-theme-preset="cyber-neon"] .dark\:text-sky-400 {
+  color: #06b6d4 !important;
+  text-shadow: 0 0 8px rgba(6, 182, 212, 0.6);
+}
+html[data-theme-preset="cyber-neon"] .border-sky-500,
+html[data-theme-preset="cyber-neon"] .border-sky-400 {
+  border-color: #06b6d4 !important;
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.35);
+}
+html[data-theme-preset="cyber-neon"] .bg-sky-50 {
+  background-color: #f5f3ff !important;
+}
+html[data-theme-preset="cyber-neon"] .dark\:bg-sky-950\/40,
+html[data-theme-preset="cyber-neon"] .dark\:bg-sky-950 {
+  background-color: rgba(91, 33, 182, 0.35) !important;
+}
+html[data-theme-preset="cyber-neon"] .slot-widget-selected {
+  background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 50%, #06b6d4 100%) !important;
+  border-color: #67e8f9 !important;
+  box-shadow: 0 0 25px rgba(139, 92, 246, 0.6) !important;
+}
+html[data-theme-preset="cyber-neon"] .slot-widget-next {
+  border-color: #06b6d4 !important;
+  box-shadow: 0 0 18px rgba(6, 182, 212, 0.4) !important;
+}
+html[data-theme-preset="cyber-neon"].dark .bg-slate-900 {
+  background-color: #0d1021 !important;
+  border-color: #1e223d !important;
+}
+
+/* --- 4. RED SEA CRIMSON CORAL (Radiant Rose & Sunset Orange) --- */
+html[data-theme-preset="redsea-sunset"] {
+  --primary-color: #e11d48;
+  --primary-hover: #be123c;
+  --primary-rgb: 225, 29, 72;
+  --accent-color: #ea580c;
+  --accent-rgb: 234, 88, 12;
+}
+html[data-theme-preset="redsea-sunset"] body {
+  background-color: #fff6f6 !important;
+}
+html[data-theme-preset="redsea-sunset"].dark body {
+  background-color: #140508 !important;
+}
+html[data-theme-preset="redsea-sunset"] .bg-sky-600,
+html[data-theme-preset="redsea-sunset"] .bg-sky-500,
+html[data-theme-preset="redsea-sunset"] .bg-blue-600 {
+  background-color: #e11d48 !important;
+}
+html[data-theme-preset="redsea-sunset"] .hover\:bg-sky-700:hover,
+html[data-theme-preset="redsea-sunset"] .hover\:bg-sky-600:hover {
+  background-color: #be123c !important;
+}
+html[data-theme-preset="redsea-sunset"] .text-sky-600,
+html[data-theme-preset="redsea-sunset"] .text-sky-500 {
+  color: #e11d48 !important;
+}
+html[data-theme-preset="redsea-sunset"] .text-sky-400,
+html[data-theme-preset="redsea-sunset"] .dark\:text-sky-400 {
+  color: #fb7185 !important;
+}
+html[data-theme-preset="redsea-sunset"] .border-sky-500,
+html[data-theme-preset="redsea-sunset"] .border-sky-400 {
+  border-color: #e11d48 !important;
+}
+html[data-theme-preset="redsea-sunset"] .bg-sky-50 {
+  background-color: #fff1f2 !important;
+}
+html[data-theme-preset="redsea-sunset"] .dark\:bg-sky-950\/40,
+html[data-theme-preset="redsea-sunset"] .dark\:bg-sky-950 {
+  background-color: rgba(136, 19, 55, 0.4) !important;
+}
+html[data-theme-preset="redsea-sunset"] .slot-widget-selected {
+  background: linear-gradient(135deg, #e11d48 0%, #f43f5e 50%, #ea580c 100%) !important;
+  border-color: #fecdd3 !important;
+  box-shadow: 0 10px 25px -3px rgba(225, 29, 72, 0.45) !important;
+}
+html[data-theme-preset="redsea-sunset"] .slot-widget-next {
+  border-color: #e11d48 !important;
+  box-shadow: 0 8px 20px -2px rgba(225, 29, 72, 0.35) !important;
+}
+
+/* --- 5. GALACTIC NEBULA COSMIC (Cosmic Space Indigo & Pink Magenta) --- */
+html[data-theme-preset="galactic-nebula"] {
+  --primary-color: #6366f1;
+  --primary-hover: #4f46e5;
+  --primary-rgb: 99, 102, 241;
+  --accent-color: #ec4899;
+  --accent-rgb: 236, 72, 153;
+}
+html[data-theme-preset="galactic-nebula"] body {
+  background-color: #f7f7fc !important;
+}
+html[data-theme-preset="galactic-nebula"].dark body {
+  background-color: #0a0718 !important;
+}
+html[data-theme-preset="galactic-nebula"] .bg-sky-600,
+html[data-theme-preset="galactic-nebula"] .bg-sky-500,
+html[data-theme-preset="galactic-nebula"] .bg-blue-600 {
+  background-color: #6366f1 !important;
+}
+html[data-theme-preset="galactic-nebula"] .hover\:bg-sky-700:hover {
+  background-color: #4f46e5 !important;
+}
+html[data-theme-preset="galactic-nebula"] .text-sky-600,
+html[data-theme-preset="galactic-nebula"] .text-sky-500 {
+  color: #6366f1 !important;
+}
+html[data-theme-preset="galactic-nebula"] .text-sky-400,
+html[data-theme-preset="galactic-nebula"] .dark\:text-sky-400 {
+  color: #a5b4fc !important;
+}
+html[data-theme-preset="galactic-nebula"] .border-sky-500,
+html[data-theme-preset="galactic-nebula"] .border-sky-400 {
+  border-color: #6366f1 !important;
+}
+html[data-theme-preset="galactic-nebula"] .bg-sky-50 {
+  background-color: #eef2ff !important;
+}
+html[data-theme-preset="galactic-nebula"] .dark\:bg-sky-950\/40 {
+  background-color: rgba(49, 46, 129, 0.4) !important;
+}
+html[data-theme-preset="galactic-nebula"] .slot-widget-selected {
+  background: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%) !important;
+  border-color: #c7d2fe !important;
+  box-shadow: 0 10px 25px -3px rgba(99, 102, 241, 0.45) !important;
+}
+
+/* --- 6. ARCTIC FROST GLASS (Glacier Cyan & Crisp Ice Blue) --- */
+html[data-theme-preset="arctic-frost"] {
+  --primary-color: #0891b2;
+  --primary-hover: #0e7490;
+  --primary-rgb: 8, 145, 178;
+  --accent-color: #0284c7;
+  --accent-rgb: 2, 132, 199;
+}
+html[data-theme-preset="arctic-frost"] body {
+  background-color: #f0fdfc !important;
+}
+html[data-theme-preset="arctic-frost"].dark body {
+  background-color: #041217 !important;
+}
+html[data-theme-preset="arctic-frost"] .bg-sky-600,
+html[data-theme-preset="arctic-frost"] .bg-sky-500 {
+  background-color: #0891b2 !important;
+}
+html[data-theme-preset="arctic-frost"] .text-sky-600,
+html[data-theme-preset="arctic-frost"] .text-sky-500 {
+  color: #0891b2 !important;
+}
+html[data-theme-preset="arctic-frost"] .border-sky-500 {
+  border-color: #0891b2 !important;
+}
+html[data-theme-preset="arctic-frost"] .bg-sky-50 {
+  background-color: #ecfeff !important;
+}
+html[data-theme-preset="arctic-frost"] .slot-widget-selected {
+  background: linear-gradient(135deg, #0891b2 0%, #06b6d4 50%, #0284c7 100%) !important;
+  border-color: #a5f3fc !important;
+  box-shadow: 0 10px 25px -3px rgba(8, 145, 178, 0.45) !important;
+}
+
+/* --- 7. SAGE BOTANICAL ZEN (Organic Sage Teal & Olive Green) --- */
+html[data-theme-preset="sage-zen"] {
+  --primary-color: #0d9488;
+  --primary-hover: #0f766e;
+  --primary-rgb: 13, 148, 136;
+  --accent-color: #65a30d;
+  --accent-rgb: 101, 163, 13;
+}
+html[data-theme-preset="sage-zen"] body {
+  background-color: #f4f8f5 !important;
+}
+html[data-theme-preset="sage-zen"].dark body {
+  background-color: #081613 !important;
+}
+html[data-theme-preset="sage-zen"] .bg-sky-600,
+html[data-theme-preset="sage-zen"] .bg-sky-500 {
+  background-color: #0d9488 !important;
+}
+html[data-theme-preset="sage-zen"] .text-sky-600,
+html[data-theme-preset="sage-zen"] .text-sky-500 {
+  color: #0d9488 !important;
+}
+html[data-theme-preset="sage-zen"] .border-sky-500 {
+  border-color: #0d9488 !important;
+}
+html[data-theme-preset="sage-zen"] .bg-sky-50 {
+  background-color: #f0fdfa !important;
+}
+html[data-theme-preset="sage-zen"] .slot-widget-selected {
+  background: linear-gradient(135deg, #0f766e 0%, #0d9488 50%, #65a30d 100%) !important;
+  border-color: #99f6e4 !important;
+  box-shadow: 0 10px 25px -3px rgba(13, 148, 136, 0.4) !important;
+}
+
+/* --- 8. TABUK DESERT SUNSET (Warm Terracotta Orange & Red Amber) --- */
+html[data-theme-preset="desert-sunset"] {
+  --primary-color: #f97316;
+  --primary-hover: #ea580c;
+  --primary-rgb: 249, 115, 22;
+  --accent-color: #dc2626;
+  --accent-rgb: 220, 38, 38;
+}
+html[data-theme-preset="desert-sunset"] body {
+  background-color: #fef8f4 !important;
+}
+html[data-theme-preset="desert-sunset"].dark body {
+  background-color: #170e0a !important;
+}
+html[data-theme-preset="desert-sunset"] .bg-sky-600,
+html[data-theme-preset="desert-sunset"] .bg-sky-500 {
+  background-color: #f97316 !important;
+}
+html[data-theme-preset="desert-sunset"] .text-sky-600,
+html[data-theme-preset="desert-sunset"] .text-sky-500 {
+  color: #f97316 !important;
+}
+html[data-theme-preset="desert-sunset"] .border-sky-500 {
+  border-color: #f97316 !important;
+}
+html[data-theme-preset="desert-sunset"] .bg-sky-50 {
+  background-color: #fff7ed !important;
+}
+html[data-theme-preset="desert-sunset"] .slot-widget-selected {
+  background: linear-gradient(135deg, #f97316 0%, #ea580c 50%, #dc2626 100%) !important;
+  border-color: #fed7aa !important;
+  box-shadow: 0 10px 25px -3px rgba(249, 115, 22, 0.45) !important;
+}
+
+/* --- 9. OBSIDIAN AMOLED STEALTH (100% OLED Pure Black & Ice Cyan) --- */
+html[data-theme-preset="obsidian-amoled"] {
+  --primary-color: #38bdf8;
+  --primary-hover: #0ea5e9;
+  --primary-rgb: 56, 189, 248;
+}
+html[data-theme-preset="obsidian-amoled"] body {
+  background-color: #000000 !important;
+  color: #f4f4f5 !important;
+}
+html[data-theme-preset="obsidian-amoled"] .bg-slate-900,
+html[data-theme-preset="obsidian-amoled"] .bg-slate-950,
+html[data-theme-preset="obsidian-amoled"] .dark\:bg-slate-900,
+html[data-theme-preset="obsidian-amoled"] .dark\:bg-slate-950 {
+  background-color: #000000 !important;
+}
+html[data-theme-preset="obsidian-amoled"] .border-slate-800,
+html[data-theme-preset="obsidian-amoled"] .dark\:border-slate-800 {
+  border-color: #1f1f23 !important;
+}
+html[data-theme-preset="obsidian-amoled"] .slot-widget-selected {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 50%, #000000 100%) !important;
+  border-color: #38bdf8 !important;
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.5) !important;
+}
+
+@layer utilities {
+  /* Hide scrollbar for Chrome, Safari and Opera */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  /* Hide scrollbar for IE, Edge and Firefox */
+  .no-scrollbar {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+
+  /* High-Contrast Executive Glass Card */
+  .glass-card-executive {
+    @apply bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border-2 border-slate-200/90 dark:border-slate-800/90 shadow-xl shadow-slate-900/5 dark:shadow-2xl;
+  }
+
+  /* Tactile Interactive Click Feedback & Ripple */
+  .btn-interactive {
+    @apply transition-all duration-200 active:scale-[0.96] hover:shadow-lg cursor-pointer select-none relative overflow-hidden;
+  }
+
+  .card-hover-lift {
+    @apply transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl hover:shadow-sky-500/15 dark:hover:shadow-sky-500/10;
+  }
+
+  .executive-card {
+    @apply bg-white dark:bg-slate-900/95 border-2 border-slate-200/90 dark:border-slate-800 rounded-2xl sm:rounded-3xl shadow-md dark:shadow-2xl transition-all duration-300;
+  }
+
+  /* Vibrant Dynamic Glows */
+  .glow-border-active,
+  .glow-border-blue {
+    box-shadow: 0 0 20px -2px rgba(37, 99, 235, 0.45), 0 0 6px 0px rgba(59, 130, 246, 0.35);
+  }
+
+  .glow-border-emerald {
+    box-shadow: 0 0 18px -2px rgba(16, 185, 129, 0.4), 0 0 6px 0px rgba(52, 211, 153, 0.3);
+  }
+
+  .glow-border-rose {
+    box-shadow: 0 0 18px -2px rgba(244, 63, 94, 0.35), 0 0 6px 0px rgba(251, 113, 133, 0.25);
+  }
+
+  .glow-border-amber {
+    box-shadow: 0 0 18px -2px rgba(245, 158, 11, 0.35), 0 0 6px 0px rgba(251, 191, 36, 0.25);
+  }
+
+  /* Distinctive Slot Widget Card Patterns */
+  .slot-widget-available {
+    @apply bg-white dark:bg-slate-900/90 border-2 border-slate-200/90 dark:border-slate-800 shadow-xs hover:shadow-xl hover:border-sky-500 dark:hover:border-sky-400 hover:-translate-y-1.5;
+  }
+
+  .slot-widget-booked {
+    @apply bg-gradient-to-br from-rose-50/95 via-red-50/70 to-white dark:from-red-950/40 dark:via-slate-900/90 dark:to-slate-950 border-2 border-red-200 dark:border-red-900/60 shadow-xs hover:shadow-lg hover:border-red-400;
+  }
+
+  .slot-widget-break {
+    @apply bg-gradient-to-br from-amber-50/90 via-orange-50/60 to-amber-50/40 dark:from-amber-950/30 dark:via-slate-900/90 dark:to-slate-950 border-2 border-dashed border-amber-300/90 dark:border-amber-900/50 opacity-90 shadow-xs;
+  }
+
+  .slot-widget-selected {
+    @apply bg-gradient-to-br from-sky-600 via-blue-600 to-indigo-700 border-2 border-sky-300 text-white shadow-xl shadow-sky-600/40 scale-[1.02];
+  }
+
+  .slot-widget-next {
+    @apply bg-gradient-to-br from-sky-50/95 via-cyan-50/60 to-white dark:from-sky-950/50 dark:via-slate-900/90 dark:to-slate-950 border-2 border-sky-500 dark:border-sky-400 shadow-lg shadow-sky-500/25 hover:shadow-2xl hover:shadow-sky-500/35 hover:scale-[1.02];
+  }
+
+  .pitch-grass-stripes {
+    background: repeating-linear-gradient(
+      90deg,
+      #15803d 0px,
+      #15803d 40px,
+      #16a34a 40px,
+      #16a34a 80px
+    );
+  }
+
+  .court-hardwood-pattern {
+    background: repeating-linear-gradient(
+      45deg,
+      #78350f 0px,
+      #78350f 15px,
+      #92400e 15px,
+      #92400e 30px
+    );
+  }
+}
+
+@keyframes spin-slow {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes spin-reverse {
+  0% {
+    transform: rotate(360deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+}
+
+@keyframes float-gentle {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-5px) rotate(1.5deg);
+  }
+}
+
+@keyframes ball-bounce {
+  0%, 100% {
+    transform: translateY(0) scale(1, 1);
+  }
+  40% {
+    transform: translateY(-8px) scale(0.96, 1.04);
+  }
+  80% {
+    transform: translateY(0) scale(1.04, 0.96);
+  }
+}
+
+@keyframes floodlight-sweep {
+  0%, 100% {
+    opacity: 0.4;
+    transform: rotate(-15deg);
+  }
+  50% {
+    opacity: 0.85;
+    transform: rotate(15deg);
+  }
+}
+
+@keyframes shine-slide {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes subtle-radar {
+  0% {
+    box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(14, 165, 233, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(14, 165, 233, 0);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
+.animate-spin-reverse {
+  animation: spin-reverse 10s linear infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float-gentle 4s ease-in-out infinite;
+}
+
+.animate-ball-bounce {
+  animation: ball-bounce 2s cubic-bezier(0.28, 0.84, 0.42, 1) infinite;
+}
+
+.animate-floodlight {
+  animation: floodlight-sweep 6s ease-in-out infinite;
+}
+
+.animate-radar {
+  animation: subtle-radar 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+.shine-effect {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  background-size: 200% 100%;
+  animation: shine-slide 3s infinite;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm 10mm;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  header, footer, nav, aside, .print\:hidden, [data-no-print="true"], button {
+    display: none !important;
+  }
+  
+  /* When printing within modal, hide all modal backdrop and frame decorators */
+  .fixed.inset-0 {
+    position: static !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+  }
+
+  /* Make sure modal content takes full page without scrollbars or shadows */
+  .fixed.inset-0 > div,
+  .fixed.inset-0 > div > div {
+    box-shadow: none !important;
+    border: none !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  
+  #printable-official-form, #printable-notice-poster, .printable-notice-card, .printable-doc-sheet {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+  
+  input, textarea, select {
+    border: none !important;
+    background: transparent !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    outline: none !important;
+    resize: none !important;
+  }
+}
+
+
