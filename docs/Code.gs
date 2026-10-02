@@ -973,13 +973,14 @@ function findSheetByNameFuzzy(ss, targetName) {
   }
   if (clean.indexOf("multi") !== -1) {
     for (var i = 0; i < sheets.length; i++) {
-      if (sheets[i].getName().toLowerCase().indexOf("multi") !== -1) return sheets[i];
+      var n = sheets[i].getName().toLowerCase();
+      if (n.indexOf("multi") !== -1) return sheets[i];
     }
   }
-  if (clean.indexOf("isolation") !== -1 || clean.indexOf("iso") !== -1 || clean.indexOf("room") !== -1) {
+  if (clean.indexOf("isolation") !== -1 || clean.indexOf("iso") !== -1 || (clean.indexOf("room") !== -1 && clean.indexOf("multi") === -1 && clean.indexOf("cinema") === -1)) {
     for (var i = 0; i < sheets.length; i++) {
       var n = sheets[i].getName().toLowerCase();
-      if (n.indexOf("isolation") !== -1 || n.indexOf("room") !== -1 || n.indexOf("iso") !== -1) return sheets[i];
+      if ((n.indexOf("isolation") !== -1 || n.indexOf("iso") !== -1) && n.indexOf("multi") === -1) return sheets[i];
     }
   }
   if (clean.indexOf("workorder") !== -1 || (clean.indexOf("ticket") !== -1 && clean.indexOf("help") === -1) || clean === "wo") {
@@ -1040,8 +1041,17 @@ function createBooking(b) {
 
   var colMap = getColumnMapping(displayData[headerRowIdx] || []);
 
-  // Conflict detection
+  // Conflict detection & Idempotency check
   for (var i = headerRowIdx + 1; i < displayData.length; i++) {
+    var rowId = String(displayData[i][colMap.id] || rawData[i][colMap.id] || "").trim();
+    if (b.id && rowId && rowId.toLowerCase() === b.id.toLowerCase()) {
+      return {
+        success: true,
+        message: "Booking already recorded in Sheet",
+        booking: b
+      };
+    }
+
     var rowDate = formatDateString(displayData[i][colMap.date] || rawData[i][colMap.date]);
     var rowStage = String(displayData[i][colMap.stage] || rawData[i][colMap.stage] || "").trim();
     var rowStart = formatTimeString(displayData[i][colMap.startTime] || rawData[i][colMap.startTime]);
@@ -3024,7 +3034,7 @@ function getAllDataFast() {
           createdAt: r[20] || new Date().toISOString()
         });
       }
-    } else if (clean.indexOf("isolation") !== -1 || clean.indexOf("quarantine") !== -1) {
+    } else if ((clean.indexOf("isolation") !== -1 || clean.indexOf("quarantine") !== -1) && clean.indexOf("multi") === -1) {
       for (var i = 1; i < displayData.length; i++) {
         var r = displayData[i];
         if (!r[1] && !r[3]) continue;

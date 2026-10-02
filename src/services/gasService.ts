@@ -212,7 +212,7 @@ export const GasService = {
     if (isSheetLink) {
       return {
         success: false,
-        message: `⚠️ এটি Google Spreadsheet-এর সরাসরি লিংক (Sheet ID: ${sheetId || 'N/A'})। পোর্টালের বুকিং ও ডেটা স্বয়ংক্রিয়ভাবে Google Sheets-এ সেভ হওয়ার জন্য Apps Script Web App Exec URL প্রয়োজন। আপনার Google Sheet-এ গিয়ে Extensions > Apps Script > Deploy > New Deployment > Web App (Who has access: Anyone) তৈরি করে প্রাপ্ত Exec URL দিন।`,
+        message: `⚠️ This is a direct Google Spreadsheet link (Sheet ID: ${sheetId || 'N/A'}). To automatically sync bookings and records, please provide the Apps Script Web App Exec URL. In your Google Sheet, navigate to Extensions > Apps Script > Deploy > New Deployment > Web App (Who has access: Anyone) to generate your Exec URL.`,
         diagnosis: 'SHEET_LINK_PROVIDED',
         data: { sheetId },
         suggestedUrl: cleanUrl,
@@ -256,7 +256,7 @@ export const GasService = {
           if (tabs.length > 0 && (tabs.length < 20 || missingTabs.length > 0)) {
             return {
               success: true,
-              message: `সংযুক্ত হয়েছে, কিন্তু আপনার Google Sheet Code.gs স্ক্রিপ্টটি পুরনো ভার্সন (${tabs.length}টি ট্যাব সনাক্ত হয়েছে)। ২০টি ফ্যাসিলিটি সম্পূর্ণ সিঙ্ক করতে Apps Script-এ লেটেস্ট Code.gs আপডেট করুন।`,
+              message: `Connected, but your Google Apps Script is running an older version (${tabs.length} tabs detected). Please update your Apps Script with the latest Code.gs to enable all 20 facilities.`,
               diagnosis: 'OUTDATED_CODE_GS',
               data: pingPayload,
               latencyMs: proxyData.latencyMs,
@@ -268,7 +268,7 @@ export const GasService = {
 
           return {
             success: true,
-            message: `Google Sheets & Apps Script সফলভাবে সংযুক্ত হয়েছে (সব ২০টি ফ্যাসিলিটি প্রস্তুত)! Latency: ${proxyData.latencyMs || 120}ms.`,
+            message: `Google Sheets & Apps Script connected successfully (all 20 facilities active)! Latency: ${proxyData.latencyMs || 120}ms.`,
             diagnosis: 'OK',
             data: proxyData.data,
             latencyMs: proxyData.latencyMs,
@@ -278,9 +278,9 @@ export const GasService = {
         } else {
           let msg = proxyData.error || 'Connection failed: Unexpected response from Google Apps Script.';
           if (proxyData.diagnosis === 'AUTH_REQUIRED') {
-            msg = '⚠️ Google একাউন্ট লগইন চাইছে (Who has access: Only myself)। Apps Script-এ Deploy > Manage deployments > Edit আইকনে ক্লিক করে "Who has access" অপশনটি "Anyone" সিলেক্ট করে New version ডিপ্লয় করুন।';
+            msg = '⚠️ Google account authorization required (Who has access: Only myself). In Apps Script, click Deploy > Manage deployments > Edit icon, select "Who has access: Anyone", and deploy a new version.';
           } else if (proxyData.diagnosis === 'SHEET_LINK_PROVIDED') {
-            msg = '⚠️ এটি Google Spreadsheet-এর সরাসরি লিংক। বুকিং ও ডেটা সিঙ্ক করার জন্য Google Apps Script Web App Exec URL প্রয়োজন।';
+            msg = '⚠️ Direct Google Spreadsheet link detected. Please provide the Google Apps Script Web App Exec URL to synchronize data.';
           }
           return {
             success: false,
@@ -328,7 +328,7 @@ export const GasService = {
         if (tabs.length > 0 && (tabs.length < 20 || missingTabs.length > 0)) {
           return {
             success: true,
-            message: `সংযুক্ত হয়েছে, কিন্তু Code.gs পুরনো ভার্সন (${tabs.length}টি ট্যাব সনাক্ত হয়েছে)। ২০টি ফ্যাসিলিটি সম্পূর্ণ সিঙ্ক করতে Apps Script-এ লেটেস্ট Code.gs আপডেট করুন।`,
+            message: `Connected, but Code.gs is an older version (${tabs.length} tabs detected). Please update your Apps Script with the latest Code.gs to enable all 20 facilities.`,
             diagnosis: 'OUTDATED_CODE_GS',
             data,
             suggestedUrl: cleanUrl,
@@ -339,7 +339,7 @@ export const GasService = {
 
         return {
           success: true,
-          message: 'Google Sheets & Apps Script সফলভাবে সংযুক্ত হয়েছে (সব ২০টি ফ্যাসিলিটি প্রস্তুত)!',
+          message: 'Google Sheets & Apps Script connected successfully (all 20 facilities active)!',
           diagnosis: 'OK',
           data,
           suggestedUrl: cleanUrl,
@@ -628,132 +628,198 @@ export const GasService = {
   },
 
   /**
-   * Syncs a single specific facility on demand (Bi-directional: pushes local records first then fetches latest)
+   * Syncs a single specific facility on demand directly from Google Sheets
+   * Reads only the target sheet tab for lightning-fast sub-second synchronization
    */
-  async syncFacility(facilityId: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  async syncFacility(
+    facilityId: string,
+    options?: { forceFresh?: boolean }
+  ): Promise<{ success: boolean; count?: number; message?: string; error?: string }> {
     const config = this.getConfig();
     if (!config.webAppUrl || !config.webAppUrl.trim().startsWith('http')) {
       return {
         success: false,
-        error: 'Google Sheets Web App URL is not configured. Google Sheets connection is mandatory for all 20 facilities.',
+        error: 'Google Sheets Web App URL is not configured.',
       };
     }
 
     const normId = (facilityId || '').toLowerCase().trim();
 
+    // 1. Standard Booking Facilities (Facilities 1-8): Barber, Cricket, Football, Multipurpose, Cinema, Tennis, Cricket Net, Basketball
+    const isSpecialFacility = 
+      normId.includes('handover') || normId.includes('takenover') || normId === 'hoto' ||
+      normId.includes('parcel') || normId === 'prcl' ||
+      normId.includes('lost') || normId.includes('found') || normId === 'lnfd' ||
+      normId.includes('blank') || normId.includes('form') ||
+      normId.includes('invoice') || normId.includes('billing') ||
+      normId.includes('announcement') || normId.includes('notice') ||
+      normId.includes('workorder') || (normId.includes('ticket') && !normId.includes('help')) ||
+      normId.includes('sla') || normId.includes('workflow') || normId.includes('email') ||
+      normId.includes('isolation');
+
+    if (!isSpecialFacility) {
+      const isMulti = normId.includes('multipurpose') || normId === 'mr';
+      const targetTab = isMulti ? 'Multipurpose Room' : StorageService.resolveFacilityTabName(facilityId);
+      const res = await this.syncFacilityBookings(targetTab, options);
+      return { success: true, count: res.count, message: `Live synchronized ${targetTab}` };
+    }
+
+    // 2. Targeted Fetch for Specialized Facilities (Takes ~400-900ms instead of loading all 20 tabs)
     try {
+      const { url: cleanUrl } = this.sanitizeUrl(config.webAppUrl);
+      let action = '';
+      let entityKey = '';
+
       if (normId.includes('handover') || normId.includes('takenover') || normId === 'hoto') {
-        const localHandovers = StorageService.getHandoverRecords();
-        if (localHandovers.length > 0) {
-          await this.pushBatchHandoversToRemote(localHandovers);
-        }
+        action = 'getHandover';
+        entityKey = 'handovers';
       } else if (normId.includes('parcel') || normId === 'prcl') {
-        const localParcels = StorageService.getParcelRecords();
-        if (localParcels.length > 0) {
-          await this.pushBatchParcelsToRemote(localParcels);
-        }
+        action = 'getParcels';
+        entityKey = 'parcels';
       } else if (normId.includes('lost') || normId.includes('found') || normId === 'lnfd') {
-        const localLostFound = StorageService.getLostFoundRecords();
-        if (localLostFound.length > 0) {
-          await this.pushBatchLostFoundToRemote(localLostFound);
-        }
+        action = 'getLostFound';
+        entityKey = 'lostFound';
       } else if (normId.includes('blank') || normId.includes('form')) {
-        const rawForms = localStorage.getItem('tafga_saved_form_records_v1');
-        if (rawForms) {
-          const forms = JSON.parse(rawForms);
-          if (Array.isArray(forms) && forms.length > 0) {
-            await this.pushBatchBlankFormsToRemote(forms);
-          }
-        }
+        action = 'getBlankForms';
+        entityKey = 'blankForms';
       } else if (normId.includes('invoice') || normId.includes('billing')) {
-        const rawInvoices = localStorage.getItem('tamimi_unified_camp_invoices_v2');
-        if (rawInvoices) {
-          const invoices = JSON.parse(rawInvoices);
-          if (Array.isArray(invoices) && invoices.length > 0) {
-            await this.pushBatchInvoicesToRemote(invoices);
-          }
-        }
+        action = 'getInvoices';
+        entityKey = 'invoices';
       } else if (normId.includes('announcement') || normId.includes('notice')) {
-        const rawNotices = localStorage.getItem('tamimi_facility_notices_v2');
-        if (rawNotices) {
-          const notices = JSON.parse(rawNotices);
-          if (Array.isArray(notices) && notices.length > 0) {
-            await this.pushBatchNoticesToRemote(notices);
-          }
-        }
-      } else if (normId.includes('workorder') || normId.includes('work_order') || normId.includes('work order') || normId === 'ticket_mgmt') {
-        const localTickets = TicketService.getTickets();
-        if (localTickets.length > 0) {
-          await this.pushBatchWorkOrderTicketsToRemote(localTickets);
-        }
+        action = 'getNotices';
+        entityKey = 'notices';
+      } else if (normId.includes('workorder') || (normId.includes('ticket') && !normId.includes('help'))) {
+        action = 'getWorkOrderTickets';
+        entityKey = 'workOrderTickets';
+      } else if (normId.includes('help') || normId.includes('support')) {
+        action = 'getSupportTickets';
+        entityKey = 'supportTickets';
       } else if (normId.includes('sla')) {
-        const rawSla = localStorage.getItem('tafga_sla_policies_v1');
-        if (rawSla) {
-          const policies = JSON.parse(rawSla);
-          if (Array.isArray(policies) && policies.length > 0) {
-            await this.pushBatchSlaPoliciesToRemote(policies);
-          }
-        }
+        action = 'getSlaPolicies';
+        entityKey = 'slaPolicies';
       } else if (normId.includes('workflow') || normId.includes('automation')) {
-        const rawWf = localStorage.getItem('tafga_workflows_v2');
-        if (rawWf) {
-          const workflows = JSON.parse(rawWf);
-          if (Array.isArray(workflows) && workflows.length > 0) {
-            await this.pushBatchWorkflowsToRemote(workflows);
-          }
-        }
+        action = 'getWorkflows';
+        entityKey = 'workflows';
       } else if (normId.includes('email') || normId.includes('mail')) {
-        const rawEmails = localStorage.getItem('tafga_email_outbox_v2');
-        if (rawEmails) {
-          const emails = JSON.parse(rawEmails);
-          if (Array.isArray(emails) && emails.length > 0) {
-            await this.pushBatchEmailLogsToRemote(emails);
+        action = 'getEmailLogs';
+        entityKey = 'emailLogs';
+      } else if (normId.includes('isolation') || (normId.includes('room') && !normId.includes('multi'))) {
+        action = 'getIsolation';
+        entityKey = 'isolationRooms';
+      }
+
+      if (action && entityKey) {
+        // Try server proxy
+        try {
+          const proxyRes = await fetch('/api/gas/proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              targetUrl: cleanUrl,
+              action,
+              method: 'GET',
+              skipCache: Boolean(options?.forceFresh),
+            }),
+          });
+          if (proxyRes.ok) {
+            const proxyData = await proxyRes.json();
+            const list = proxyData?.data?.[entityKey] || proxyData?.[entityKey];
+            if (Array.isArray(list)) {
+              this.applySpecializedEntity(entityKey, list);
+              return { success: true, count: list.length, message: `Live synchronized ${action}` };
+            }
           }
-        }
-      } else if (normId.includes('help') || normId.includes('support') || normId.includes('ticket')) {
-        const rawTickets = localStorage.getItem('tamimi_support_tickets_v2');
-        if (rawTickets) {
-          const tickets = JSON.parse(rawTickets);
-          if (Array.isArray(tickets) && tickets.length > 0) {
-            await this.pushBatchSupportTicketsToRemote(tickets);
+        } catch (pErr) {}
+
+        // Direct GET fallback
+        const url = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}action=${encodeURIComponent(action)}&t=${Date.now()}`;
+        const directRes = await fetch(url, { method: 'GET', redirect: 'follow' });
+        if (directRes.ok) {
+          const directData = await directRes.json();
+          const list = directData?.[entityKey] || directData?.data?.[entityKey];
+          if (Array.isArray(list)) {
+            this.applySpecializedEntity(entityKey, list);
+            return { success: true, count: list.length, message: `Live synchronized ${action}` };
           }
-        }
-      } else if (normId.includes('isolation') || normId.includes('room')) {
-        const localRooms = StorageService.getIsolationRooms();
-        const occupiedRooms = localRooms.filter((r) => r.occupants && r.occupants.length > 0);
-        if (occupiedRooms.length > 0) {
-          await this.pushBatchIsolationToRemote(occupiedRooms);
-        }
-      } else {
-        const facilityBookings = StorageService.getAllBookings().filter((b) => b.facilityId === facilityId);
-        if (facilityBookings.length > 0) {
-          await this.pushBatchBookingsToRemote(facilityBookings);
         }
       }
-    } catch (pushErr) {
-      console.warn(`Pre-sync push for ${facilityId} had non-fatal warning:`, pushErr);
+    } catch (specErr) {
+      console.warn(`Targeted sync for ${facilityId} notice:`, specErr);
     }
 
     return this.syncWithRemote();
   },
 
-  async syncFacilityBookings(facilityTabOrName?: string): Promise<{ success: boolean; count?: number }> {
+  applySpecializedEntity(entityKey: string, list: any[]) {
+    if (!Array.isArray(list)) return;
+    if (entityKey === 'handovers') StorageService.mergeRemoteHandovers(list);
+    else if (entityKey === 'parcels') StorageService.mergeRemoteParcels(list);
+    else if (entityKey === 'lostFound') StorageService.mergeRemoteLostFound(list);
+    else if (entityKey === 'isolationRooms') StorageService.mergeRemoteIsolationRooms(list);
+    else if (entityKey === 'blankForms') this.mergeRemoteBlankForms(list);
+    else if (entityKey === 'invoices') this.mergeRemoteInvoices(list);
+    else if (entityKey === 'notices') this.mergeRemoteNotices(list);
+    else if (entityKey === 'supportTickets') this.mergeRemoteSupportTickets(list);
+    else if (entityKey === 'workOrderTickets') this.mergeRemoteWorkOrderTickets(list);
+    else if (entityKey === 'slaPolicies') this.mergeRemoteSlaPolicies(list);
+    else if (entityKey === 'workflows') this.mergeRemoteWorkflows(list);
+    else if (entityKey === 'emailLogs') this.mergeRemoteEmailLogs(list);
+  },
+
+  async syncFacilityBookings(
+    facilityTabOrName?: string,
+    options?: { forceFresh?: boolean }
+  ): Promise<{ success: boolean; count?: number }> {
     const config = this.getConfig();
     if (!config.webAppUrl) return { success: false };
     const { url: cleanUrl } = this.sanitizeUrl(config.webAppUrl);
 
     try {
-      const isMultipurpose = facilityTabOrName && facilityTabOrName.toLowerCase().includes('multipurpose');
-      const targetParam = isMultipurpose ? 'Multipurpose' : (facilityTabOrName || '');
-      const url = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}action=getFacilityBookings&facility=${encodeURIComponent(targetParam)}&t=${Date.now()}`;
+      const isMultipurpose = facilityTabOrName && (facilityTabOrName.toLowerCase().includes('multipurpose') || facilityTabOrName.toLowerCase().includes('mr'));
+      const targetParam = isMultipurpose ? 'Multipurpose Room' : (facilityTabOrName || 'Barber Booking');
+      
+      // 1. Try server proxy first (avoids browser CORS & uses Node-level caching)
+      try {
+        const proxyRes = await fetch('/api/gas/proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetUrl: cleanUrl,
+            action: 'getBookings',
+            method: 'GET',
+            tab: targetParam,
+            facility: targetParam,
+            facilityName: targetParam,
+            skipCache: Boolean(options?.forceFresh),
+          }),
+        });
+        if (proxyRes.ok) {
+          const proxyData = await proxyRes.json();
+          const list = proxyData?.data?.bookings || proxyData?.bookings;
+          if (Array.isArray(list)) {
+            const merged = StorageService.mergeRemoteBookings(list);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
+            }
+            return { success: true, count: merged.length };
+          }
+        }
+      } catch (pErr) {}
+
+      // 2. Direct browser GET fallback
+      const url = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}action=getBookings&tab=${encodeURIComponent(targetParam)}&facility=${encodeURIComponent(targetParam)}&t=${Date.now()}`;
       const response = await fetch(url, {
         method: 'GET',
         redirect: 'follow',
       });
       if (response.ok) {
         const result = await response.json();
-        if (result && result.success && Array.isArray(result.bookings)) {
-          const merged = StorageService.mergeRemoteBookings(result.bookings);
+        const list = result?.bookings || (result?.data && result.data.bookings);
+        if (Array.isArray(list)) {
+          const merged = StorageService.mergeRemoteBookings(list);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
+          }
           return { success: true, count: merged.length };
         }
       }
@@ -2985,13 +3051,20 @@ export const GasService = {
     const { url: cleanUrl } = this.sanitizeUrl(config.webAppUrl);
 
     // Normalize Multipurpose Room name to guarantee it matches 'Multipurpose Room' sheet tab
+    const rawStage = String(booking.stage || '').toLowerCase();
+    const rawIdUpper = String(booking.id || '').toUpperCase();
     const isMultipurpose = 
       booking.facilityId === 'multipurpose-room' || 
-      String(booking.facilityName || '').toLowerCase().includes('multipurpose');
-    const targetFacilityName = isMultipurpose ? 'Multipurpose' : (booking.facilityName || '');
+      String(booking.facilityName || '').toLowerCase().includes('multipurpose') ||
+      rawStage.includes('multipurpose') ||
+      rawStage.includes('multi-purpose') ||
+      rawIdUpper.startsWith('MR-') ||
+      rawIdUpper.startsWith('MU-');
+    const targetFacilityName = isMultipurpose ? 'Multipurpose Room' : (booking.facilityName || '');
     const targetSheetTabName = isMultipurpose ? 'Multipurpose Room' : (booking.sheetTabName || booking.facilityName || '');
     const normalizedBooking: Booking = {
       ...booking,
+      facilityId: isMultipurpose ? 'multipurpose-room' : booking.facilityId,
       facilityName: targetFacilityName,
       sheetTabName: targetSheetTabName,
     };
@@ -3003,6 +3076,7 @@ export const GasService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           targetUrl: cleanUrl,
+          action: 'createBooking',
           method: 'POST',
           body: {
             action: 'createBooking',
@@ -3046,8 +3120,8 @@ export const GasService = {
         startTime: booking.startTime || '',
         endTime: booking.endTime || '',
         durationMinutes: String(booking.durationMinutes || 60),
-        guestsCount: String(booking.guestsCount || booking.numberOfGuests || 1),
-        numberOfGuests: String(booking.numberOfGuests || booking.guestsCount || 1),
+        guestsCount: String(booking.numberOfGuests || (booking as any).guestsCount || 1),
+        numberOfGuests: String(booking.numberOfGuests || (booking as any).guestsCount || 1),
         facilityName: targetFacilityName,
         sheetTabName: targetSheetTabName,
         status: booking.status || 'CONFIRMED',

@@ -329,23 +329,24 @@ export const RecurringBookingEngine: React.FC<RecurringBookingEngineProps> = ({
         return;
       }
 
-      // Sync to Google Sheets (non-blocking with automatic queueing)
-      try {
-        await GasService.pushBatchBookingsToRemote(result.createdBookings);
-      } catch (e) {
-        console.warn('[RecurringEngine] Remote batch push notice, preserved locally & queued:', e);
-      }
-
-      // Sync latest data across portal
-      GasService.syncWithRemote().catch((e) => console.warn('Sync post-batch:', e));
-
+      // Immediately update state and notify UI without waiting on Google Sheet roundtrip
       setSubmitResult({
         success: true,
         createdCount: result.createdBookings.length,
         skippedCount: result.skippedDates.length,
       });
 
+      setIsSubmitting(false);
       onBatchBooked(result.createdBookings);
+
+      // Sync to Google Sheets asynchronously in background
+      GasService.pushBatchBookingsToRemote(result.createdBookings)
+        .then(() => {
+          GasService.syncWithRemote().catch(() => {});
+        })
+        .catch((e) => {
+          console.warn('[RecurringEngine] Remote batch push notice, preserved locally & queued:', e);
+        });
     } catch (err: any) {
       setSubmitResult({
         success: false,

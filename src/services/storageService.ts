@@ -519,12 +519,38 @@ export function resolveFacilityId(nameOrTab?: string): string {
   if (s.includes('football') || s === 'fg') return 'football-ground';
   if (s.includes('cricket') && s.includes('net')) return 'cricket-net';
   if (s.includes('cricket') || s === 'cg') return 'cricket-ground';
-  if (s.includes('multipurpose') || s.includes('multi') || s === 'mr') return 'multipurpose-room';
+  if (s.includes('multipurpose') || s.includes('multi-purpose') || s.includes('multi') || s === 'mr') return 'multipurpose-room';
   if (s.includes('cinema') || s.includes('movie') || s === 'cn') return 'cinema';
   if (s.includes('tennis') || s === 'tc') return 'tennis-court';
   if (s.includes('basket') || s === 'bc') return 'basketball-court';
   if (s.includes('isolation') || s.includes('iso') || s === 'iso' || s.includes('quarantine') || s.includes('hospital')) return 'isolation-room';
   return nameOrTab;
+}
+
+export function resolveFacilityTabName(facilityIdOrName?: string): string {
+  if (!facilityIdOrName) return 'Barber Booking';
+  const s = String(facilityIdOrName).toLowerCase().trim();
+  if (s.includes('barber') || s === 'bb') return 'Barber Booking';
+  if (s.includes('football') || s === 'fg') return 'Football Ground';
+  if (s.includes('cricket') && s.includes('net')) return 'Cricket Net';
+  if (s.includes('cricket') || s === 'cg') return 'Cricket Ground';
+  if (s.includes('multipurpose') || s.includes('multi-purpose') || s.includes('multi') || s === 'mr') return 'Multipurpose Room';
+  if (s.includes('cinema') || s.includes('movie') || s === 'cn') return 'Cinema';
+  if (s.includes('tennis') || s === 'tc') return 'Tennis Court';
+  if (s.includes('basket') || s === 'bc') return 'Basket Ball Court';
+  if (s.includes('isolation') || s.includes('iso') || s.includes('quarantine')) return 'Isolation & Room Booking';
+  if (s.includes('handover') || s.includes('takenover') || s === 'hoto') return 'Handover & Takenover';
+  if (s.includes('parcel') || s === 'prcl') return 'Parcel Monitoring';
+  if (s.includes('lost') || s.includes('found') || s === 'lnfd') return 'Lost & Found';
+  if (s.includes('blank') || s.includes('form')) return 'Blank Forms';
+  if (s.includes('invoice') || s.includes('billing')) return 'Invoice Manager';
+  if (s.includes('announcement') || s.includes('notice')) return 'Announcement & Notice';
+  if (s.includes('help') || s.includes('support')) return 'Help & Support';
+  if (s.includes('workorder') || s.includes('ticket')) return 'Ticket Management';
+  if (s.includes('sla')) return 'SLA Management';
+  if (s.includes('workflow')) return 'Automated Workflow';
+  if (s.includes('email') || s.includes('mail')) return 'Email Management';
+  return 'Barber Booking';
 }
 
 export function isFacilityMatch(b: Booking, facility: Facility): boolean {
@@ -535,6 +561,30 @@ export function isFacilityMatch(b: Booking, facility: Facility): boolean {
   const bName = (b.facilityName || '').toLowerCase().trim();
   const facName = facility.name.toLowerCase().trim();
   const facTab = (facility.sheetTabName || '').toLowerCase().trim();
+  const stage = (b.stage || '').toLowerCase().trim();
+  const id = (b.id || '').toUpperCase().trim();
+
+  // 1. Stage & ID definitive disambiguation
+  if (targetId === 'multipurpose-room') {
+    if (stage.includes('multipurpose') || stage.includes('multi-purpose') || id.startsWith('MR-') || id.startsWith('MU-')) {
+      return true;
+    }
+  } else if (stage.includes('multipurpose') || stage.includes('multi-purpose') || id.startsWith('MR-') || id.startsWith('MU-')) {
+    // If it belongs to Multipurpose Room, it CANNOT match any other facility
+    return false;
+  }
+
+  if (targetId === 'isolation-room') {
+    if (stage.includes('room r-') || stage.includes('room b-') || stage.includes('building r') || stage.includes('building b') || id.startsWith('ISO-')) {
+      return true;
+    }
+  }
+
+  if (targetId === 'cricket-net') {
+    if (stage.includes('net') || id.startsWith('CNET-') || id.startsWith('NET-')) return true;
+  } else if (targetId === 'cricket-ground') {
+    if (stage.includes('net') || id.startsWith('CNET-') || id.startsWith('NET-')) return false;
+  }
 
   if (bId === targetId) return true;
   if (resolveFacilityId(bId) === targetId) return true;
@@ -557,28 +607,60 @@ export function isStageMatch(bookingStage?: string, selectedStage?: string, faci
   if (bs === '' || bs === 'default' || bs === 'main' || bs === 'n/a' || bs === 'all' || bs === 'general') return true;
   if (ss === '' || ss === 'default' || ss === 'main' || ss === 'n/a' || ss === 'all' || ss === 'general') return true;
   
-  // If facility has only 1 stage (like Cinema), all bookings for that facility belong to it
+  // If facility has only 1 stage (like Cinema or Football Ground), all bookings for that facility belong to it
   if (facility && facility.stages && facility.stages.length <= 1) {
     return true;
   }
 
-  // 1. Identifying numbers conflict check (e.g., "1" vs "2", "1" vs "10")
-  const bNum = bs.match(/(?:stage|room|court|area|pitch|net|chair|table|lane|bed|ground|wicket|bay|unit)?\s*([0-9]+[a-z]?)/i);
-  const sNum = ss.match(/(?:stage|room|court|area|pitch|net|chair|table|lane|bed|ground|wicket|bay|unit)?\s*([0-9]+[a-z]?)/i);
-  if (bNum && sNum) {
-    if (bNum[1].toLowerCase() !== sNum[1].toLowerCase()) {
-      return false; // Different identifiers can NEVER match (e.g., Room 1 vs Room 10, Ground 1 vs Ground 2)
+  // 1. Specific Room checks (Crucial for Multipurpose Room 5 vs Room 6):
+  const bRoom = bs.match(/room\s*([0-9]+[a-z]?)/i);
+  const sRoom = ss.match(/room\s*([0-9]+[a-z]?)/i);
+  if (bRoom && sRoom) {
+    if (bRoom[1].toLowerCase() !== sRoom[1].toLowerCase()) {
+      return false; // Room 5 can NEVER match Room 6
+    }
+    return true; // Both are Room 5 (or both Room 6) -> definitive match!
+  }
+  if (bRoom && !sRoom) {
+    const roomNum = bRoom[1].toLowerCase();
+    const hasOtherRoomNum = ss.match(/room\s*([0-9]+[a-z]?)/i);
+    if (hasOtherRoomNum && hasOtherRoomNum[1].toLowerCase() !== roomNum) return false;
+    if (new RegExp(`(?:^|\\b)${roomNum}(?:\\b|$)`, 'i').test(ss)) return true;
+  }
+  if (!bRoom && sRoom) {
+    const roomNum = sRoom[1].toLowerCase();
+    const hasOtherRoomNum = bs.match(/room\s*([0-9]+[a-z]?)/i);
+    if (hasOtherRoomNum && hasOtherRoomNum[1].toLowerCase() !== roomNum) return false;
+    if (new RegExp(`(?:^|\\b)${roomNum}(?:\\b|$)`, 'i').test(bs)) return true;
+  }
+
+  // 2. Specific Stage checks (e.g. Stage 1 vs Stage 2 for Cricket Ground):
+  const bStage = bs.match(/stage\s*([0-9]+)/i);
+  const sStage = ss.match(/stage\s*([0-9]+)/i);
+  if (bStage && sStage) {
+    if (bStage[1] !== sStage[1]) {
+      return false; // Stage 1 can NEVER match Stage 2
     }
   }
 
-  // 2. Letter conflicts (e.g. Court A vs Court B)
+  // 3. Specific Court / Net / Pitch / Area checks:
+  const bCourt = bs.match(/(?:court|pitch|net|bay|lane|table|chair)\s*([0-9]+[a-z]?)/i);
+  const sCourt = ss.match(/(?:court|pitch|net|bay|lane|table|chair)\s*([0-9]+[a-z]?)/i);
+  if (bCourt && sCourt) {
+    if (bCourt[1].toLowerCase() !== sCourt[1].toLowerCase()) {
+      return false;
+    }
+    return true;
+  }
+
+  // 4. Letter conflicts (e.g. Court A vs Court B)
   const bLetter = bs.match(/(?:court|stage|room|area|pitch|net|chair|table|ground)\s*([a-z])\b/i);
   const sLetter = ss.match(/(?:court|stage|room|area|pitch|net|chair|table|ground)\s*([a-z])\b/i);
   if (bLetter && sLetter && bLetter[1].toLowerCase() !== sLetter[1].toLowerCase()) {
     return false;
   }
 
-  // 3. Half pitch / North / South / East / West / 3A / 3B / Full court conflicts
+  // 5. Half pitch / North / South / East / West / 3A / 3B / Full court conflicts
   if ((bs.includes('north') && ss.includes('south')) || (bs.includes('south') && ss.includes('north'))) return false;
   if ((bs.includes('east') && ss.includes('west')) || (bs.includes('west') && ss.includes('east'))) return false;
   if ((bs.includes('3a') && ss.includes('3b')) || (bs.includes('3b') && ss.includes('3a'))) return false;
@@ -596,7 +678,8 @@ export function isStageMatch(bookingStage?: string, selectedStage?: string, faci
     return true;
   }
 
-  if (bNum && sNum && bNum[1].toLowerCase() === sNum[1].toLowerCase()) {
+  // If both stage numbers matched and no conflicting room/court was found
+  if (bStage && sStage && bStage[1] === sStage[1]) {
     return true;
   }
 
@@ -638,7 +721,19 @@ export function sanitizeBooking(raw: any, index: number = 0): Booking {
   const endTime = normalizeTimeString(raw.endTime);
   const id = String(raw.id || `BK-${Date.now()}-${index}-${Math.floor(Math.random() * 1000)}`);
   const sheetTabName = String(raw.sheetTabName || raw.facilityName || 'Barber Booking');
+  const rawStage = String(raw.stage || '').toLowerCase();
+  const rawIdUpper = id.toUpperCase();
   const facilityId = raw.facilityId || resolveFacilityId(sheetTabName || raw.facilityName);
+  const isMultipurpose =
+    facilityId === 'multipurpose-room' ||
+    sheetTabName.toLowerCase().includes('multipurpose') ||
+    String(raw.facilityName || '').toLowerCase().includes('multipurpose') ||
+    rawStage.includes('multipurpose') ||
+    rawStage.includes('multi-purpose') ||
+    rawIdUpper.startsWith('MR-') ||
+    rawIdUpper.startsWith('MU-');
+  const resolvedFacilityName = isMultipurpose ? 'Multipurpose Room' : String(raw.facilityName || sheetTabName);
+  const resolvedSheetTabName = isMultipurpose ? 'Multipurpose Room' : sheetTabName;
 
   const rawStatus = String(raw.status || '').toUpperCase().trim();
   const isCancelled =
@@ -650,7 +745,7 @@ export function sanitizeBooking(raw: any, index: number = 0): Booking {
   return {
     ...raw,
     id,
-    facilityId,
+    facilityId: isMultipurpose ? 'multipurpose-room' : facilityId,
     date: dateStr,
     startTime,
     endTime,
@@ -660,10 +755,10 @@ export function sanitizeBooking(raw: any, index: number = 0): Booking {
     email: raw.email ? AuthService.sanitizeText(String(raw.email)) : undefined,
     departmentOrTeam: raw.departmentOrTeam ? AuthService.sanitizeText(String(raw.departmentOrTeam)) : undefined,
     notes: raw.notes ? AuthService.sanitizeText(String(raw.notes)) : undefined,
-    stage: String(raw.stage || 'Stage 1'),
+    stage: String(raw.stage || (isMultipurpose ? 'Stage 1 Multipurpose Room 5' : 'Stage 1')),
     status: isCancelled ? 'CANCELLED' : 'CONFIRMED',
-    sheetTabName,
-    facilityName: String(raw.facilityName || sheetTabName),
+    sheetTabName: resolvedSheetTabName,
+    facilityName: resolvedFacilityName,
   };
 }
 
@@ -1902,16 +1997,37 @@ export const StorageService = {
       const tab = (b.sheetTabName || '').toLowerCase();
       const stage = (b.stage || '').toLowerCase();
       const bId = (b.id || '').toUpperCase();
+      // Explicitly reject non-isolation facilities (Multipurpose Room, Cinema, Barber, etc.)
+      if (
+        fId.includes('multi') ||
+        tab.includes('multi') ||
+        stage.includes('multi') ||
+        bId.startsWith('MR-') ||
+        bId.startsWith('MU-') ||
+        fId.includes('cinema') ||
+        tab.includes('cinema') ||
+        stage.includes('cinema') ||
+        bId.startsWith('CN-') ||
+        fId.includes('tennis') ||
+        tab.includes('tennis') ||
+        bId.startsWith('TC-') ||
+        fId.includes('barber') ||
+        tab.includes('barber') ||
+        bId.startsWith('BB-') ||
+        bId.startsWith('BK-')
+      ) {
+        return false;
+      }
+
       return (
         fId.includes('isolation') ||
-        fId.includes('room') ||
         tab.includes('isolation') ||
-        tab.includes('room') ||
         bId.startsWith('ISO-') ||
         stage.includes('room r-') ||
         stage.includes('room b-') ||
         stage.includes('building r') ||
-        stage.includes('building b')
+        stage.includes('building b') ||
+        (fId === 'room' || tab === 'room')
       );
     });
 
@@ -2865,6 +2981,15 @@ export const StorageService = {
       }
     } catch (e) {}
 
+    // Guaranteed Google Sheets sync (pushes directly and queues if offline)
+    try {
+      import('./gasService').then(({ GasService }) => {
+        GasService.pushBookingToRemote(newBooking).catch((err) => {
+          console.warn('[StorageService] Background Google Sheets push notice:', err);
+        });
+      }).catch(() => {});
+    } catch (e) {}
+
     try {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
@@ -3047,6 +3172,15 @@ export const StorageService = {
       }
     } catch (e) {}
 
+    // Guaranteed Google Sheets batch sync
+    try {
+      import('./gasService').then(({ GasService }) => {
+        GasService.pushBatchBookingsToRemote(createdBookings).catch((err) => {
+          console.warn('[StorageService] Background GAS batch push notice:', err);
+        });
+      }).catch(() => {});
+    } catch (e) {}
+
     return {
       success: true,
       createdBookings,
@@ -3225,6 +3359,29 @@ export const StorageService = {
           }),
         }).catch(() => {});
       }
+    } catch (e) {}
+
+    // Guaranteed Google Sheets cancellation push
+    try {
+      import('./gasService').then(({ GasService }) => {
+        GasService.pushCancelToRemote({
+          bookingId: updatedBooking.id,
+          phoneNumber: updatedBooking.phoneNumber,
+          reason: effectiveReason,
+          facilityName: updatedBooking.facilityName || updatedBooking.facilityId,
+          sheetTabName: updatedBooking.sheetTabName,
+          stage: updatedBooking.stage,
+          date: updatedBooking.date,
+          startTime: updatedBooking.startTime,
+          endTime: updatedBooking.endTime,
+          durationMinutes: updatedBooking.durationMinutes,
+          guestsCount: updatedBooking.numberOfGuests,
+          customerName: updatedBooking.customerName,
+          cancelledBy: effectiveCancelledBy,
+        }).catch((err) => {
+          console.warn('[StorageService] Background GAS cancel push notice:', err);
+        });
+      }).catch(() => {});
     } catch (e) {}
 
     // Create & store rich cancellation log entry
@@ -4473,6 +4630,14 @@ export const StorageService = {
 
   getDeletedIdsMap(): Set<string> {
     return getDeletedIdsMap();
+  },
+
+  resolveFacilityTabName(facilityIdOrName?: string): string {
+    return resolveFacilityTabName(facilityIdOrName);
+  },
+
+  resolveFacilityId(nameOrTab?: string): string {
+    return resolveFacilityId(nameOrTab);
   },
 };
 

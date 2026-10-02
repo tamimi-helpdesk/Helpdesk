@@ -231,10 +231,10 @@ export const GoogleSyncTab: React.FC<GoogleSyncTabProps> = ({
             }`} />
             <span>
               {gasConfig.syncStatus === 'connected'
-                ? 'সংযুক্ত (Connected)'
+                ? 'Connected'
                 : gasConfig.syncStatus === 'error'
-                ? 'সংযোগ বিচ্ছিন্ন (Not Connected)'
-                : 'অপেক্ষমাণ (Idle)'}
+                ? 'Not Connected'
+                : 'Idle'}
             </span>
           </div>
         </div>
@@ -287,27 +287,27 @@ export const GoogleSyncTab: React.FC<GoogleSyncTabProps> = ({
             </div>
           </div>
 
-          {/* SPREADSHEET LINK WARNING & 4-STEP BENGALI GUIDANCE */}
+          {/* SPREADSHEET LINK WARNING & GUIDANCE */}
           {isSheetLink && (
             <div className="p-4 bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-300 dark:border-amber-700 rounded-2xl space-y-3 text-xs">
               <div className="flex items-center space-x-2 text-amber-900 dark:text-amber-200 font-black">
                 <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
-                <span>⚠️ এটি Google Spreadsheet-এর সরাসরি লিংক (Direct Spreadsheet Link Detected)</span>
+                <span>⚠️ Direct Google Spreadsheet Link Detected</span>
               </div>
               <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
-                আপনি সরাসরি গুগল স্প্রেডশিটের লিংক (<code>docs.google.com/spreadsheets/d/...</code>) দিয়েছেন। পোর্টাল থেকে গুগল শিটে স্বয়ংক্রিয়ভাবে বুকিং ও ডেটা সেভ করার জন্য <strong>Google Apps Script Web App Exec URL</strong> প্রয়োজন।
+                You provided a direct Google Spreadsheet link (<code>docs.google.com/spreadsheets/d/...</code>). To automatically sync bookings and records, please provide your <strong>Google Apps Script Web App Exec URL</strong>.
               </p>
 
               <div className="bg-white/80 dark:bg-slate-900/80 p-3.5 rounded-xl border border-amber-200 dark:border-amber-800/60 space-y-2 text-[11px] text-slate-800 dark:text-slate-200">
                 <div className="font-black text-amber-800 dark:text-amber-300 flex items-center space-x-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                  <span>সহজ ৪-স্টেপ সেটআপ নির্দেশিকা (মাত্র ১ মিনিট সময় লাগবে):</span>
+                  <span>Simple 4-Step Setup Guide:</span>
                 </div>
                 <ol className="list-decimal list-inside space-y-1 font-medium">
-                  <li>আপনার Google Sheet খুলে উপরের মেনু থেকে <strong>Extensions &gt; Apps Script</strong>-এ যান।</li>
-                  <li>নিচের <strong>"Copy 20-Facility Code.gs"</strong> বাটনে ক্লিক করে পুরো কোডটি কপি করে Apps Script-এর <code>Code.gs</code>-এ পেস্ট করে <strong>Save</strong> করুন।</li>
-                  <li>উপরে <strong>Deploy &gt; New deployment</strong>-এ ক্লিক করে type সিলেক্ট করুন <strong>"Web app"</strong>।</li>
-                  <li><strong>Execute as:</strong> "Me" এবং <strong>Who has access:</strong> <span className="text-rose-600 dark:text-rose-400 font-black">"Anyone"</span> সিলেক্ট করে Deploy করুন এবং প্রাপ্ত Web App Exec URL টি কপি করে এখানে দিন!</li>
+                  <li>Open your Google Sheet and navigate to <strong>Extensions &gt; Apps Script</strong>.</li>
+                  <li>Click <strong>"Copy 20-Facility Code.gs"</strong> below, paste the script into <code>Code.gs</code>, and <strong>Save</strong>.</li>
+                  <li>Click <strong>Deploy &gt; New deployment</strong> and choose type <strong>"Web app"</strong>.</li>
+                  <li>Set <strong>Execute as:</strong> "Me" and <strong>Who has access:</strong> <span className="text-rose-600 dark:text-rose-400 font-black">"Anyone"</span>, click Deploy, and paste the generated Web App Exec URL here.</li>
                 </ol>
 
                 <div className="pt-2 flex flex-wrap items-center gap-2">
@@ -349,8 +349,8 @@ export const GoogleSyncTab: React.FC<GoogleSyncTabProps> = ({
                   )}
                   <span>
                     {testResult.success
-                      ? 'কানেকশন সফল (Connected Successfully)'
-                      : 'কানেকশন ব্যর্থ (Connection Failed)'}
+                      ? 'Connected Successfully'
+                      : 'Connection Failed'}
                   </span>
                 </div>
                 {testResult.latencyMs && (
@@ -374,7 +374,7 @@ export const GoogleSyncTab: React.FC<GoogleSyncTabProps> = ({
                 {isTesting ? (
                   <>
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>পরীক্ষা করা হচ্ছে (Testing &amp; Saving)...</span>
+                    <span>Testing &amp; Saving...</span>
                   </>
                 ) : (
                   <>

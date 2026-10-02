@@ -238,11 +238,11 @@ export const GasIntegrationModal: React.FC<GasIntegrationModalProps> = ({
                   <span className="text-xs font-black text-slate-950 dark:text-white truncate">
                     {config.webAppUrl
                       ? config.syncStatus === 'connected'
-                        ? 'সংযুক্ত (Connected)'
+                        ? 'Connected'
                         : config.syncStatus === 'error'
-                        ? 'সংযোগ বিচ্ছিন্ন (Not Connected)'
-                        : 'যাচাই করা হয়নি (Unverified)'
-                      : 'লিংক নেই (Not Set)'}
+                        ? 'Not Connected'
+                        : 'Unverified'
+                      : 'Not Configured'}
                   </span>
                 </div>
               </div>
@@ -321,17 +321,17 @@ export const GasIntegrationModal: React.FC<GasIntegrationModalProps> = ({
                 <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-300 dark:border-amber-700 rounded-xl space-y-2 text-xs">
                   <div className="flex items-center space-x-2 text-amber-900 dark:text-amber-200 font-black">
                     <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                    <span>⚠️ এটি Google Spreadsheet-এর সরাসরি লিংক (Direct Spreadsheet Link)</span>
+                    <span>⚠️ Direct Google Spreadsheet Link Detected</span>
                   </div>
                   <p className="text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed font-medium">
-                    আপনি গুগল স্প্রেডশিটের লিংক দিয়েছেন। পোর্টাল থেকে গুগল শিটে স্বয়ংক্রিয়ভাবে বুকিং ও ডেটা সেভ করার জন্য <strong>Apps Script Web App Exec URL</strong> প্রয়োজন।
+                    You provided a Google Spreadsheet URL. To automatically synchronize bookings and records with Google Sheets, you need the <strong>Apps Script Web App Exec URL</strong>.
                   </p>
                   <div className="bg-white/80 dark:bg-slate-900/80 p-3 rounded-lg border border-amber-200 dark:border-amber-800/60 space-y-1.5 text-[11px] text-slate-800 dark:text-slate-200">
                     <ol className="list-decimal list-inside space-y-1 font-medium">
-                      <li>আপনার Google Sheet খুলে <strong>Extensions &gt; Apps Script</strong>-এ যান।</li>
-                      <li><strong>"Copy 20-Facility Code.gs"</strong> ক্লিক করে কোডটি পেস্ট ও Save করুন।</li>
-                      <li><strong>Deploy &gt; New deployment &gt; Web app</strong> সিলেক্ট করে <strong>"Who has access: Anyone"</strong> দিয়ে Deploy করুন।</li>
-                      <li>প্রাপ্ত Web App Exec URL টি কপি করে এখানে দিন।</li>
+                      <li>Open your Google Sheet and navigate to <strong>Extensions &gt; Apps Script</strong>.</li>
+                      <li>Click <strong>"Copy 20-Facility Code.gs"</strong>, paste the code into Apps Script, and Save.</li>
+                      <li>Click <strong>Deploy &gt; New deployment &gt; Web app</strong>, select <strong>"Who has access: Anyone"</strong>, and Deploy.</li>
+                      <li>Copy the generated Web App Exec URL and paste it here.</li>
                     </ol>
                     <div className="pt-1.5 flex items-center space-x-2">
                       <button

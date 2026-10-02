@@ -1,12 +1,12 @@
 {
-  "projectId": "quick-arena-kdtd0",
-  "appId": "1:899926890898:web:3cafe78ec09171c8ffc94b",
-  "apiKey": "AIzaSyAtSbkNfpgtmb6ehHm8fGlYuRm0DMvwCbY",
-  "authDomain": "quick-arena-kdtd0.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-helpdesk-c6ae152a-54bc-4796-b924-2cce416739e4",
-  "storageBucket": "quick-arena-kdtd0.firebasestorage.app",
-  "messagingSenderId": "899926890898",
+  "projectId": "gen-lang-client-0604882055",
+  "appId": "1:860980007907:web:771c233a96757978f146d6",
+  "apiKey": "AIzaSyDQGap3HCoH_9gY5-GmGhSPkJkeh3M5Rjc",
+  "authDomain": "gen-lang-client-0604882055.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-remixhelpdesk-89eb9a47-1f6e-426b-973f-5682d9d03cc5",
+  "storageBucket": "gen-lang-client-0604882055.firebasestorage.app",
+  "messagingSenderId": "860980007907",
   "measurementId": "",
-  "oAuthClientId": "899926890898-codhak02k2i3dbhg6ump75s7vemh873e.apps.googleusercontent.com",
+  "oAuthClientId": "860980007907-bq6ht4f56no7if1k3j9e0erppms3ptsp.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

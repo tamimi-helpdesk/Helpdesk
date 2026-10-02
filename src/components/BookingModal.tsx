@@ -186,7 +186,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         notes: combinedNotes || undefined,
       };
 
-      // 1. Create booking in local store & real-time multi-computer Hub
+      // 1. Create booking in local store & real-time multi-computer Hub (instant <5ms)
       const result = StorageService.createBooking(bookingPayload);
 
       if (!result.success || !result.booking) {
@@ -195,19 +195,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         return;
       }
 
-      // 2. Push to remote Google Sheet (with auto-retry, auto-healing, and offline queue resilience)
-      let remoteSynced = false;
-      try {
-        const remoteRes = await GasService.pushBookingToRemote(result.booking);
-        remoteSynced = Boolean(remoteRes?.success && !remoteRes?.queued);
-      } catch (e) {
-        console.warn('[BookingModal] Remote push notice, preserved locally & queued:', e);
-      }
-
-      // Background sync to ensure all devices and sheets are up-to-date
-      GasService.syncWithRemote().catch((e) => console.warn('Background post-booking sync:', e));
-
-      // Trigger Confetti Celebration & Audio Chime
+      // Trigger Confetti Celebration & Audio Chime immediately
       try {
         audioFeedback.playSuccessChime();
         confetti({
@@ -220,12 +208,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         // Safe fallback
       }
 
+      // Immediately close modal & show success feedback pass
       setIsSubmitting(false);
       onBookingSuccess(result.booking);
 
       ActionFeedback.showSuccess({
         title: 'Reservation Confirmed!',
-        subtitle: `${facility.name} booked for ${customerName || 'Guest'}${remoteSynced ? '' : ' (Synced & Queued for Sheet)'}`,
+        subtitle: `${facility.name} booked for ${customerName || 'Guest'} (Instant Network Sync)`,
         referenceCode: result.booking.id,
         facilityName: facility.name,
         facilityId: facility.id,
@@ -237,6 +226,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         ],
         primaryActionLabel: 'View Booking Pass',
       });
+
+      // 2. Push to remote Google Sheet asynchronously in the background (non-blocking so UI never hangs)
+      GasService.pushBookingToRemote(result.booking)
+        .then((res) => {
+          if (res?.success && !res?.queued) {
+            GasService.syncFacility(facility.id).catch(() => {});
+          }
+        })
+        .catch((e) => {
+          console.warn('[BookingModal] Background remote push notice, queued in offline engine:', e);
+        });
     } catch (err: any) {
       setIsSubmitting(false);
       setErrorMessage(err.message || 'An unexpected error occurred during reservation.');

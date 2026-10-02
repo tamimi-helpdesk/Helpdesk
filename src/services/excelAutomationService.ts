@@ -1241,8 +1241,8 @@ export class ExcelAutomationService {
     if (
       lower.includes('non') ||
       lower.includes('not') ||
-      lower.includes('অ-মুসলিম') ||
-      lower.includes('অমুসলিম')
+      lower.includes('non-muslim') ||
+      lower.includes('nonmuslim')
     ) {
       return 'Non-Muslim';
     }
@@ -1252,8 +1252,6 @@ export class ExcelAutomationService {
       lower.includes('muslim') ||
       lower.includes('moslem') ||
       lower.includes('musalman') ||
-      str.includes('ইসলাম') ||
-      str.includes('মুসলিম') ||
       str.includes('مسلم') ||
       str.includes('إسلام')
     ) {
@@ -1510,20 +1508,6 @@ export class ExcelAutomationService {
     if (val === undefined || val === null) return '';
     const raw = String(val).trim();
     if (!raw) return '';
-
-    // Direct Bengali script checks
-    if (raw.includes('বাংলাদেশ') || raw.includes('বাঙালি') || raw.includes('বাঙ্গালী')) {
-      return 'Bangladesh';
-    }
-    if (raw.includes('ভারত') || raw.includes('ভারতীয়')) {
-      return 'India';
-    }
-    if (raw.includes('পাকিস্তান')) {
-      return 'Pakistan';
-    }
-    if (raw.includes('নেপাল')) {
-      return 'Nepal';
-    }
 
     const clean = raw.toLowerCase().replace(/[^a-z]/g, '');
 

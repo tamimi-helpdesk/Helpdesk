@@ -1,4 +1,4 @@
-/**
+const e=`/**
  * =========================================================================
  * TAMIMI GLOBAL COMPANY - TAFGA SPORTS & RECREATION FACILITY PORTAL
  * GOOGLE APPS SCRIPT BACKEND WEBHOOK API (FOR NETLIFY DEPLOYMENT)
@@ -1041,17 +1041,8 @@ function createBooking(b) {
 
   var colMap = getColumnMapping(displayData[headerRowIdx] || []);
 
-  // Conflict detection & Idempotency check
+  // Conflict detection
   for (var i = headerRowIdx + 1; i < displayData.length; i++) {
-    var rowId = String(displayData[i][colMap.id] || rawData[i][colMap.id] || "").trim();
-    if (b.id && rowId && rowId.toLowerCase() === b.id.toLowerCase()) {
-      return {
-        success: true,
-        message: "Booking already recorded in Sheet",
-        booking: b
-      };
-    }
-
     var rowDate = formatDateString(displayData[i][colMap.date] || rawData[i][colMap.date]);
     var rowStage = String(displayData[i][colMap.stage] || rawData[i][colMap.stage] || "").trim();
     var rowStart = formatTimeString(displayData[i][colMap.startTime] || rawData[i][colMap.startTime]);
@@ -1865,8 +1856,8 @@ function getAllIsolationFromSheet() {
       var stageVal = String(row[colMap.stage] || raw[colMap.stage] || "").trim();
       var notesVal = String(row[colMap.notes] || raw[colMap.notes] || "").trim();
       
-      var roomMatch = stageVal.match(/(?:Room\\s*|ISO-)?([RB]-?\\d{2})/i) || bId.match(/ISO-([RB]-?\\d{2})/i);
-      var roomKey = roomMatch ? roomMatch[1].toUpperCase().replace("-", "-0").replace(/0+(\\d{2})/, "$1") : stageVal;
+      var roomMatch = stageVal.match(/(?:Room\\\\s*|ISO-)?([RB]-?\\\\d{2})/i) || bId.match(/ISO-([RB]-?\\\\d{2})/i);
+      var roomKey = roomMatch ? roomMatch[1].toUpperCase().replace("-", "-0").replace(/0+(\\\\d{2})/, "$1") : stageVal;
       if (!roomKey) roomKey = "R-01";
 
       var bedNum = 1;
@@ -3418,7 +3409,7 @@ function getAllBookings() {
       }
 
       if (!cleanDate && bookingId) {
-        var idDateMatch = bookingId.match(/(\\d{4})(\\d{2})(\\d{2})/);
+        var idDateMatch = bookingId.match(/(\\\\d{4})(\\\\d{2})(\\\\d{2})/);
         if (idDateMatch) {
           var iy = parseInt(idDateMatch[1], 10);
           var im = parseInt(idDateMatch[2], 10);
@@ -3596,12 +3587,12 @@ function formatDateString(val) {
 
   if (typeof val === "string") {
     val = val.trim();
-    if (/^\\d{4}-\\d{2}-\\d{2}$/.test(val)) return val;
+    if (/^\\\\d{4}-\\\\d{2}-\\\\d{2}$/.test(val)) return val;
     
-    var isoMatch = val.match(/^(\\d{4}-\\d{2}-\\d{2})/);
+    var isoMatch = val.match(/^(\\\\d{4}-\\\\d{2}-\\\\d{2})/);
     if (isoMatch) return isoMatch[1];
     
-    var slashMatch = val.match(/^(\\d{1,2})\\\/(\\d{1,2})\\\/(\\d{4})$/);
+    var slashMatch = val.match(/^(\\\\d{1,2})\\\\\\/(\\\\d{1,2})\\\\\\/(\\\\d{4})$/);
     if (slashMatch) {
       var p1 = parseInt(slashMatch[1], 10);
       var p2 = parseInt(slashMatch[2], 10);
@@ -3645,7 +3636,7 @@ function formatTimeString(val) {
   var str = String(val).trim();
   if (!str) return "00:00";
 
-  var ampmMatch = str.match(/(\\d{1,2}):(\\d{2})(?::\\d{2})?\\s*(AM|PM)/i);
+  var ampmMatch = str.match(/(\\\\d{1,2}):(\\\\d{2})(?::\\\\d{2})?\\\\s*(AM|PM)/i);
   if (ampmMatch) {
     var hours = parseInt(ampmMatch[1], 10);
     var minutes = ("0" + ampmMatch[2]).slice(-2);
@@ -3655,7 +3646,7 @@ function formatTimeString(val) {
     return ("0" + hours).slice(-2) + ":" + minutes;
   }
 
-  var time24Match = str.match(/(?:[T\\s]|^)(\\d{1,2}):(\\d{2})/);
+  var time24Match = str.match(/(?:[T\\\\s]|^)(\\\\d{1,2}):(\\\\d{2})/);
   if (time24Match) {
     return ("0" + time24Match[1]).slice(-2) + ":" + ("0" + time24Match[2]).slice(-2);
   }
@@ -3708,26 +3699,26 @@ function extractLocationAndDescription(caption) {
   caption = String(caption).trim();
 
   // 1. Standard Room code pattern (e.g. I08-012, J02-014, B12-005)
-  var roomPattern = /^([A-Za-z]+[\d]*\s*[-/]\s*[\w\d]+)/;
+  var roomPattern = /^([A-Za-z]+[\\d]*\\s*[-/]\\s*[\\w\\d]+)/;
   var roomMatch = caption.match(roomPattern);
   if (roomMatch) {
     var rawLoc = roomMatch[0];
-    var cleanLoc = rawLoc.replace(/\s*[-/]\s*/, "-").toUpperCase();
-    var desc = caption.replace(rawLoc, "").replace(/^[\s,;:-]+/, "").trim();
+    var cleanLoc = rawLoc.replace(/\\s*[-/]\\s*/, "-").toUpperCase();
+    var desc = caption.replace(rawLoc, "").replace(/^[\\s,;:-]+/, "").trim();
     return { location: cleanLoc, description: desc || caption };
   }
 
   // 2. Stage / Zone / Camp / Facility area pattern
-  var areaPattern = /^(Stage\s*[-]?\s*\d+(?:\s+(?:east|west|north|south|central)?(?:\s+side)?)?|Zone\s*[-]?\s*[A-Za-z\d]+|Camp\s*[-]?\s*\d+|Recreation\s+Hall|Dining\s+Facility|Mosque|Kitchen|Laundry|Gym|Admin\s+Building)/i;
+  var areaPattern = /^(Stage\\s*[-]?\\s*\\d+(?:\\s+(?:east|west|north|south|central)?(?:\\s+side)?)?|Zone\\s*[-]?\\s*[A-Za-z\\d]+|Camp\\s*[-]?\\s*\\d+|Recreation\\s+Hall|Dining\\s+Facility|Mosque|Kitchen|Laundry|Gym|Admin\\s+Building)/i;
   var areaMatch = caption.match(areaPattern);
   if (areaMatch) {
     var rawArea = areaMatch[0].trim();
-    var areaDesc = caption.slice(rawArea.length).replace(/^[\s,;:-]+/, "").trim();
+    var areaDesc = caption.slice(rawArea.length).replace(/^[\\s,;:-]+/, "").trim();
     return { location: rawArea, description: areaDesc || caption };
   }
 
   // 3. Fallback: First word
-  var parts = caption.split(/\s+/);
+  var parts = caption.split(/\\s+/);
   return {
     location: parts.shift() || "General Area",
     description: parts.join(" ") || caption
@@ -4009,3 +4000,4 @@ function getAllObservationsFromSheet() {
 
   return allObs;
 }
+`;export{e as G};

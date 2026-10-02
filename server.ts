@@ -219,6 +219,7 @@ app.post('/api/hub/mutate', (req: Request, res: Response) => {
       return b;
     });
 
+    invalidateGasCache();
     persistHubState();
     broadcastHubEvent({ type: 'CANCEL', entity: 'bookings', id: cleanId, version: hubState.version, payload: { reason } });
     return res.json({ success: true, version: hubState.version, cancelled: cleanId, found });
@@ -303,6 +304,7 @@ app.post('/api/hub/mutate', (req: Request, res: Response) => {
       }
     }
 
+    invalidateGasCache();
     persistHubState();
     broadcastHubEvent({ type: 'UPSERT', entity, id: targetId, version: hubState.version, payload: data });
     return res.json({ success: true, version: hubState.version, item: data });
@@ -443,6 +445,7 @@ app.post('/api/hub/mutate', (req: Request, res: Response) => {
       hubState.supportTickets = Array.from(sMap.values());
     }
 
+    invalidateGasCache();
     persistHubState();
     broadcastHubEvent({ type: 'SYNC_ALL', version: hubState.version });
     return res.json({
@@ -483,7 +486,8 @@ function invalidateGasCache() {
 
 app.post('/api/gas/proxy', async (req: Request, res: Response) => {
   const startTime = Date.now();
-  const { targetUrl, action = 'ping', method = 'GET', body = null } = req.body;
+  const { targetUrl, action, method = 'GET', body = null } = req.body;
+  const effectiveAction = (body && body.action) || action || (method.toUpperCase() === 'GET' ? 'ping' : 'save');
 
   if (!targetUrl || typeof targetUrl !== 'string') {
     return res.json({
@@ -520,12 +524,46 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
     }
   }
 
-  const isReadAction = method.toUpperCase() === 'GET' && (action === 'getAll' || action === 'ping' || action === 'getFacilities');
-  const cacheKey = `${cleanUrl}_${action}`;
+  const bodyObj = (body && typeof body === 'object') ? body : {};
+  const tabOrFacility = (req.body && (req.body.tab || req.body.facility || req.body.facilityName || req.body.tabName)) || 
+                        (bodyObj.tab || bodyObj.facility || bodyObj.facilityName || bodyObj.tabName) || '';
+  const isReadAction = method.toUpperCase() === 'GET' && (
+    effectiveAction === 'getAll' ||
+    effectiveAction === 'getAllBookings' ||
+    effectiveAction === 'getBookings' ||
+    effectiveAction === 'getFacilityBookings' ||
+    effectiveAction === 'ping' ||
+    effectiveAction === 'getFacilities' ||
+    effectiveAction === 'getHandover' ||
+    effectiveAction === 'getParcels' ||
+    effectiveAction === 'getLostFound' ||
+    effectiveAction === 'getIsolation' ||
+    effectiveAction === 'getBlankForms' ||
+    effectiveAction === 'getInvoices' ||
+    effectiveAction === 'getNotices' ||
+    effectiveAction === 'getSupportTickets' ||
+    effectiveAction === 'getWorkOrderTickets' ||
+    effectiveAction === 'getSlaPolicies' ||
+    effectiveAction === 'getWorkflows' ||
+    effectiveAction === 'getEmailLogs'
+  );
+  const cacheKey = `${cleanUrl}_${effectiveAction}_${tabOrFacility}`;
 
-  // If a write operation is being performed, clear cache immediately
-  if (!isReadAction) {
-    invalidateGasCache();
+  // If a write operation is being performed or caller requested fresh sync, skip cached response
+  const shouldSkipCache = Boolean(
+    req.body.skipCache || 
+    req.body.fresh || 
+    req.body.forceFresh || 
+    bodyObj.skipCache || 
+    bodyObj.fresh || 
+    bodyObj.forceFresh || 
+    !isReadAction
+  );
+
+  if (shouldSkipCache) {
+    if (!isReadAction) {
+      invalidateGasCache();
+    }
   } else {
     // Serve from cache if fresh (prevents multiple computers from overwhelming Google Apps Script)
     const cached = gasCache.get(cacheKey);
@@ -537,7 +575,7 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
       });
     }
 
-    // Request coalescing: If multiple computers request getAll at the exact same moment, share the single in-flight promise
+    // Request coalescing: If multiple computers request the same entity at the exact same moment, share the single in-flight promise
     const inFlight = inFlightRequests.get(cacheKey);
     if (inFlight) {
       try {
@@ -564,7 +602,30 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
 
     if (method.toUpperCase() === 'GET') {
       const separator = fetchUrl.includes('?') ? '&' : '?';
-      fetchUrl = `${fetchUrl}${separator}action=${encodeURIComponent(action)}&t=${Date.now()}`;
+      const qParams = new URLSearchParams();
+      qParams.set('action', action || effectiveAction);
+      qParams.set('t', String(Date.now()));
+      const tabVal = req.body.tab || bodyObj.tab || req.body.tabName || bodyObj.tabName;
+      const facVal = req.body.facility || bodyObj.facility || req.body.facilityName || bodyObj.facilityName;
+      const facIdVal = req.body.facilityId || bodyObj.facilityId;
+      const dateVal = req.body.date || bodyObj.date;
+      const stageVal = req.body.stage || bodyObj.stage;
+      const qVal = req.body.q || bodyObj.q || req.body.query || bodyObj.query;
+
+      if (tabVal) {
+        qParams.set('tab', tabVal);
+        qParams.set('tabName', tabVal);
+      }
+      if (facVal) {
+        qParams.set('facility', facVal);
+        qParams.set('facilityName', facVal);
+      }
+      if (facIdVal) qParams.set('facilityId', facIdVal);
+      if (dateVal) qParams.set('date', dateVal);
+      if (stageVal) qParams.set('stage', stageVal);
+      if (qVal) qParams.set('q', qVal);
+
+      fetchUrl = `${fetchUrl}${separator}${qParams.toString()}`;
       fetchOptions.method = 'GET';
     } else {
       fetchOptions.method = 'POST';
@@ -594,7 +655,7 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
         const contentType = response.headers.get('content-type') || '';
         const rawText = await response.text();
 
-        // Check if Google returned an HTML login redirect
+        // Check if Google returned an HTML login redirect or rate limit error
         if (
           contentType.includes('text/html') ||
           rawText.includes('accounts.google.com') ||
@@ -602,6 +663,17 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
           rawText.includes('Sign in - Google Accounts') ||
           rawText.includes('<!DOCTYPE html>')
         ) {
+          if (rawText.includes('too many scripts running simultaneously') || rawText.includes('Service invoked too many times')) {
+            return {
+              success: false,
+              status: 429,
+              latencyMs,
+              contentType,
+              error: 'Google Sheets Rate Limit: Google Apps Script concurrent quota reached. Retrying automatically.',
+              diagnosis: 'RATE_LIMITED',
+              suggestedUrl: cleanUrl,
+            };
+          }
           return {
             success: false,
             status: response.status,
@@ -627,7 +699,13 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
             gasCache.set(cacheKey, { timestamp: Date.now(), data: resPayload });
             
             // Auto-update server Hub state if bookings or other entities returned
-            if (action === 'getAll' && jsonData.bookings && Array.isArray(jsonData.bookings)) {
+            const isBookingsAction = 
+              action === 'getAll' || 
+              action === 'getBookings' || 
+              action === 'getFacilityBookings' || 
+              action === 'getAllBookings';
+
+            if (isBookingsAction && jsonData.bookings && Array.isArray(jsonData.bookings)) {
               try {
                 const bMap = new Map<string, any>();
                 hubState.bookings.forEach((b) => {
@@ -656,7 +734,7 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
           // Auto-replicate write actions immediately to all connected devices via SSE
           if (resPayload.success) {
             try {
-              const reqAction = action || (body && body.action);
+              const reqAction = (body && body.action) || action || effectiveAction;
               if (reqAction === 'createBooking' || reqAction === 'batchCreateBookings') {
                 const newBookings = reqAction === 'batchCreateBookings' 
                   ? (body?.bookings || []) 

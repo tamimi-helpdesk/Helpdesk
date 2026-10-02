@@ -18,6 +18,7 @@ import { LightweightSectionLoader } from './components/LightweightSectionLoader'
 import { ActionCompletionCelebrationModal } from './components/ActionCompletionCelebrationModal';
 import { audioFeedback } from './services/audioFeedbackService';
 import { ActionFeedback } from './services/actionFeedbackService';
+import { ToastService } from './services/toastService';
 
 // Lazy load heavy managers and administration modals to drastically reduce initial bundle size
 const SearchAndManageModal = React.lazy(() => import('./components/SearchAndManageModal').then((m) => ({ default: m.SearchAndManageModal })));
@@ -203,6 +204,9 @@ export default function App() {
 
   // Stylish Circular Facility Sync Transition State
   const [isFacilitySyncing, setIsFacilitySyncing] = useState<boolean>(false);
+  const [syncingFacilityName, setSyncingFacilityName] = useState<string>('');
+  const [syncingFacilityId, setSyncingFacilityId] = useState<string>('');
+  const [isFacilitySyncComplete, setIsFacilitySyncComplete] = useState<boolean>(false);
 
   // When facility is clicked from any device/view, show stylish spinner, await live Google Sheets sync, then open
   const handleSelectFacility = useCallback(async (facilityId: string) => {
@@ -216,27 +220,49 @@ export default function App() {
     const targetFac = facilities.find((f) => f.id === facilityId) || facilities[0];
     
     // 1. Show sleek stylish circular loader and top loading progress immediately
-    ActionFeedback.startLoading(targetFac.name, 'Connecting live schedule & stages...', facilityId, 500);
+    ActionFeedback.startLoading(targetFac.name, `Loading real-time Google Sheets schedule for "${targetFac.name}"...`, facilityId, 600);
+    setIsFacilitySyncComplete(false);
+    setSyncingFacilityId(facilityId);
+    setSyncingFacilityName(targetFac.name);
     setIsFacilitySyncing(true);
 
-    const minDelay = new Promise((r) => setTimeout(r, 650));
-    const syncPromise = GasService.syncFacility(facilityId).catch((err) => {
-      console.warn('Facility sync notice:', err);
-    });
-    const maxTimeout = new Promise((r) => setTimeout(r, 1600));
+    // 2. Perform live multi-computer and Google Sheets targeted sync:
+    // Thoroughly loads this specific facility's Google Sheets data before opening
+    const startTime = Date.now();
+    try {
+      const syncTasks = Promise.allSettled([
+        GasService.syncFacility(facilityId, { forceFresh: true }),
+        HubService.pullStateFromHub(),
+        import('./services/firebaseService').then(({ CloudDatabaseService }) => {
+          return CloudDatabaseService.checkForCloudData().then((chk) => {
+            if (chk.hasData) return CloudDatabaseService.restoreFromCloud();
+          });
+        }).catch(() => {})
+      ]);
+      const maxTimeout = new Promise((r) => setTimeout(r, 3200));
 
-    // 2. Await both real sync (or max timeout) AND minimum smooth animation delay
-    await Promise.all([
-      minDelay,
-      Promise.race([syncPromise, maxTimeout]),
-    ]);
+      await Promise.race([syncTasks, maxTimeout]);
+    } catch (err) {
+      console.warn('GAS facility sync notice:', err);
+    }
 
-    // 3. Update active facility & route to booking screen with fresh data
+    // Minimum delay for visually pleasing transition
+    const elapsed = Date.now() - startTime;
+    if (elapsed < 420) {
+      await new Promise((r) => setTimeout(r, 420 - elapsed));
+    }
+
+    // Mark sync complete to display green verified badge
+    setIsFacilitySyncComplete(true);
+    await new Promise((r) => setTimeout(r, 220));
+
+    // 3. Update active facility & route to booking screen with fresh authoritative data
     setActiveFacilityId(facilityId);
     setSelectedStage(targetFac.stages[0] || '');
     setSelectedSlotIds([]);
     setCurrentView('booking');
     setRefreshTrigger((prev) => prev + 1);
+    window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
 
     // 4. Smoothly hide spinner and stop loading
     setIsFacilitySyncing(false);
@@ -544,11 +570,60 @@ export default function App() {
     });
   }, []);
 
+  // Verifying slot availability before opening booking modal
+  const [isVerifyingSlot, setIsVerifyingSlot] = useState(false);
+
+  const verifyAndOpenBooking = useCallback(async (targetSlotIds: string[]) => {
+    if (!targetSlotIds || targetSlotIds.length === 0) return;
+    setIsVerifyingSlot(true);
+    ActionFeedback.startLoading(activeFacility.name, 'Verifying live slot availability with Google Sheets & Cloud Hub...', activeFacility.id, 450);
+
+    try {
+      // 1. Fast targeted sync to make sure no other computer just booked this slot
+      const fastSync = Promise.allSettled([
+        HubService.pullStateFromHub(),
+        GasService.syncFacility(activeFacility.id, { forceFresh: true }),
+        import('./services/firebaseService').then(({ CloudDatabaseService }) => {
+          return CloudDatabaseService.restoreFromCloud();
+        }).catch(() => {})
+      ]);
+      const timeout = new Promise((r) => setTimeout(r, 2400));
+      await Promise.race([fastSync, timeout]);
+
+      // 2. Check if any targeted slot is now occupied
+      const currentFreshSlots = StorageService.getFacilitySlots(
+        activeFacility,
+        selectedDate,
+        selectedStage
+      );
+
+      const collision = currentFreshSlots.find((s) => targetSlotIds.includes(s.id) && s.status === 'BOOKED');
+      if (collision) {
+        audioFeedback.playWarning();
+        ActionFeedback.stopLoading();
+        setIsVerifyingSlot(false);
+        ToastService.showWarning(`Warning: Slot ${collision.startTime} - ${collision.endTime} was just reserved by another terminal. Schedule has been refreshed.`);
+        setRefreshTrigger((prev) => prev + 1);
+        setSelectedSlotIds([]);
+        return;
+      }
+
+      // 3. Slot is free and verified: open booking modal!
+      ActionFeedback.stopLoading();
+      setIsVerifyingSlot(false);
+      setIsBookingModalOpen(true);
+    } catch (e) {
+      ActionFeedback.stopLoading();
+      setIsVerifyingSlot(false);
+      setIsBookingModalOpen(true);
+    }
+  }, [activeFacility, selectedDate, selectedStage, bookingMode]);
+
   // Handle proceed to booking modal
   const handleProceedToBooking = useCallback(() => {
     if (selectedSlotIds.length === 0) return;
-    setIsBookingModalOpen(true);
-  }, [selectedSlotIds]);
+    verifyAndOpenBooking(selectedSlotIds);
+  }, [selectedSlotIds, verifyAndOpenBooking]);
 
   // Handle Single Booking Success
   const handleBookingSuccess = useCallback((newBooking: Booking) => {
@@ -603,11 +678,11 @@ export default function App() {
     }
   }, []);
 
-  // Direct double click on a slot -> immediately select slot and open booking modal (no prior selection needed)
+  // Direct double click on a slot -> immediately select slot, verify live status, and open booking modal
   const handleDirectSlotBooking = useCallback((slot: TimeSlot) => {
     setSelectedSlotIds([slot.id]);
-    setIsBookingModalOpen(true);
-  }, []);
+    verifyAndOpenBooking([slot.id]);
+  }, [verifyAndOpenBooking]);
 
   // Handle GAS Sync (Whole System)
   const handleSyncGas = async () => {
@@ -1091,6 +1166,10 @@ export default function App() {
       {/* Facility Google Sheet Real-Time Sync Transition Overlay */}
       <FacilitySyncTransitionOverlay
         isOpen={isFacilitySyncing}
+        facilityName={syncingFacilityName}
+        facilityId={syncingFacilityId}
+        isComplete={isFacilitySyncComplete}
+        message="Loading fresh schedule & bookings from Google Sheets..."
       />
 
       {/* Minimal Footer with Designer Tag */}
