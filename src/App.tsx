@@ -389,6 +389,12 @@ export default function App() {
     // Initial background sync from Google Sheets if configured
     const cfg = GasService.getConfig();
     if (cfg.webAppUrl) {
+      // First immediately flush any pending bookings queued locally
+      OfflineQueueService.flushQueue(GasService).then((res) => {
+        if (res && res.successful > 0) {
+          setRefreshTrigger((prev) => prev + 1);
+        }
+      }).catch(() => {});
       GasService.syncWithRemote().then((res) => {
         if (res.success) {
           setRefreshTrigger((prev) => prev + 1);
@@ -497,6 +503,13 @@ export default function App() {
       setSelectedStage(activeFacility.stages[0]);
     }
     setSelectedSlotIds([]);
+
+    // Fast targeted sync from Google Sheets for the active facility
+    GasService.syncFacilityBookings(activeFacility.sheetTabName || activeFacility.name).then((res) => {
+      if (res && res.success && (res.count || 0) > 0) {
+        setRefreshTrigger((prev) => prev + 1);
+      }
+    }).catch(() => {});
   }, [activeFacility, selectedStage]);
 
   // Generate Slots for current view

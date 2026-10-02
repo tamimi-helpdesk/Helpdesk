@@ -737,6 +737,32 @@ export const GasService = {
     return this.syncWithRemote();
   },
 
+  async syncFacilityBookings(facilityTabOrName?: string): Promise<{ success: boolean; count?: number }> {
+    const config = this.getConfig();
+    if (!config.webAppUrl) return { success: false };
+    const { url: cleanUrl } = this.sanitizeUrl(config.webAppUrl);
+
+    try {
+      const isMultipurpose = facilityTabOrName && facilityTabOrName.toLowerCase().includes('multipurpose');
+      const targetParam = isMultipurpose ? 'Multipurpose' : (facilityTabOrName || '');
+      const url = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}action=getFacilityBookings&facility=${encodeURIComponent(targetParam)}&t=${Date.now()}`;
+      const response = await fetch(url, {
+        method: 'GET',
+        redirect: 'follow',
+      });
+      if (response.ok) {
+        const result = await response.json();
+        if (result && result.success && Array.isArray(result.bookings)) {
+          const merged = StorageService.mergeRemoteBookings(result.bookings);
+          return { success: true, count: merged.length };
+        }
+      }
+    } catch (e) {
+      console.warn('[GasService] syncFacilityBookings notice:', e);
+    }
+    return { success: false };
+  },
+
   mergeRemoteBlankForms(remoteForms: any[]) {
     try {
       const raw = localStorage.getItem('tafga_saved_form_records_v1');
@@ -2958,7 +2984,19 @@ export const GasService = {
 
     const { url: cleanUrl } = this.sanitizeUrl(config.webAppUrl);
 
-    // Try server proxy
+    // Normalize Multipurpose Room name to guarantee it matches 'Multipurpose Room' sheet tab
+    const isMultipurpose = 
+      booking.facilityId === 'multipurpose-room' || 
+      String(booking.facilityName || '').toLowerCase().includes('multipurpose');
+    const targetFacilityName = isMultipurpose ? 'Multipurpose' : (booking.facilityName || '');
+    const targetSheetTabName = isMultipurpose ? 'Multipurpose Room' : (booking.sheetTabName || booking.facilityName || '');
+    const normalizedBooking: Booking = {
+      ...booking,
+      facilityName: targetFacilityName,
+      sheetTabName: targetSheetTabName,
+    };
+
+    // 1. Try server proxy (for localhost development server)
     try {
       const proxyRes = await fetch('/api/gas/proxy', {
         method: 'POST',
@@ -2968,7 +3006,7 @@ export const GasService = {
           method: 'POST',
           body: {
             action: 'createBooking',
-            booking,
+            booking: normalizedBooking,
           },
         }),
       });
@@ -2979,7 +3017,6 @@ export const GasService = {
           consecutiveSyncErrors = 0;
           return { success: true };
         } else {
-          // If AUTH_REQUIRED returned and we are using a custom URL, auto-heal to master default
           if (
             (proxyData.diagnosis === 'AUTH_REQUIRED' || String(proxyData.error || '').includes('Permission Denied')) &&
             cleanUrl !== DEFAULT_GAS_WEB_APP_URL
@@ -2992,12 +3029,52 @@ export const GasService = {
         }
       }
     } catch (proxyErr) {
-      // Netlify static client fallback
+      // GitHub Pages / Netlify static client fallback
     }
 
-    // Direct fallback for Netlify / browser with 3-attempt auto-retry
+    // 2. Direct browser GET query parameter fallback (bypasses browser CORS & 302 redirect POST drop)
+    try {
+      const queryParams = new URLSearchParams({
+        action: 'createBooking',
+        id: booking.id || '',
+        customerName: booking.customerName || 'Executive Guest',
+        phoneNumber: booking.phoneNumber || '',
+        email: booking.email || '',
+        departmentOrTeam: booking.departmentOrTeam || '',
+        date: booking.date || '',
+        stage: booking.stage || '',
+        startTime: booking.startTime || '',
+        endTime: booking.endTime || '',
+        durationMinutes: String(booking.durationMinutes || 60),
+        guestsCount: String(booking.guestsCount || booking.numberOfGuests || 1),
+        numberOfGuests: String(booking.numberOfGuests || booking.guestsCount || 1),
+        facilityName: targetFacilityName,
+        sheetTabName: targetSheetTabName,
+        status: booking.status || 'CONFIRMED',
+        notes: booking.notes || '',
+        t: String(Date.now()),
+      });
+
+      const getUrl = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}${queryParams.toString()}`;
+      const response = await fetch(getUrl, {
+        method: 'GET',
+        redirect: 'follow',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.success !== false) {
+          consecutiveSyncErrors = 0;
+          return { success: true };
+        }
+      }
+    } catch (getErr: any) {
+      console.warn('[GasService] Direct GET booking push fallback notice, falling back to POST:', getErr);
+    }
+
+    // 3. Direct POST fallback for Netlify / browser with 2-attempt auto-retry
     let lastError = '';
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const response = await fetch(cleanUrl, {
           method: 'POST',
@@ -3005,7 +3082,7 @@ export const GasService = {
           redirect: 'follow',
           body: JSON.stringify({
             action: 'createBooking',
-            booking,
+            booking: normalizedBooking,
           }),
         });
 
@@ -3015,14 +3092,10 @@ export const GasService = {
           return { success: true };
         } else {
           lastError = data?.error || 'Remote rejected booking creation';
-          if (cleanUrl !== DEFAULT_GAS_WEB_APP_URL) {
-            this.resetToDefaultUrl();
-            return this.pushBookingToRemoteDirect(booking);
-          }
         }
       } catch (err: any) {
         lastError = err?.message || 'Network error pushing to Google Sheets';
-        if (attempt < 3) {
+        if (attempt < 2) {
           await new Promise((res) => setTimeout(res, attempt * 400));
         }
       }
@@ -3103,16 +3176,25 @@ export const GasService = {
       }
       throw new Error(data?.error || 'Batch push failed');
     } catch (err: any) {
-      console.warn('Could not push batch bookings to remote GAS, queueing all locally', err);
-      bookings.forEach((b) => {
-        OfflineQueueService.enqueue({
-          targetId: b.id,
-          action: 'saveBooking',
-          facilityName: b.facilityName || 'Facility Booking',
-          description: `Batch reservation for ${b.customerName}`,
-          payload: b,
-        });
-      });
+      console.warn('Could not push batch bookings to remote GAS via POST, attempting sequential direct push:', err);
+      let pushed = 0;
+      for (const b of bookings) {
+        const res = await this.pushBookingToRemoteDirect(b);
+        if (res.success) {
+          pushed++;
+        } else {
+          OfflineQueueService.enqueue({
+            targetId: b.id,
+            action: 'saveBooking',
+            facilityName: b.facilityName || 'Facility Booking',
+            description: `Batch reservation for ${b.customerName}`,
+            payload: b,
+          });
+        }
+      }
+      if (pushed > 0) {
+        return { success: true, createdCount: pushed };
+      }
       return { success: true, createdCount: bookings.length, queued: true };
     }
   },
@@ -3305,9 +3387,38 @@ export const GasService = {
       // Netlify client fallback
     }
 
-    // Direct fallback for Netlify / browser with 3-attempt auto-retry
+    // Direct fallback: 1. Try GET query parameters (bypasses browser CORS & redirect drops)
+    try {
+      const cancelParams = new URLSearchParams({
+        action: 'cancelBooking',
+        bookingId: targetBookingId,
+        id: targetBookingId,
+        phoneNumber: payload.phoneNumber || '',
+        phone: payload.phoneNumber || '',
+        reason: payload.reason || 'Cancelled via Portal',
+        facilityName: payload.facilityName || '',
+        sheetTabName: payload.sheetTabName || '',
+        t: String(Date.now()),
+      });
+      const getCancelUrl = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}${cancelParams.toString()}`;
+      const cancelRes = await fetch(getCancelUrl, {
+        method: 'GET',
+        redirect: 'follow',
+      });
+      if (cancelRes.ok) {
+        const cancelData = await cancelRes.json();
+        if (cancelData && cancelData.success !== false) {
+          consecutiveSyncErrors = 0;
+          return { success: true, message: cancelData.message };
+        }
+      }
+    } catch (getCancelErr: any) {
+      console.warn('[GasService] Direct GET cancel fallback notice:', getCancelErr);
+    }
+
+    // Direct fallback: 2. Try POST with 2-attempt auto-retry
     let lastError = '';
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const response = await fetch(cleanUrl, {
           method: 'POST',

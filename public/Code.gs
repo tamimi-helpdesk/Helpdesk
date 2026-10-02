@@ -94,6 +94,14 @@ function doGet(e) {
         result = getAllDataFast();
         break;
 
+      case "getBookings":
+      case "getFacilityBookings":
+        result = {
+          success: true,
+          bookings: getFacilityBookingsFast(param.tab || param.facility || param.facilityName || "")
+        };
+        break;
+
       case "getAllObservations":
         result = {
           success: true,
@@ -1007,7 +1015,7 @@ function createBooking(b) {
     return { success: false, error: "Missing required booking details (Facility, Date, Start Time)." };
   }
 
-  var tabName = getSheetTabNameForFacility(b.facilityName || b.facilityId);
+  var tabName = getSheetTabNameForFacility(b.sheetTabName || b.facilityName || b.facilityId);
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = findSheetByNameFuzzy(ss, tabName);
 
@@ -3464,7 +3472,6 @@ function getSheetTabNameForFacility(nameOrId) {
   if (s.indexOf("invoice") !== -1 || s.indexOf("billing") !== -1 || s === "invc") return "Invoice Manager";
   if (s.indexOf("announcement") !== -1 || s.indexOf("notice") !== -1 || s === "notc") return "Announcement & Notice";
   if (s.indexOf("help") !== -1 || s.indexOf("support") !== -1 || s === "help") return "Help & Support";
-  if (s.indexOf("isolation") !== -1 || s.indexOf("room") !== -1 || s === "iso" || s === "room" || s.indexOf("residential") !== -1) return "Isolation & Room Booking";
   if (s.indexOf("workorder") !== -1 || (s.indexOf("ticket") !== -1 && s.indexOf("help") === -1) || s === "wo") return "Ticket Management";
   if (s.indexOf("sla") !== -1) return "SLA Management";
   if (s.indexOf("workflow") !== -1 || s.indexOf("pipeline") !== -1 || s === "wf") return "Automated Workflow";
@@ -3473,12 +3480,102 @@ function getSheetTabNameForFacility(nameOrId) {
   if (s.indexOf("football") !== -1 || s === "fg") return "Football Ground";
   if (s.indexOf("cricket") !== -1 && s.indexOf("net") !== -1) return "Cricket Net";
   if (s.indexOf("cricket") !== -1 || s === "cg") return "Cricket Ground";
-  if (s.indexOf("multipurpose") !== -1 || s === "mr") return "Multipurpose Room";
+  // MULTIPURPOSE & CINEMA MUST BE MATCHED BEFORE GENERIC ISOLATION ROOM!
+  if (s.indexOf("multipurpose") !== -1 || s === "mr" || s.indexOf("multi-purpose") !== -1) return "Multipurpose Room";
   if (s.indexOf("cinema") !== -1 || s === "cn") return "Cinema";
   if (s.indexOf("tennis") !== -1 || s === "tc") return "Tennis Court";
   if (s.indexOf("basket") !== -1 || s === "bc") return "Basket Ball Court";
+  if (s.indexOf("isolation") !== -1 || s === "iso" || s === "room" || s.indexOf("quarantine") !== -1 || s.indexOf("residential") !== -1) return "Isolation & Room Booking";
   
   return nameOrId;
+}
+
+/**
+ * Fast targeted fetch of facility bookings (1-2 seconds)
+ */
+function getFacilityBookingsFast(facilityOrTab) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tabName = facilityOrTab ? getSheetTabNameForFacility(facilityOrTab) : "";
+  var bookings = [];
+  
+  var targetSheets = [];
+  if (tabName) {
+    var sh = findSheetByNameFuzzy(ss, tabName);
+    if (sh) targetSheets.push(sh);
+  } else {
+    var standardTabs = [
+      "Barber Booking", "Cricket Ground", "Football Ground", "Multipurpose Room",
+      "Cinema", "Tennis Court", "Cricket Net", "Basket Ball Court"
+    ];
+    for (var i = 0; i < standardTabs.length; i++) {
+      var s = findSheetByNameFuzzy(ss, standardTabs[i]);
+      if (s) targetSheets.push(s);
+    }
+  }
+
+  for (var sIdx = 0; sIdx < targetSheets.length; sIdx++) {
+    var sheet = targetSheets[sIdx];
+    var lastRow = sheet.getLastRow();
+    if (lastRow <= 1) continue;
+    var lastCol = sheet.getLastColumn();
+    if (lastCol < 1) continue;
+    
+    var currentTab = sheet.getName();
+    var resolvedTab = getSheetTabNameForFacility(currentTab);
+    var displayData = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+    if (!displayData || displayData.length <= 1) continue;
+    
+    var headerRowIdx = 0;
+    for (var r = 0; r < Math.min(displayData.length, 3); r++) {
+      var rowStr = (displayData[r] || []).join(" ").toLowerCase();
+      if (rowStr.indexOf("date") !== -1 || rowStr.indexOf("name") !== -1 || rowStr.indexOf("booking") !== -1 || rowStr.indexOf("phone") !== -1) {
+        headerRowIdx = r;
+        break;
+      }
+    }
+    
+    var colMap = getColumnMapping(displayData[headerRowIdx] || []);
+    for (var r = headerRowIdx + 1; r < displayData.length; r++) {
+      var rowDisp = displayData[r];
+      var bookingId = String(rowDisp[colMap.id] || "").trim();
+      var customerName = String(rowDisp[colMap.customerName] || "").trim();
+      if (!bookingId && !customerName) continue;
+      
+      var cleanDate = formatDateString(rowDisp[colMap.date]);
+      if (!cleanDate) {
+        for (var c = 0; c < rowDisp.length; c++) {
+          var testDate = formatDateString(rowDisp[c]);
+          if (testDate && testDate.indexOf("-") !== -1 && testDate.length === 10) {
+            cleanDate = testDate;
+            break;
+          }
+        }
+      }
+      
+      bookings.push({
+        id: bookingId || ("BK-" + currentTab.substring(0, 2) + "-" + r),
+        customerName: customerName || "Executive Guest",
+        phoneNumber: String(rowDisp[colMap.phoneNumber] || "").trim(),
+        email: String(rowDisp[colMap.email] || "").trim(),
+        departmentOrTeam: String(rowDisp[colMap.departmentOrTeam] || "").trim(),
+        date: cleanDate,
+        stage: String(rowDisp[colMap.stage] || "Stage 1").trim(),
+        startTime: formatTimeString(rowDisp[colMap.startTime]),
+        endTime: formatTimeString(rowDisp[colMap.endTime]),
+        durationMinutes: Number(rowDisp[colMap.durationMinutes]) || 60,
+        guestsCount: Number(rowDisp[colMap.guestsCount]) || 1,
+        status: String(rowDisp[colMap.status] || "CONFIRMED").trim().toUpperCase(),
+        notes: String(rowDisp[colMap.notes] || "").trim(),
+        customOptions: {},
+        createdAt: rowDisp[colMap.createdAt] || new Date().toISOString(),
+        cancelledAt: rowDisp[colMap.cancelledAt] || undefined,
+        cancellationReason: rowDisp[colMap.cancellationReason] || undefined,
+        facilityName: resolvedTab,
+        sheetTabName: resolvedTab
+      });
+    }
+  }
+  return bookings;
 }
 
 /**
