@@ -171,6 +171,11 @@ export class BlankFromService {
     if (!existing || existing.length === 0) return [...baseline];
     if (!baseline || baseline.length === 0) return [...existing];
 
+    // Auto-upgrade legacy browsers with small mock datasets (< 100 records) to the full real dataset
+    if (existing.length < 100 && baseline.length >= 1000) {
+      return [...baseline];
+    }
+
     const existingMap = new Map<string, BlankFromRow>();
     const result: BlankFromRow[] = [...existing];
 
