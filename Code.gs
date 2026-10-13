@@ -271,6 +271,9 @@ function doGet(e) {
       case "deleteSupportTicket":
       case "deleteWorkOrderTicket":
       case "deleteWorkflow":
+      case "uploadBlankFromEmployees":
+      case "uploadBlankFromEmployeesToSheet":
+      case "batchUploadBlankFromEmployees":
         // Delegate to doPost logic
         return doPost(e);
 
@@ -430,6 +433,25 @@ function doPost(e) {
 
       case "deleteBlankForm":
         response = deleteBlankFormFromSheet(data.id || data.recordId || data.formId);
+        break;
+
+      case "uploadBlankFromEmployees":
+      case "uploadBlankFromEmployeesToSheet":
+      case "batchUploadBlankFromEmployees":
+        response = uploadBlankFromEmployeesToSheet(data);
+        break;
+
+      case "getBlankFromEmployees":
+      case "getBlankForms":
+      case "getBlankFormsData":
+      case "getBlankFormsEmployees":
+      case "getAutoFormData":
+        response = {
+          success: true,
+          data: getBlankFromEmployeesFromSheet(),
+          count: (getBlankFromEmployeesFromSheet() || []).length,
+          timestamp: new Date().toISOString()
+        };
         break;
 
       // 7. Invoice Manager (Facility 14)
@@ -899,7 +921,7 @@ function findSheetByNameFuzzy(ss, targetName) {
   for (var i = 0; i < sheets.length; i++) {
     var sName = sheets[i].getName();
     var sClean = sName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (sClean === clean || sClean.indexOf(clean) !== -1 || clean.indexOf(sClean) !== -1) {
+    if (sClean === clean || sClean.indexOf(clean) !== -1 || (sClean.length >= 8 && clean.indexOf(sClean) !== -1)) {
       return sheets[i];
     }
   }
@@ -2090,9 +2112,137 @@ function getAllBlankFormsFromSheet() {
   return list;
 }
 
-function getBlankFromEmployeesFromSheet() {
+function uploadBlankFromEmployeesToSheet(data) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = findSheetByNameFuzzy(ss, "Blank From") || findSheetByNameFuzzy(ss, "Blank Forms");
+  var tabName = (data && data.tabName) || "Blank Froms";
+  var sheet = findSheetByNameFuzzy(ss, tabName) ||
+              findSheetByNameFuzzy(ss, "Blank Froms") ||
+              findSheetByNameFuzzy(ss, "Blank Forms") ||
+              findSheetByNameFuzzy(ss, "Blank From") ||
+              findSheetByNameFuzzy(ss, "Bank Froms");
+  if (!sheet) {
+    sheet = ss.insertSheet(tabName);
+  }
+
+  var chunkIndex = Number((data && data.chunkIndex) || 0);
+  var mode = (data && data.mode) || (chunkIndex === 0 ? "replace" : "append");
+  var employees = (data && (data.employees || data.rows)) || [];
+
+  if (!Array.isArray(employees)) {
+    return { success: false, error: "Invalid employees array" };
+  }
+
+  var headers = [
+    "Building No",
+    "Unit No",
+    "Unit Serial Number",
+    "Employment ID",
+    "Resident Name",
+    "National ID/Iqama",
+    "Passport",
+    "Mobile",
+    "Floor",
+    "Room",
+    "Property Type",
+    "Contract Type",
+    "Occupancy",
+    "Status",
+    "Gender",
+    "Category",
+    "Company",
+    "Division",
+    "Department",
+    "Designation",
+    "Email",
+    "Nationality",
+    "Move-In Date",
+    "Move-Out Date",
+    "Contract Start Date",
+    "Emergency Mobile",
+    "Emergency Name"
+  ];
+
+  if (mode === "replace" || chunkIndex === 0) {
+    sheet.clearContents();
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.getRange(1, 1, 1, headers.length).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+  }
+
+  if (employees.length > 0) {
+    var rowsData = [];
+    for (var i = 0; i < employees.length; i++) {
+      var e = employees[i] || {};
+      rowsData.push([
+        e.buildingNo || e.house || "",
+        e.unitNo || e.room || "",
+        e.unitSerialNo || "",
+        e.employmentId || "",
+        e.name || "",
+        e.idIqama || "",
+        e.passport || "",
+        e.mobile || "",
+        e.floor || "",
+        e.room || "",
+        e.propertyType || "",
+        e.contractType || "",
+        e.occupancy || "",
+        e.status || "",
+        e.gender || "",
+        e.category || "",
+        e.company || "",
+        e.division || "",
+        e.department || "",
+        e.designation || "",
+        e.email || "",
+        e.nationality || "",
+        e.moveInDate || "",
+        e.moveOutDate || "",
+        e.contractStartDate || "",
+        e.emergencyMobile || "",
+        e.emergencyName || ""
+      ]);
+    }
+
+    var lastRow = sheet.getLastRow();
+    var startRow = Math.max(lastRow + 1, 2);
+    sheet.getRange(startRow, 1, rowsData.length, headers.length).setValues(rowsData);
+  }
+
+  SpreadsheetApp.flush();
+  return {
+    success: true,
+    tabName: sheet.getName(),
+    chunkIndex: chunkIndex,
+    uploadedCount: employees.length,
+    totalInSheet: Math.max(0, sheet.getLastRow() - 1)
+  };
+}
+
+function getBlankFromEmployeesFromSheet(customTab) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = null;
+  if (customTab) {
+    sheet = findSheetByNameFuzzy(ss, customTab);
+  }
+  if (!sheet) {
+    sheet = findSheetByNameFuzzy(ss, "Blank Froms") || findSheetByNameFuzzy(ss, "Blank Forms") || findSheetByNameFuzzy(ss, "Blank From") || findSheetByNameFuzzy(ss, "Bank Froms");
+  }
+  if (!sheet) {
+    // Auto-detect the sheet with the most rows or passport column (e.g. 40,000+ data rows)
+    var allSheets = ss.getSheets();
+    var bestSheet = null;
+    var maxRows = 0;
+    for (var s = 0; s < allSheets.length; s++) {
+      var curSheet = allSheets[s];
+      var rCount = curSheet.getLastRow();
+      if (rCount > maxRows) {
+        maxRows = rCount;
+        bestSheet = curSheet;
+      }
+    }
+    sheet = bestSheet;
+  }
   if (!sheet) return [];
 
   var displayData = sheet.getDataRange().getDisplayValues();
@@ -2106,13 +2256,23 @@ function getBlankFromEmployeesFromSheet() {
       var h = headers[i];
       for (var j = 0; j < args.length; j++) {
         var k = args[j].toLowerCase();
-        if (h.indexOf(k) !== -1 || h.replace(/[^a-z0-9]/g, '') === k.replace(/[^a-z0-9]/g, '')) {
+        if (h === k || h.indexOf(k) !== -1 || h.replace(/[^a-z0-9]/g, '') === k.replace(/[^a-z0-9]/g, '')) {
           return i;
         }
       }
     }
     return -1;
   }
+
+  // 8 Specific Columns Requested by User with Multilingual Keywords
+  var idxBldgNo = findIdx("building no", "building no.", "building number", "building", "bldg no", "bldg", "house", "المبنى");
+  var idxUnitNo = findIdx("unit no", "unit no.", "unit number", "unit", "apartment no", "apartment", "room no", "room", "الوحدة", "الغرفة");
+  var idxUnitSerial = findIdx("unit serial number", "unit serial no", "unit serial no.", "unit serial", "serial number", "serial no", "unit sl", "serial", "الرقم التسلسلي");
+  var idxEmpId = findIdx("employment id", "employment id.", "employmentid", "employee id", "badge", "empid", "staff id", "الرقم الوظيفي");
+  var idxName = findIdx("resident name", "resident", "name", "full name", "applicant name", "employee name", "tenant name", "اسم المقيم", "اسم الموظف");
+  var idxIqama = findIdx("national id/iqama", "national id / iqama", "national id", "id/iqama", "idiqama", "iqama", "civil id", "هوية مقيم", "رقم الإقامة", "الإقامة");
+  var idxPass = findIdx("passport", "passport no", "passport number", "pass", "pp no", "pp no.", "جواز السفر", "رقم الجواز", "جواز", "পাসপোর্ট");
+  var idxMob = findIdx("mobile", "mobile no", "mobile number", "phone", "phone number", "contact number", "الجوال", "الهاتف");
 
   var idxId = findIdx("id", "record id", "sl");
   var idxProp = findIdx("property");
@@ -2125,17 +2285,12 @@ function getBlankFromEmployeesFromSheet() {
   var idxContract = findIdx("contract type");
   var idxOcc = findIdx("occupancy");
   var idxStatus = findIdx("status");
-  var idxEmpId = findIdx("employment id", "employee id", "badge", "empid");
-  var idxName = findIdx("name", "full name", "applicant name");
   var idxGender = findIdx("gender", "sex");
   var idxCat = findIdx("category");
   var idxComp = findIdx("company");
   var idxDiv = findIdx("division", "program");
   var idxDept = findIdx("department", "dept");
   var idxDesig = findIdx("designation", "position");
-  var idxIqama = findIdx("id/iqama", "iqama", "national id");
-  var idxPass = findIdx("passport");
-  var idxMob = findIdx("mobile", "phone");
   var idxEmail = findIdx("email");
   var idxNat = findIdx("nationality");
   var idxDob = findIdx("dob", "d.o.b");
@@ -2151,19 +2306,31 @@ function getBlankFromEmployeesFromSheet() {
   for (var i = 1; i < displayData.length; i++) {
     var r = displayData[i];
     var name = (idxName >= 0) ? r[idxName] : r[1];
-    if (!name || String(name).toLowerCase().indexOf("name on contract") !== -1) continue;
+    var pass = (idxPass >= 0) ? r[idxPass] : "";
+    var iqama = (idxIqama >= 0) ? r[idxIqama] : "";
+    var empIdVal = (idxEmpId >= 0 && r[idxEmpId]) ? r[idxEmpId] : "";
 
+    // Do not skip if row has passport, iqama, or empId even if name is blank
+    if (!name && !pass && !iqama && !empIdVal) continue;
+    if (String(name).toLowerCase().indexOf("name on contract") !== -1 || String(name).toLowerCase() === "resident name") continue;
+
+    var bldg = (idxBldgNo >= 0 && r[idxBldgNo]) ? r[idxBldgNo] : ((idxHouse >= 0 && r[idxHouse]) ? r[idxHouse] : "Bldg 01");
+    var unitNo = (idxUnitNo >= 0 && r[idxUnitNo]) ? r[idxUnitNo] : ((idxRoom >= 0 && r[idxRoom]) ? r[idxRoom] : "101");
+    var unitSerial = (idxUnitSerial >= 0 && r[idxUnitSerial]) ? r[idxUnitSerial] : "";
     var empId = (idxEmpId >= 0 && r[idxEmpId]) ? r[idxEmpId] : ("10" + (100 + i));
-    var unit = (idxUnit >= 0 && r[idxUnit]) ? r[idxUnit] : "TBCV";
+    var unit = (idxUnit >= 0 && r[idxUnit]) ? r[idxUnit] : (bldg + " - Unit " + unitNo + (unitSerial ? " (" + unitSerial + ")" : ""));
 
     list.push({
       id: (idxId >= 0 && r[idxId]) ? r[idxId] : String(i + 140),
       property: (idxProp >= 0 && r[idxProp]) ? r[idxProp] : "TBCV",
       sector: (idxSector >= 0 && r[idxSector]) ? r[idxSector] : "S01",
-      house: (idxHouse >= 0 && r[idxHouse]) ? r[idxHouse] : "H01",
+      house: bldg,
       floor: (idxFloor >= 0 && r[idxFloor]) ? r[idxFloor] : "FF",
-      room: (idxRoom >= 0 && r[idxRoom]) ? r[idxRoom] : "101",
+      room: unitNo,
       unit: unit,
+      buildingNo: bldg,
+      unitNo: unitNo,
+      unitSerialNo: unitSerial,
       propertyType: (idxPropType >= 0 && r[idxPropType]) ? r[idxPropType] : "Senior",
       contractType: (idxContract >= 0 && r[idxContract]) ? r[idxContract] : "Permanent",
       occupancy: (idxOcc >= 0 && r[idxOcc]) ? r[idxOcc] : "Single Occupancy",
@@ -3194,26 +3361,7 @@ function getAllDataFast() {
         });
       }
     } else if (clean.indexOf("blank") !== -1 || clean.indexOf("form") !== -1) {
-      for (var i = 1; i < displayData.length; i++) {
-        var r = displayData[i];
-        if (!r[0] && !r[1] && !r[5]) continue;
-        blankForms.push({
-          id: r[0],
-          formCode: r[1],
-          formTitle: r[2],
-          category: r[3],
-          department: r[4],
-          applicantName: r[5],
-          badgeId: r[6],
-          roomNumber: r[7],
-          phoneNumber: r[8],
-          submissionDate: formatDateString(r[9]),
-          status: r[10] || "APPROVED",
-          authorizedOfficer: r[11],
-          notes: r[12],
-          createdAt: r[13] || new Date().toISOString()
-        });
-      }
+      blankForms = getBlankFromEmployeesFromSheet(sName);
     } else if (clean.indexOf("invoice") !== -1 || clean.indexOf("billing") !== -1) {
       for (var i = 1; i < displayData.length; i++) {
         var r = displayData[i];

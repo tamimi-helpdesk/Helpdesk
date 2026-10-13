@@ -42,6 +42,7 @@ import {
 import { StorageService } from '../services/storageService';
 import { GasService } from '../services/gasService';
 import { AuthService } from '../services/authService';
+import { BlankFromService } from '../services/blankFromService';
 
 interface BlankFormsManagerProps {
   onRefresh?: () => void;
@@ -77,6 +78,11 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
     return [];
   });
 
+  // Resident dataset count
+  const [residentCount, setResidentCount] = useState<number>(() => {
+    return BlankFromService.getRows().length || 1438;
+  });
+
   // Listen to background sync updates
   useEffect(() => {
     const handleUpdate = () => {
@@ -90,11 +96,19 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
           }
         }
       } catch (e) {}
+
+      try {
+        const count = BlankFromService.getRows().length;
+        if (count > 0) setResidentCount(count);
+      } catch (e) {}
     };
+
     window.addEventListener('blank_forms_updated', handleUpdate);
+    window.addEventListener('tamimi_blank_from_updated', handleUpdate);
     window.addEventListener('storage', handleUpdate);
     return () => {
       window.removeEventListener('blank_forms_updated', handleUpdate);
+      window.removeEventListener('tamimi_blank_from_updated', handleUpdate);
       window.removeEventListener('storage', handleUpdate);
     };
   }, []);
@@ -105,7 +119,7 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
     isBlank: boolean;
   } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'TEMPLATES' | 'SAVED_DRAFTS' | 'AUTO_FORM'>('TEMPLATES');
+  const [activeTab, setActiveTab] = useState<'TEMPLATES' | 'SAVED_DRAFTS' | 'AUTO_FORM'>('AUTO_FORM');
 
   // Reload custom templates if updated
   const refreshCustomTemplates = () => {
@@ -268,6 +282,26 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
         <div className="flex items-center space-x-2 overflow-x-auto">
           <button
             type="button"
+            onClick={() => setActiveTab('AUTO_FORM')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-2 shrink-0 ${
+              activeTab === 'AUTO_FORM'
+                ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-400/50'
+                : 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100'
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            <span>Auto Form (From.docx)</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-black tracking-wider ${
+              activeTab === 'AUTO_FORM'
+                ? 'bg-amber-950/20 text-slate-950 border border-amber-950/20'
+                : 'bg-amber-200/80 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border border-amber-300/60'
+            }`}>
+              {residentCount.toLocaleString()}
+            </span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('TEMPLATES')}
             className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-2 shrink-0 ${
               activeTab === 'TEMPLATES'
@@ -277,22 +311,6 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
           >
             <Layers className="w-4 h-4" />
             <span>Form Catalog ({allTemplates.length})</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('AUTO_FORM')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-2 shrink-0 ${
-              activeTab === 'AUTO_FORM'
-                ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-400/50'
-                : 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100'
-            }`}
-          >
-            <Sparkles className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-            <span>Auto Form (গুগল শিট অটো-ফিলাপ)</span>
-            <span className="text-[9px] bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded font-black tracking-wider">
-              NEW
-            </span>
           </button>
 
           <button
@@ -309,31 +327,33 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
           </button>
         </div>
 
-        {/* Live Search & Add Form Button */}
-        <div className="flex items-center space-x-2.5 w-full lg:w-auto">
-          <div className="relative flex-1 lg:w-72">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search forms, code, department..."
-              className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-medium text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+        {/* Live Search & Add Form Button - Displayed only in TEMPLATES tab to avoid duplicate upload buttons */}
+        {activeTab === 'TEMPLATES' && (
+          <div className="flex items-center space-x-2.5 w-full lg:w-auto">
+            <div className="relative flex-1 lg:w-72">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search forms, code, department..."
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-medium text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
 
-          {AuthService.isSuperAdmin() && (
-            <button
-              type="button"
-              onClick={() => setIsAddModalOpen(true)}
-              className="px-3.5 py-2 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 active:scale-[0.98] text-white rounded-xl font-bold text-xs shadow-xs flex items-center space-x-1.5 transition-all cursor-pointer shrink-0"
-              title="Super Admin: Upload Excel or Word file to add a new form template"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>+ Add Blank Form</span>
-            </button>
-          )}
-        </div>
+            {AuthService.isSuperAdmin() && (
+              <button
+                type="button"
+                onClick={() => setIsAddModalOpen(true)}
+                className="px-3.5 py-2 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 active:scale-[0.98] text-white rounded-xl font-bold text-xs shadow-xs flex items-center space-x-1.5 transition-all cursor-pointer shrink-0"
+                title="Super Admin: Upload Excel or Word file to add a new form template"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Add Blank Form</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {activeTab === 'AUTO_FORM' ? (
@@ -342,9 +362,9 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
         <>
           {/* Category Filter Pills */}
           <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-none">
-            {categories.map((cat) => (
+            {categories.map((cat, cIdx) => (
               <button
-                key={cat.id}
+                key={`cat-${cat.id || 'c'}-${cIdx}`}
                 type="button"
                 onClick={() => setSelectedCategory(cat.id)}
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center space-x-1.5 shrink-0 ${
@@ -369,9 +389,9 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
 
           {/* Form Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filteredTemplates.map((template) => (
+            {filteredTemplates.map((template, tIdx) => (
               <motion.div
-                key={template.id}
+                key={`tpl-${template.id || 't'}-${tIdx}`}
                 layout
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -524,11 +544,11 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
 
           {savedForms.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {savedForms.map((draft) => {
+              {savedForms.map((draft, dIdx) => {
                 const tpl = allTemplates.find((t) => t.id === draft.templateId);
                 return (
                   <div
-                    key={draft.id}
+                    key={`draft-${draft.id || 'd'}-${dIdx}`}
                     onClick={() => {
                       if (tpl) {
                         setActiveTemplate(tpl);

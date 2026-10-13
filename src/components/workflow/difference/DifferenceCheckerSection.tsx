@@ -1889,7 +1889,7 @@ Generated on: ${s.comparedAt}`;
                     </td>
                   </tr>
                 ) : (
-                  paginatedRows.map((row) => {
+                  paginatedRows.map((row, rowIdx) => {
                     const isRoomMismatch = row.status === 'ROOM_MISMATCH';
                     const isMissingInMaster = row.status === 'MISSING_IN_MASTER' || row.status === 'REMOVED_IN_NEW';
                     const isMissingInSystem = row.status === 'MISSING_IN_SYSTEM' || row.status === 'ADDED_IN_NEW';
@@ -1897,7 +1897,7 @@ Generated on: ${s.comparedAt}`;
 
                     return (
                       <tr
-                        key={row.id}
+                        key={`diff-row-${row.id || 'r'}-${rowIdx}`}
                         className={`transition ${
                           isRoomMismatch
                             ? 'bg-purple-50/40 dark:bg-purple-950/20 hover:bg-purple-50/70 dark:hover:bg-purple-950/30'

@@ -483,20 +483,25 @@ export default function App() {
     };
     window.addEventListener('tamimi_navigate_facility', handleNavigateFacility);
 
-    // Multi-device background polling (every 20 seconds) to ensure changes from other computers arrive automatically
+    // Multi-device background polling (every 2 minutes) with overlap protection to avoid Google quota limits
+    let isPollingInProgress = false;
     const interval = setInterval(() => {
+      if (isPollingInProgress) return;
       const currentCfg = GasService.getConfig();
       if (currentCfg.webAppUrl) {
+        isPollingInProgress = true;
         GasService.syncWithRemote().then((res) => {
           if (res.success) {
             setRefreshTrigger((prev) => prev + 1);
           }
-        }).catch(() => {});
+        }).catch(() => {}).finally(() => {
+          isPollingInProgress = false;
+        });
       }
       if (OfflineQueueService.getPendingCount() > 0) {
         OfflineQueueService.flushQueue(GasService).catch(() => {});
       }
-    }, 20000);
+    }, 120000);
 
     return () => {
       window.removeEventListener('tamimi_bookings_updated', handleLocalRefresh);

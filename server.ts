@@ -2,14 +2,15 @@ import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import ExcelJS from 'exceljs';
+import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '20mb' }));
-app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
 // ---------------------------------------------------------------------------
 // CENTRAL DATA HUB & REAL-TIME EVENT STREAM (Cross-Device Instant Sync Engine)
@@ -534,9 +535,145 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
     if (cleanUrl.includes('docs.google.com/spreadsheets/d/')) {
       const match = cleanUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
       const sheetId = match ? match[1] : undefined;
+      const gidMatch = cleanUrl.match(/[#&?]gid=([0-9]+)/);
+      const requestedGid = gidMatch ? gidMatch[1] : (req.body && (req.body.gid || req.body.tabGid));
+      const requestedTab = (req.body && (req.body.tab || req.body.tabName)) || '';
+
+      if (sheetId) {
+        try {
+          // 1. If explicit GID provided, attempt direct CSV export for that specific tab
+          if (requestedGid) {
+            try {
+              const gidUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${requestedGid}`;
+              const gidRes = await fetch(gidUrl);
+              if (gidRes.ok) {
+                const csv = await gidRes.text();
+                if (csv && csv.trim().length > 10 && !csv.includes('<!DOCTYPE html>')) {
+                  return res.json({
+                    success: true,
+                    csv,
+                    sheetId,
+                    gid: requestedGid,
+                    tab: requestedTab || `gid-${requestedGid}`,
+                    latencyMs: Date.now() - startTime,
+                  });
+                }
+              }
+            } catch (gidErr) {
+              console.warn('GID direct CSV fetch failed, falling back to XLSX:', gidErr);
+            }
+          }
+
+          // 2. Fetch full multi-tab XLSX workbook to inspect ALL sheets and pick the 40,000+ row database
+          try {
+            const xlsxUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`;
+            const xlsxRes = await fetch(xlsxUrl);
+            if (xlsxRes.ok) {
+              const arrayBuffer = await xlsxRes.arrayBuffer();
+              const wb = XLSX.read(Buffer.from(arrayBuffer), { type: 'buffer' });
+              
+              const tabDetails = wb.SheetNames.map((name) => {
+                const ws = wb.Sheets[name];
+                const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+                const hasPassport = rawRows.some((r, i) => 
+                  i < 5 && Array.isArray(r) && r.some((c) => {
+                    const str = String(c || '').toLowerCase();
+                    return str.includes('passport') || str.includes('جواز') || str.includes('pass') || str.includes('পাসপোর্ট');
+                  })
+                );
+                const hasIqama = rawRows.some((r, i) => 
+                  i < 5 && Array.isArray(r) && r.some((c) => {
+                    const str = String(c || '').toLowerCase();
+                    return str.includes('iqama') || str.includes('إقامة') || str.includes('national id') || str.includes('هوية');
+                  })
+                );
+                return {
+                  name,
+                  rowCount: rawRows.length,
+                  hasPassport,
+                  hasIqama,
+                };
+              });
+
+              // Sort tabDetails descending by rowCount so massive datasets are highlighted
+              const sortedByRows = tabDetails.slice().sort((a, b) => b.rowCount - a.rowCount);
+              const maxRowTab = sortedByRows[0];
+
+              // Select best sheet tab:
+              // - User requested tab if matched
+              // - If largest sheet has 1,500+ rows (e.g. 40,000+ records), select it as master
+              // - Otherwise sheet with passport & iqama headers
+              // - Sheet named "Blank Forms" / "Residents" / "Employees"
+              let bestTab = requestedTab ? tabDetails.find((t) => t.name.toLowerCase().includes(requestedTab.toLowerCase())) : undefined;
+              if (!bestTab) {
+                if (maxRowTab && maxRowTab.rowCount > 1500) {
+                  bestTab = maxRowTab; // Auto-pick the 40,000+ master database!
+                } else {
+                  bestTab = tabDetails.find((t) => t.hasPassport && t.rowCount > 50) ||
+                            tabDetails.find((t) => t.name.toLowerCase().includes('blank') || t.name.toLowerCase().includes('form')) ||
+                            tabDetails.find((t) => t.hasPassport) ||
+                            maxRowTab;
+                }
+              }
+
+              if (bestTab) {
+                const activeWs = wb.Sheets[bestTab.name];
+                const rawRows = XLSX.utils.sheet_to_json(activeWs, { header: 1 }) as any[][];
+                return res.json({
+                  success: true,
+                  sheetId,
+                  selectedTab: bestTab.name,
+                  rowCount: rawRows.length,
+                  rawRows,
+                  availableTabs: tabDetails.map((t) => ({ name: t.name, rowCount: t.rowCount, hasPassport: t.hasPassport })),
+                  latencyMs: Date.now() - startTime,
+                });
+              }
+            }
+          } catch (xlsxErr) {
+            console.warn('Direct XLSX workbook export failed, trying CSV fallbacks:', xlsxErr);
+          }
+
+          // 3. Fallback CSV by tab names
+          const tabNamesToTry = [requestedTab, 'Bank Froms', 'Bank From', 'Blank Forms', 'Blank Form', 'Blank From', '16. Blank Forms'].filter(Boolean);
+          for (const tab of tabNamesToTry) {
+            const fetchUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}`;
+            const csvRes = await fetch(fetchUrl);
+            if (csvRes.ok) {
+              const csv = await csvRes.text();
+              if (csv && csv.trim().length > 10 && !csv.includes('<!DOCTYPE html>')) {
+                return res.json({
+                  success: true,
+                  csv,
+                  sheetId,
+                  tab,
+                  latencyMs: Date.now() - startTime,
+                });
+              }
+            }
+          }
+
+          // 4. Fallback to export?format=csv (first sheet)
+          const exportUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
+          const expRes = await fetch(exportUrl);
+          if (expRes.ok) {
+            const csv = await expRes.text();
+            if (csv && csv.trim().length > 10 && !csv.includes('<!DOCTYPE html>')) {
+              return res.json({
+                success: true,
+                csv,
+                sheetId,
+                latencyMs: Date.now() - startTime,
+              });
+            }
+          }
+        } catch (csvErr) {
+          console.warn('Direct spreadsheet fetch error in proxy:', csvErr);
+        }
+      }
       return res.json({
         success: false,
-        error: 'You provided a Google Spreadsheet link instead of a Google Apps Script Web App URL. In your Google Sheet, go to Extensions > Apps Script > Deploy > New Deployment > Web App to get your Web App URL.',
+        error: 'Direct Google Spreadsheet link provided. To sync directly, set spreadsheet sharing to "Anyone with the link can view", or check the sheet link.',
         isSheetLink: true,
         sheetId,
         diagnosis: 'SHEET_LINK_PROVIDED',
@@ -569,6 +706,10 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
     effectiveAction === 'getLostFound' ||
     effectiveAction === 'getIsolation' ||
     effectiveAction === 'getBlankForms' ||
+    effectiveAction === 'getBlankFromEmployees' ||
+    effectiveAction === 'getBlankFormsData' ||
+    effectiveAction === 'getBlankFormsEmployees' ||
+    effectiveAction === 'getAutoFormData' ||
     effectiveAction === 'getInvoices' ||
     effectiveAction === 'getNotices' ||
     effectiveAction === 'getSupportTickets' ||

@@ -1,12 +1,12 @@
 {
-  "projectId": "gen-lang-client-0511892046",
-  "appId": "1:918472213608:web:f76cfea092b7fb77cee7dd",
-  "apiKey": "AIzaSyByYgk55vANwEluo10QsodR0Wb4jzrbB50",
-  "authDomain": "gen-lang-client-0511892046.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-helpdeskbookings-e7972c0f-f0b9-48dc-971d-5e68b95b2a2e",
-  "storageBucket": "gen-lang-client-0511892046.firebasestorage.app",
-  "messagingSenderId": "918472213608",
+  "projectId": "gen-lang-client-0690794293",
+  "appId": "1:660032634383:web:f2d7c4a49ddc34ea4d2d7a",
+  "apiKey": "AIzaSyAdrLOmgm_Bgq00ixCuUBSQ0lNjZgihWpE",
+  "authDomain": "gen-lang-client-0690794293.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-helpdeskbookings-39fddc1b-35f3-43a3-8497-a4e88321fa50",
+  "storageBucket": "gen-lang-client-0690794293.firebasestorage.app",
+  "messagingSenderId": "660032634383",
   "measurementId": "",
-  "oAuthClientId": "918472213608-fbq75q790ugj31m9b52prk7lsib7nhh2.apps.googleusercontent.com",
+  "oAuthClientId": "660032634383-jjtkma70f2oqsouee1q7qs5ha8ac37f6.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

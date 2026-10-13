@@ -26,6 +26,11 @@ import {
   StandardizedRow,
 } from '../../services/excelAutomationService';
 import { ToastService } from '../../services/toastService';
+import confetti from 'canvas-confetti';
+import { BlankFromService } from '../../services/blankFromService';
+import { BlankFromRow } from '../../data/initialBlankFromData';
+import { ExcelImportSettingsModal } from '../blank-forms/ExcelImportSettingsModal';
+import { Database } from 'lucide-react';
 
 export const ExcelAutomationSection: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -39,6 +44,7 @@ export const ExcelAutomationSection: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [hasCopied, setHasCopied] = useState<boolean>(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
 
   // Active template definition
   const currentTemplate: FormatTemplate = useMemo(() => {
@@ -381,6 +387,70 @@ export const ExcelAutomationSection: React.FC = () => {
     }
   };
 
+  const handleSaveUniqueToDatabase = () => {
+    if (!transformedRows || transformedRows.length === 0) return;
+
+    const candidates: BlankFromRow[] = transformedRows.map((r, i) => {
+      const room = String(r.room || '').trim();
+      let buildingNo = 'Bldg 01';
+      let unitNo = room || '101';
+      if (room.includes('-')) {
+        const parts = room.split(/[\s-]+/);
+        if (parts.length >= 2) {
+          buildingNo = parts[parts.length - 2];
+          unitNo = parts[parts.length - 1];
+        }
+      }
+      return {
+        id: `mah-auto-${Date.now()}-${i + 1}`,
+        property: 'TBCV',
+        sector: 'S01',
+        house: buildingNo,
+        floor: 'FF',
+        room: unitNo,
+        unit: `TBCV - ${buildingNo} - Unit ${unitNo}`,
+        buildingNo,
+        unitNo,
+        unitSerialNo: '',
+        propertyType: 'Executive',
+        contractType: 'Permanent',
+        occupancy: 'Single Occupancy',
+        status: 'Active',
+        employmentId: String(r.iqamaNo || r.slNo || `10${300 + i}`),
+        name: String(r.name || `Resident ${i + 1}`),
+        gender: (r.gender as any) || 'Male',
+        category: 'Rsg Staff',
+        company: 'Red Sea Global',
+        division: 'Operations',
+        department: 'Operations',
+        designation: String(r.designation || 'Staff'),
+        idIqama: String(r.iqamaNo || ''),
+        passport: String(r.passportNumber || ''),
+        mobile: String(r.mobileNo || ''),
+        email: '',
+        nationality: String(r.nationality || 'Saudi Arabia'),
+        dob: String(r.dob || ''),
+        moveInDate: '8/24/2026',
+        contractStartDate: '8/24/2026',
+        moveOutDate: '12/31/2026',
+        emergencyMobile: String(r.emergencyContactNo || ''),
+        emergencyName: 'None',
+      };
+    });
+
+    const result = BlankFromService.mergeNewExcelRows(candidates);
+    if (result.added > 0) {
+      confetti({ particleCount: 60, spread: 70 });
+      ToastService.showSuccess(
+        `Smart Deduplication: ${result.added} new unique resident(s) saved into system database! (${result.skipped.toLocaleString()} existing duplicates safely skipped)`
+      );
+    } else {
+      ToastService.showInfo(
+        `All ${result.skipped.toLocaleString()} rows in this file already exist in your saved database. 0 duplicates added.`
+      );
+    }
+  };
+
   return (
     <div className="space-y-4 pb-12 animate-fadeIn">
       {/* Hidden File Input */}
@@ -442,8 +512,26 @@ export const ExcelAutomationSection: React.FC = () => {
             <span>Blank Template</span>
           </button>
 
+          <button
+            onClick={() => setIsSettingsModalOpen(true)}
+            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer border border-slate-200 dark:border-slate-700"
+            title="Configure smart deduplication rules"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5 text-teal-600" />
+            <span>Deduplication Settings</span>
+          </button>
+
           {transformedRows.length > 0 && (
             <>
+              <button
+                onClick={handleSaveUniqueToDatabase}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow-xs cursor-pointer"
+                title="Smart Deduplication: Saves only unique records not already present in the master database"
+              >
+                <Database className="w-3.5 h-3.5" />
+                <span>Save Unique to Hub</span>
+              </button>
+
               <button
                 onClick={handleCopyToClipboard}
                 className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition flex items-center space-x-1.5 cursor-pointer border border-slate-200 dark:border-slate-700"
@@ -1064,6 +1152,12 @@ export const ExcelAutomationSection: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* MODAL: Excel Smart Deduplication Settings */}
+      <ExcelImportSettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+      />
     </div>
   );
 };

@@ -195,6 +195,10 @@ export const ToastService = {
     });
   },
 
+  warn(message: string, details?: string) {
+    return this.showWarning(message, 'Warning', details);
+  },
+
   showError(message: string, title = 'System Error', details?: string) {
     return this.showSyncToast({
       source: 'System',

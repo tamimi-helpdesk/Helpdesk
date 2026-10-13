@@ -431,6 +431,12 @@ export const GasService = {
             this.mergeRemoteBlankForms(proxyData.data.blankForms);
             totalCount += proxyData.data.blankForms.length;
           }
+          if (Array.isArray(proxyData.data.blankFromEmployees)) {
+            import('./blankFromService').then(({ BlankFromService }) => {
+              BlankFromService.mergeAndSaveRawObjects(proxyData.data.blankFromEmployees);
+            }).catch(() => {});
+            totalCount += proxyData.data.blankFromEmployees.length;
+          }
           // 7. Invoices (Facility 14)
           if (Array.isArray(proxyData.data.invoices)) {
             this.mergeRemoteInvoices(proxyData.data.invoices);
@@ -851,6 +857,13 @@ export const GasService = {
 
       localStorage.setItem('tafga_saved_form_records_v1', JSON.stringify(Array.from(map.values())));
       window.dispatchEvent(new CustomEvent('blank_forms_updated'));
+
+      // If remote forms contain resident/move-in employee columns, sync to BlankFromService
+      if (Array.isArray(remoteForms) && remoteForms.length > 0) {
+        import('./blankFromService').then(({ BlankFromService }) => {
+          BlankFromService.mergeAndSaveRawObjects(remoteForms);
+        }).catch(() => {});
+      }
     } catch (e) {}
   },
 

@@ -1,0 +1,459 @@
+import React, { useState, useEffect } from 'react';
+import {
+  X,
+  Settings2,
+  ShieldCheck,
+  CheckCircle2,
+  Sliders,
+  Layers,
+  Sparkles,
+  RotateCcw,
+  Save,
+  HelpCircle,
+  Database,
+  FileSpreadsheet,
+  Check,
+  AlertCircle,
+  Hash,
+  UserCheck,
+  PhoneCall,
+  CreditCard,
+  Building2,
+} from 'lucide-react';
+import {
+  ExcelImportSettings,
+  ExcelImportSettingsService,
+} from '../../services/excelImportSettingsService';
+import { BlankFromService } from '../../services/blankFromService';
+import { ToastService } from '../../services/toastService';
+
+interface ExcelImportSettingsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSettingsChanged?: (settings: ExcelImportSettings) => void;
+}
+
+export const ExcelImportSettingsModal: React.FC<ExcelImportSettingsModalProps> = ({
+  isOpen,
+  onClose,
+  onSettingsChanged,
+}) => {
+  const [settings, setSettings] = useState<ExcelImportSettings>(() =>
+    ExcelImportSettingsService.getSettings()
+  );
+  const [savedCount, setSavedCount] = useState<number>(0);
+  const [hasSaved, setHasSaved] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSettings(ExcelImportSettingsService.getSettings());
+      setSavedCount(BlankFromService.getRows().length);
+      setHasSaved(false);
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleToggle = (key: keyof ExcelImportSettings) => {
+    setSettings((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
+
+  const handleSave = () => {
+    const updated = ExcelImportSettingsService.saveSettings(settings);
+    setHasSaved(true);
+    ToastService.hub('Excel Smart Deduplication settings saved!');
+    if (onSettingsChanged) onSettingsChanged(updated);
+    setTimeout(() => {
+      onClose();
+    }, 400);
+  };
+
+  const handleReset = () => {
+    const defaults = ExcelImportSettingsService.resetToDefaults();
+    setSettings(defaults);
+    ToastService.hub('Reset Excel import settings to recommended defaults.');
+    if (onSettingsChanged) onSettingsChanged(defaults);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto animate-fadeIn">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-2xl w-full p-5 sm:p-7 shadow-2xl space-y-5 animate-in fade-in zoom-in-95">
+        {/* Header */}
+        <div className="flex items-start justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center space-x-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800 flex items-center justify-center font-bold shadow-2xs shrink-0">
+              <Sliders className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h2 className="text-lg font-black text-slate-900 dark:text-white tracking-tight">
+                  Excel Upload &amp; Smart Deduplication Settings
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                  Active
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                স্মার্ট ইউনিক ডাটা সেটিংস: একই এক্সেল আবার আপলোড করলে শুধু নতুন ডাটাগুলো স্বয়ংক্রিয়ভাবে সেভ হবে।
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Database Status Banner */}
+        <div className="bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/60 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center space-x-3">
+            <Database className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0" />
+            <div>
+              <span className="font-bold text-slate-900 dark:text-white block">
+                Saved Database Status: {savedCount.toLocaleString()} Records Active
+              </span>
+              <span className="text-[11px] text-slate-600 dark:text-slate-400">
+                All uploaded files compare against these saved records before inserting new rows.
+              </span>
+            </div>
+          </div>
+          <span className="px-3 py-1 rounded-xl bg-white dark:bg-slate-800 text-blue-700 dark:text-blue-300 font-bold border border-blue-200 dark:border-blue-700 self-start sm:self-auto shadow-2xs">
+            Deduplication 100% Protected
+          </span>
+        </div>
+
+        {/* Section 1: Deduplication Mode */}
+        <div className="space-y-2.5">
+          <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center space-x-1.5 uppercase tracking-wider">
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <span>1. Import Deduplication Mode (ইম্পোর্ট মোড)</span>
+          </label>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Mode 1: Strict Unique Only (Default) */}
+            <div
+              onClick={() => setSettings((s) => ({ ...s, mode: 'STRICT_UNIQUE_ONLY' }))}
+              className={`p-4 rounded-2xl border transition cursor-pointer ${
+                settings.mode === 'STRICT_UNIQUE_ONLY'
+                  ? 'bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-500 ring-2 ring-emerald-500/30'
+                  : 'bg-white dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-600" />
+                  <span>Only Collect New Unique Records</span>
+                </span>
+                <span
+                  className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                    settings.mode === 'STRICT_UNIQUE_ONLY'
+                      ? 'border-emerald-600 bg-emerald-600 text-white'
+                      : 'border-slate-300 dark:border-slate-600'
+                  }`}
+                >
+                  {settings.mode === 'STRICT_UNIQUE_ONLY' && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                (সুপারিশকৃত) ইতিমধ্যে ডাটাবেসে থাকা কোনো ডাটা পুনরায় যোগ হবে না। শুধু সম্পূর্ণ নতুন ইউনিক ১০-২০টি ডাটা সংগ্রহ ও সেভ করবে।
+              </p>
+              <span className="inline-block mt-2 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/60 px-2 py-0.5 rounded-md">
+                Recommended &amp; Zero Duplicates
+              </span>
+            </div>
+
+            {/* Mode 2: Update Existing & Add New */}
+            <div
+              onClick={() => setSettings((s) => ({ ...s, mode: 'UPDATE_EXISTING' }))}
+              className={`p-4 rounded-2xl border transition cursor-pointer ${
+                settings.mode === 'UPDATE_EXISTING'
+                  ? 'bg-blue-50/60 dark:bg-blue-950/30 border-blue-500 ring-2 ring-blue-500/30'
+                  : 'bg-white dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <RotateCcw className="w-4 h-4 text-blue-600" />
+                  <span>Update Existing &amp; Add New</span>
+                </span>
+                <span
+                  className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                    settings.mode === 'UPDATE_EXISTING'
+                      ? 'border-blue-600 bg-blue-600 text-white'
+                      : 'border-slate-300 dark:border-slate-600'
+                  }`}
+                >
+                  {settings.mode === 'UPDATE_EXISTING' && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
+                আগের কোনো রেসিডেন্টের মোবাইল নম্বর বা রুম পরিবর্তন হলে তা স্বয়ংক্রিয়ভাবে আপডেট করবে এবং নতুন রেসিডেন্ট যোগ করবে।
+              </p>
+              <span className="inline-block mt-2 text-[10px] font-bold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/60 px-2 py-0.5 rounded-md">
+                Smart In-Place Update
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 2: Unique Identification Matching Keys */}
+        <div className="space-y-2.5">
+          <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center space-x-1.5 uppercase tracking-wider">
+            <UserCheck className="w-4 h-4 text-blue-600" />
+            <span>2. Unique Key Matching Criteria (ইউনিক ফিল্ড নির্বাচন)</span>
+          </label>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            নিচের যে কোনো একটি ফিল্ড মিলে গেলেই সিস্টেম রেকর্ডটিকে ইতিমধ্যে সংরক্ষিত হিসেবে চিহ্নিত করবে এবং ডুপ্লিকেট হিসেবে স্কিপ করবে:
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+            {/* 1. Employment ID */}
+            <div
+              onClick={() => handleToggle('matchByEmpId')}
+              className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                settings.matchByEmpId
+                  ? 'bg-slate-50 dark:bg-slate-800/80 border-blue-400 dark:border-blue-700'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 opacity-60'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <Hash className="w-4 h-4 text-blue-600" />
+                <div>
+                  <span className="font-bold text-slate-900 dark:text-white block">Employment ID / Badge</span>
+                  <span className="text-[10px] text-slate-500">e.g. 116423, 101278, TGM-1001</span>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.matchByEmpId}
+                onChange={() => {}}
+                className="w-4 h-4 rounded-md text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            </div>
+
+            {/* 2. National ID / Iqama */}
+            <div
+              onClick={() => handleToggle('matchByIqama')}
+              className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                settings.matchByIqama
+                  ? 'bg-slate-50 dark:bg-slate-800/80 border-blue-400 dark:border-blue-700'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 opacity-60'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <CreditCard className="w-4 h-4 text-emerald-600" />
+                <div>
+                  <span className="font-bold text-slate-900 dark:text-white block">National ID / Saudi Iqama</span>
+                  <span className="text-[10px] text-slate-500">e.g. 1092084308 (10 digits)</span>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.matchByIqama}
+                onChange={() => {}}
+                className="w-4 h-4 rounded-md text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            </div>
+
+            {/* 3. Passport */}
+            <div
+              onClick={() => handleToggle('matchByPassport')}
+              className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                settings.matchByPassport
+                  ? 'bg-slate-50 dark:bg-slate-800/80 border-blue-400 dark:border-blue-700'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 opacity-60'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                <div>
+                  <span className="font-bold text-slate-900 dark:text-white block">Passport Number</span>
+                  <span className="text-[10px] text-slate-500">Travel document / PP number</span>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.matchByPassport}
+                onChange={() => {}}
+                className="w-4 h-4 rounded-md text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            </div>
+
+            {/* 4. Name + Building + Unit */}
+            <div
+              onClick={() => handleToggle('matchByNameAndUnit')}
+              className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                settings.matchByNameAndUnit
+                  ? 'bg-slate-50 dark:bg-slate-800/80 border-blue-400 dark:border-blue-700'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 opacity-60'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <Building2 className="w-4 h-4 text-amber-600" />
+                <div>
+                  <span className="font-bold text-slate-900 dark:text-white block">Name + Building + Unit</span>
+                  <span className="text-[10px] text-slate-500">Same resident in same room</span>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.matchByNameAndUnit}
+                onChange={() => {}}
+                className="w-4 h-4 rounded-md text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            </div>
+
+            {/* 5. Mobile Phone */}
+            <div
+              onClick={() => handleToggle('matchByMobile')}
+              className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                settings.matchByMobile
+                  ? 'bg-slate-50 dark:bg-slate-800/80 border-blue-400 dark:border-blue-700'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 opacity-60'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <PhoneCall className="w-4 h-4 text-teal-600" />
+                <div>
+                  <span className="font-bold text-slate-900 dark:text-white block">Mobile Contact Number</span>
+                  <span className="text-[10px] text-slate-500">Direct mobile digits match</span>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.matchByMobile}
+                onChange={() => {}}
+                className="w-4 h-4 rounded-md text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            </div>
+
+            {/* 6. Exact Name Only */}
+            <div
+              onClick={() => handleToggle('matchByNameOnly')}
+              className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                settings.matchByNameOnly
+                  ? 'bg-slate-50 dark:bg-slate-800/80 border-blue-400 dark:border-blue-700'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 opacity-60'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <UserCheck className="w-4 h-4 text-purple-600" />
+                <div>
+                  <span className="font-bold text-slate-900 dark:text-white block">Exact Full Name (Fallback)</span>
+                  <span className="text-[10px] text-slate-500">If no IDs are present in row</span>
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.matchByNameOnly}
+                onChange={() => {}}
+                className="w-4 h-4 rounded-md text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Section 3: Workbook Processing Options */}
+        <div className="space-y-2.5">
+          <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center space-x-1.5 uppercase tracking-wider">
+            <FileSpreadsheet className="w-4 h-4 text-blue-600" />
+            <span>3. Advanced Workbook Options (অ্যাডভান্সড অপশন)</span>
+          </label>
+
+          <div className="space-y-2 text-xs">
+            {/* Scan all sheets */}
+            <label className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 flex items-center justify-between cursor-pointer">
+              <div>
+                <span className="font-bold text-slate-900 dark:text-white block">
+                  Scan All Sheets in Workbook (সবগুলো এক্সেল শীট স্ক্যান করুন)
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  মাল্টি-শীট এক্সেল ফাইলের সমস্ত ট্যাব স্ক্যান করে ডাটা সংগ্রহ করবে।
+                </span>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.scanAllSheets}
+                onChange={() => handleToggle('scanAllSheets')}
+                className="w-4 h-4 rounded-md text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            </label>
+
+            {/* Show Preview Before Saving */}
+            <label className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 flex items-center justify-between cursor-pointer">
+              <div>
+                <span className="font-bold text-slate-900 dark:text-white block">
+                  Interactive Review Before Saving (সেভ করার আগে প্রিভিউ দেখুন)
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  কতগুলো ডুপ্লিকেট স্কিপ হলো এবং কোন ১০-২০টি নতুন ডাটা পাওয়া গেল তা প্রিভিউ মডালে দেখাবে।
+                </span>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.showPreviewBeforeSave}
+                onChange={() => handleToggle('showPreviewBeforeSave')}
+                className="w-4 h-4 rounded-md text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            </label>
+
+            {/* Auto extract building from room */}
+            <label className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 flex items-center justify-between cursor-pointer">
+              <div>
+                <span className="font-bold text-slate-900 dark:text-white block">
+                  Smart Building &amp; Room Parser (e.g. D01-106)
+                </span>
+                <span className="text-[11px] text-slate-500">
+                  রুম নম্বরে "D01-106" থাকলে স্বয়ংক্রিয়ভাবে Building: D01 এবং Room: 106 এ বিভক্ত করবে।
+                </span>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.autoExtractBuildingFromRoom}
+                onChange={() => handleToggle('autoExtractBuildingFromRoom')}
+                className="w-4 h-4 rounded-md text-blue-600 focus:ring-blue-500 cursor-pointer"
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* Footer Actions */}
+        <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={handleReset}
+            className="px-4 py-2 rounded-xl text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-xs font-semibold flex items-center justify-center space-x-1.5 transition cursor-pointer"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Reset to Recommended Defaults</span>
+          </button>
+
+          <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs transition cursor-pointer"
+            >
+              Cancel
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSave}
+              className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center space-x-2 shadow-sm transition active:scale-95 cursor-pointer"
+            >
+              <Save className="w-4 h-4" />
+              <span>Save Settings (সেটিংস সংরক্ষণ করুন)</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};

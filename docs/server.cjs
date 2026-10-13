@@ -26,12 +26,13 @@ var import_express = __toESM(require("express"), 1);
 var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
 var import_exceljs = __toESM(require("exceljs"), 1);
+var XLSX = __toESM(require("xlsx"), 1);
 var import_jszip = __toESM(require("jszip"), 1);
 var import_vite = require("vite");
 var app = (0, import_express.default)();
 var PORT = 3e3;
-app.use(import_express.default.json({ limit: "20mb" }));
-app.use(import_express.default.urlencoded({ extended: true, limit: "20mb" }));
+app.use(import_express.default.json({ limit: "100mb" }));
+app.use(import_express.default.urlencoded({ extended: true, limit: "100mb" }));
 var DB_FILE_PATH = import_path.default.join(process.cwd(), "tamimi_server_db.json");
 var hubState = {
   version: 1,
@@ -460,9 +461,124 @@ app.post("/api/gas/proxy", async (req, res) => {
     if (cleanUrl.includes("docs.google.com/spreadsheets/d/")) {
       const match = cleanUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
       const sheetId = match ? match[1] : void 0;
+      const gidMatch = cleanUrl.match(/[#&?]gid=([0-9]+)/);
+      const requestedGid = gidMatch ? gidMatch[1] : req.body && (req.body.gid || req.body.tabGid);
+      const requestedTab = req.body && (req.body.tab || req.body.tabName) || "";
+      if (sheetId) {
+        try {
+          if (requestedGid) {
+            try {
+              const gidUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${requestedGid}`;
+              const gidRes = await fetch(gidUrl);
+              if (gidRes.ok) {
+                const csv = await gidRes.text();
+                if (csv && csv.trim().length > 10 && !csv.includes("<!DOCTYPE html>")) {
+                  return res.json({
+                    success: true,
+                    csv,
+                    sheetId,
+                    gid: requestedGid,
+                    tab: requestedTab || `gid-${requestedGid}`,
+                    latencyMs: Date.now() - startTime
+                  });
+                }
+              }
+            } catch (gidErr) {
+              console.warn("GID direct CSV fetch failed, falling back to XLSX:", gidErr);
+            }
+          }
+          try {
+            const xlsxUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=xlsx`;
+            const xlsxRes = await fetch(xlsxUrl);
+            if (xlsxRes.ok) {
+              const arrayBuffer = await xlsxRes.arrayBuffer();
+              const wb = XLSX.read(Buffer.from(arrayBuffer), { type: "buffer" });
+              const tabDetails = wb.SheetNames.map((name) => {
+                const ws = wb.Sheets[name];
+                const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+                const hasPassport = rawRows.some(
+                  (r, i) => i < 5 && Array.isArray(r) && r.some((c) => {
+                    const str = String(c || "").toLowerCase();
+                    return str.includes("passport") || str.includes("\u062C\u0648\u0627\u0632") || str.includes("pass") || str.includes("\u09AA\u09BE\u09B8\u09AA\u09CB\u09B0\u09CD\u099F");
+                  })
+                );
+                const hasIqama = rawRows.some(
+                  (r, i) => i < 5 && Array.isArray(r) && r.some((c) => {
+                    const str = String(c || "").toLowerCase();
+                    return str.includes("iqama") || str.includes("\u0625\u0642\u0627\u0645\u0629") || str.includes("national id") || str.includes("\u0647\u0648\u064A\u0629");
+                  })
+                );
+                return {
+                  name,
+                  rowCount: rawRows.length,
+                  hasPassport,
+                  hasIqama
+                };
+              });
+              const sortedByRows = tabDetails.slice().sort((a, b) => b.rowCount - a.rowCount);
+              const maxRowTab = sortedByRows[0];
+              let bestTab = requestedTab ? tabDetails.find((t) => t.name.toLowerCase().includes(requestedTab.toLowerCase())) : void 0;
+              if (!bestTab) {
+                if (maxRowTab && maxRowTab.rowCount > 1500) {
+                  bestTab = maxRowTab;
+                } else {
+                  bestTab = tabDetails.find((t) => t.hasPassport && t.rowCount > 50) || tabDetails.find((t) => t.name.toLowerCase().includes("blank") || t.name.toLowerCase().includes("form")) || tabDetails.find((t) => t.hasPassport) || maxRowTab;
+                }
+              }
+              if (bestTab) {
+                const activeWs = wb.Sheets[bestTab.name];
+                const rawRows = XLSX.utils.sheet_to_json(activeWs, { header: 1 });
+                return res.json({
+                  success: true,
+                  sheetId,
+                  selectedTab: bestTab.name,
+                  rowCount: rawRows.length,
+                  rawRows,
+                  availableTabs: tabDetails.map((t) => ({ name: t.name, rowCount: t.rowCount, hasPassport: t.hasPassport })),
+                  latencyMs: Date.now() - startTime
+                });
+              }
+            }
+          } catch (xlsxErr) {
+            console.warn("Direct XLSX workbook export failed, trying CSV fallbacks:", xlsxErr);
+          }
+          const tabNamesToTry = [requestedTab, "Bank Froms", "Bank From", "Blank Forms", "Blank Form", "Blank From", "16. Blank Forms"].filter(Boolean);
+          for (const tab of tabNamesToTry) {
+            const fetchUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tab)}`;
+            const csvRes = await fetch(fetchUrl);
+            if (csvRes.ok) {
+              const csv = await csvRes.text();
+              if (csv && csv.trim().length > 10 && !csv.includes("<!DOCTYPE html>")) {
+                return res.json({
+                  success: true,
+                  csv,
+                  sheetId,
+                  tab,
+                  latencyMs: Date.now() - startTime
+                });
+              }
+            }
+          }
+          const exportUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
+          const expRes = await fetch(exportUrl);
+          if (expRes.ok) {
+            const csv = await expRes.text();
+            if (csv && csv.trim().length > 10 && !csv.includes("<!DOCTYPE html>")) {
+              return res.json({
+                success: true,
+                csv,
+                sheetId,
+                latencyMs: Date.now() - startTime
+              });
+            }
+          }
+        } catch (csvErr) {
+          console.warn("Direct spreadsheet fetch error in proxy:", csvErr);
+        }
+      }
       return res.json({
         success: false,
-        error: "You provided a Google Spreadsheet link instead of a Google Apps Script Web App URL. In your Google Sheet, go to Extensions > Apps Script > Deploy > New Deployment > Web App to get your Web App URL.",
+        error: 'Direct Google Spreadsheet link provided. To sync directly, set spreadsheet sharing to "Anyone with the link can view", or check the sheet link.',
         isSheetLink: true,
         sheetId,
         diagnosis: "SHEET_LINK_PROVIDED"
@@ -480,7 +596,7 @@ app.post("/api/gas/proxy", async (req, res) => {
   }
   const bodyObj = body && typeof body === "object" ? body : {};
   const tabOrFacility = req.body && (req.body.tab || req.body.facility || req.body.facilityName || req.body.tabName) || (bodyObj.tab || bodyObj.facility || bodyObj.facilityName || bodyObj.tabName) || "";
-  const isReadAction = method.toUpperCase() === "GET" && (effectiveAction === "getAll" || effectiveAction === "getAllBookings" || effectiveAction === "getBookings" || effectiveAction === "getFacilityBookings" || effectiveAction === "ping" || effectiveAction === "getFacilities" || effectiveAction === "getHandover" || effectiveAction === "getParcels" || effectiveAction === "getLostFound" || effectiveAction === "getIsolation" || effectiveAction === "getBlankForms" || effectiveAction === "getInvoices" || effectiveAction === "getNotices" || effectiveAction === "getSupportTickets" || effectiveAction === "getWorkOrderTickets" || effectiveAction === "getSlaPolicies" || effectiveAction === "getWorkflows" || effectiveAction === "getEmailLogs");
+  const isReadAction = method.toUpperCase() === "GET" && (effectiveAction === "getAll" || effectiveAction === "getAllBookings" || effectiveAction === "getBookings" || effectiveAction === "getFacilityBookings" || effectiveAction === "ping" || effectiveAction === "getFacilities" || effectiveAction === "getHandover" || effectiveAction === "getParcels" || effectiveAction === "getLostFound" || effectiveAction === "getIsolation" || effectiveAction === "getBlankForms" || effectiveAction === "getBlankFromEmployees" || effectiveAction === "getBlankFormsData" || effectiveAction === "getBlankFormsEmployees" || effectiveAction === "getAutoFormData" || effectiveAction === "getInvoices" || effectiveAction === "getNotices" || effectiveAction === "getSupportTickets" || effectiveAction === "getWorkOrderTickets" || effectiveAction === "getSlaPolicies" || effectiveAction === "getWorkflows" || effectiveAction === "getEmailLogs");
   const cacheKey = `${cleanUrl}_${effectiveAction}_${tabOrFacility}`;
   const shouldSkipCache = Boolean(
     req.body.skipCache || req.body.fresh || req.body.forceFresh || bodyObj.skipCache || bodyObj.fresh || bodyObj.forceFresh || !isReadAction

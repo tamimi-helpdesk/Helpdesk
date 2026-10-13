@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { BlankFromRow } from '../data/initialBlankFromData';
+import { BlankFromRow, EMPTY_BLANK_FROM_ROW } from '../data/initialBlankFromData';
 
 export interface DocxFillOptions {
   customTemplateBuffer?: ArrayBuffer;
@@ -8,18 +8,25 @@ export interface DocxFillOptions {
 
 export class DocxFillService {
   /**
-   * Fetches the default From.docx file from the app
+   * Fetches the authentic From.docx file from the app
    */
   public static async getDefaultTemplateBuffer(): Promise<ArrayBuffer> {
-    const res = await fetch('/From.docx');
-    if (!res.ok) {
-      throw new Error(`Failed to load base Word template From.docx (HTTP ${res.status})`);
+    const urls = ['./From.docx', '/From.docx', 'From.docx'];
+    for (const url of urls) {
+      try {
+        const res = await fetch(url);
+        if (res.ok) {
+          return await res.arrayBuffer();
+        }
+      } catch (e) {
+        // try next fallback
+      }
     }
-    return await res.arrayBuffer();
+    throw new Error('Failed to load base Word template From.docx');
   }
 
   /**
-   * Fills From.docx with exact employee data from the Google Sheet Blank From tab
+   * Fills From.docx with exact employee/resident data from the Google Sheet Blank Forms tab
    * and returns the generated docx Blob preserving 100% of the original Word document's styling
    */
   public static async fillDocxTemplate(
@@ -38,23 +45,42 @@ export class DocxFillService {
 
     // Merge any override values
     const data: BlankFromRow = {
-      ...row,
+      ...EMPTY_BLANK_FROM_ROW,
+      ...(row || {}),
       ...(options?.overrideValues || {}),
     };
 
+    // Construct the formatted unit string with building, unit no, and serial number
+    const bPart = (data.buildingNo || '').trim();
+    const uPart = (data.unitNo || data.room || '').trim();
+    const sPart = (data.unitSerialNo || '').trim();
+
+    let computedUnit = (data.unit || '').trim();
+    if (!computedUnit || computedUnit === 'TBCV') {
+      if (bPart && uPart) {
+        computedUnit = `${bPart} - Unit ${uPart}${sPart ? ` (${sPart})` : ''}`;
+      } else if (uPart) {
+        computedUnit = `Unit ${uPart}${sPart ? ` (${sPart})` : ''}`;
+      } else if (bPart) {
+        computedUnit = bPart;
+      }
+    } else if (sPart && !computedUnit.includes(sPart)) {
+      computedUnit = `${computedUnit} (${sPart})`;
+    }
+
     // Dictionary of placeholders in From.docx
     const replacements: Record<string, string> = {
-      Unit: data.unit || `${data.property} - ${data.sector}- ${data.house}- ${data.floor}- ${data.room}`,
+      Unit: computedUnit || 'TBCV',
       Move_In_Date: data.moveInDate || '8/24/2026',
       Move_Out_Date: data.moveOutDate || '8/26/2026',
       Name: data.name || '',
-      Department: data.department || '',
+      Department: data.department || 'Projects Delivery',
       'Employment ID': data.employmentId || '',
-      Company: data.company || '',
-      Division: data.division || '',
+      Company: data.company || 'Red Sea Global',
+      Division: data.division || 'Operations',
       'ID/Iqama': data.idIqama || '',
       Passport: data.passport || '',
-      Nationality: data.nationality || '',
+      Nationality: data.nationality || 'Saudi Arabia',
       DOB: data.dob || '',
       Gender: data.gender || 'Male',
       Mobile: data.mobile || '',
@@ -63,13 +89,30 @@ export class DocxFillService {
       'Name of Contact': data.emergencyName || 'None',
     };
 
-    // Parse XML using DOMParser
+    // 1. Cross-run XML Regex Replacement (handles Word splitting tokens across <w:r> runs)
+    for (const [key, rawVal] of Object.entries(replacements)) {
+      const val = (rawVal || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+      const chars = key.split('');
+      const tagPattern = chars
+        .map((c) => c.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'))
+        .join('(?:<[^>]+>)*');
+
+      const fullRegex = new RegExp(
+        '\\{\\{' + '(?:<[^>]+>)*' + tagPattern + '(?:<[^>]+>)*' + '\\}\\}',
+        'gi'
+      );
+      docXml = docXml.replace(fullRegex, val);
+    }
+
+    // 2. Parse XML for DOM manipulation (checkboxes & optional table cells)
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(docXml, 'application/xml');
-
     const NS_W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
-    // Helper to find elements resiliently with or without namespace
     const getElems = (parent: Element | Document, tag: string) => {
       const byNs = parent.getElementsByTagNameNS(NS_W, tag);
       if (byNs && byNs.length > 0) return Array.from(byNs);
@@ -78,59 +121,12 @@ export class DocxFillService {
       return Array.from(parent.getElementsByTagName(tag));
     };
 
-    // 1. Replace all paragraph-level placeholders
+    // Handle Property Type Checkboxes: Executive, Senior, Junior, Worker
     const paragraphs = getElems(xmlDoc, 'p');
-
     for (let i = 0; i < paragraphs.length; i++) {
       const p = paragraphs[i];
-      const textNodes = getElems(p, 't');
-      let pText = '';
-      for (let j = 0; j < textNodes.length; j++) {
-        pText += textNodes[j].textContent || '';
-      }
+      const pText = p.textContent || '';
 
-      // Check if this paragraph contains any of our placeholder tags
-      for (const [key, val] of Object.entries(replacements)) {
-        const normKey = key.replace(/[\s_]/g, '').toLowerCase();
-        const normPText = pText.replace(/[\s_]/g, '').toLowerCase();
-
-        if (normPText.includes(`{{${normKey}}}`)) {
-          // Find run formatting (w:rPr) from the existing runs to preserve exact font, size, and styling
-          const runs = getElems(p, 'r');
-          let rPrClone: Node | null = null;
-          for (let rIdx = 0; rIdx < runs.length; rIdx++) {
-            const rPrs = getElems(runs[rIdx], 'rPr');
-            if (rPrs.length > 0) {
-              rPrClone = rPrs[0].cloneNode(true);
-              break;
-            }
-          }
-
-          // Remove all existing runs and bookmarks
-          const childNodes = Array.from(p.childNodes);
-          for (const child of childNodes) {
-            const localName = (child as Element).localName || (child as Element).nodeName || '';
-            if (localName.includes('r') || localName.includes('bookmarkStart') || localName.includes('bookmarkEnd')) {
-              p.removeChild(child);
-            }
-          }
-
-          // Append new pristine run with replacement text and original styling
-          const newRun = xmlDoc.createElementNS(NS_W, 'w:r');
-          if (rPrClone) {
-            newRun.appendChild(rPrClone);
-          }
-          const newText = xmlDoc.createElementNS(NS_W, 'w:t');
-          newText.setAttribute('xml:space', 'preserve');
-          newText.textContent = val;
-          newRun.appendChild(newText);
-          p.appendChild(newRun);
-
-          break; // Process next paragraph
-        }
-      }
-
-      // 2. Handle Property Type Checkboxes: Executive, Senior, Junior, Worker
       if (pText.includes('Executive') && pText.includes('Senior')) {
         const checkBoxes = getElems(p, 'checkBox');
         const types = ['Executive', 'Senior', 'Junior', 'Worker'];
@@ -162,7 +158,7 @@ export class DocxFillService {
       }
     }
 
-    // 3. Fill Vehicle Details if available
+    // 3. Fill Vehicle Details if present
     if (data.vehicleRegNo || data.vehicleModel || data.carParkSpace) {
       const tableRows = getElems(xmlDoc, 'tr');
       for (let r = 0; r < tableRows.length; r++) {
@@ -238,8 +234,8 @@ export class DocxFillService {
     options?: DocxFillOptions
   ): Promise<string> {
     const blob = await this.fillDocxTemplate(row, options);
-    const cleanName = (row.name || 'Employee').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-    const fileName = `Community_Management_Move_In_Out_Form_${cleanName}_${row.employmentId || 'ID'}.docx`;
+    const cleanName = ((row && row.name) || 'Resident').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+    const fileName = `Community_Management_Move_In_Out_Form_${cleanName}_${(row && row.employmentId) || 'ID'}.docx`;
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -253,5 +249,25 @@ export class DocxFillService {
     }, 1000);
 
     return fileName;
+  }
+
+  /**
+   * Helper to download original blank From.docx
+   */
+  public static async downloadBlankDocx(): Promise<void> {
+    const buffer = await this.getDefaultTemplateBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'From_Original_Community_Management_Form.docx';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 1000);
   }
 }
