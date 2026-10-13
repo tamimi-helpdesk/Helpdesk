@@ -34,6 +34,7 @@ import {
 import { BlankFormFillModal } from './blank-forms/BlankFormFillModal';
 import { BlankFormPrintLayout } from './blank-forms/BlankFormPrintLayout';
 import { AddCustomFormModal } from './blank-forms/AddCustomFormModal';
+import { AutoFormSection } from './blank-forms/AutoFormSection';
 import {
   getStoredCustomTemplates,
   deleteStoredCustomTemplate,
@@ -104,7 +105,7 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
     isBlank: boolean;
   } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'TEMPLATES' | 'SAVED_DRAFTS'>('TEMPLATES');
+  const [activeTab, setActiveTab] = useState<'TEMPLATES' | 'SAVED_DRAFTS' | 'AUTO_FORM'>('TEMPLATES');
 
   // Reload custom templates if updated
   const refreshCustomTemplates = () => {
@@ -280,6 +281,22 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
 
           <button
             type="button"
+            onClick={() => setActiveTab('AUTO_FORM')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-2 shrink-0 ${
+              activeTab === 'AUTO_FORM'
+                ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-400/50'
+                : 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60 hover:bg-amber-100'
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            <span>Auto Form (গুগল শিট অটো-ফিলাপ)</span>
+            <span className="text-[9px] bg-amber-400 text-slate-950 px-1.5 py-0.2 rounded font-black tracking-wider">
+              NEW
+            </span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('SAVED_DRAFTS')}
             className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-2 shrink-0 ${
               activeTab === 'SAVED_DRAFTS'
@@ -319,7 +336,9 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
         </div>
       </div>
 
-      {activeTab === 'TEMPLATES' ? (
+      {activeTab === 'AUTO_FORM' ? (
+        <AutoFormSection onSavedToDrafts={() => setActiveTab('SAVED_DRAFTS')} />
+      ) : activeTab === 'TEMPLATES' ? (
         <>
           {/* Category Filter Pills */}
           <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-none">

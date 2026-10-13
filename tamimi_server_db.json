@@ -1,9 +1,16 @@
 {
-  "version": 3289,
-  "lastUpdated": "2026-10-13T11:25:33.107Z",
-  "deletedIds": {},
+  "version": 93898,
+  "lastUpdated": "2026-10-13T12:15:32.489Z",
+  "deletedIds": {
+    "r-03-b1": 1791893732405,
+    "iso-r-03-b1": 1791893732478,
+    "room r-03 (bed 1)": 1791893732385,
+    "iso-r03-b1-7270": 1791893732468
+  },
   "cancelledIds": {
-    "bb-20261001162348-5794": 1790861407602
+    "bb-20261001162348-5794": 1790861407602,
+    "iso-r03-b1-7270": 1791893732489,
+    "mr-test-999": 1791893732488
   },
   "bookings": [
     {
@@ -911,7 +918,9 @@
       "durationMinutes": 60,
       "customerName": "Executive Verification",
       "phoneNumber": "+966501112233",
-      "status": "CONFIRMED"
+      "status": "CANCELLED",
+      "cancellationReason": "Cancelled from Pass Modal",
+      "cancelledAt": "2026-10-13T12:15:32.488Z"
     },
     {
       "id": "MU-164891",
@@ -4756,25 +4765,6 @@
       "sheetTabName": "Isolation & Room Booking"
     },
     {
-      "id": "ISO-R03-B1-7270",
-      "customerName": "MUHAMMAD AFNAN MIR QAD",
-      "phoneNumber": "60",
-      "email": "1",
-      "departmentOrTeam": "L & T",
-      "date": "2026-08-27",
-      "stage": "Room R-03 (Bed 1)",
-      "startTime": "00:00",
-      "endTime": "23:59",
-      "durationMinutes": 1440,
-      "guestsCount": 1,
-      "status": "CONFIRMED",
-      "notes": "Check-out: 2026-08-30 | Type: Medical Isolation | Purpose: CONFIRMED | Notes: {}",
-      "customOptions": {},
-      "createdAt": "2026-09-01T16:20:47.270Z",
-      "facilityName": "Isolation & Room Booking",
-      "sheetTabName": "Isolation & Room Booking"
-    },
-    {
       "id": "MR-20261001153320-3103",
       "customerName": "Mohammad Imran",
       "phoneNumber": "Mohammad Imran",
@@ -7579,7 +7569,7 @@
       "customOptions": {},
       "createdAt": "2026-10-01T15:39:41.891Z",
       "facilityName": "Multipurpose Room",
-      "sheetTabName": "Multipurpose Room",
+      "sheetTabName": "Isolation & Room Booking",
       "facilityId": "multipurpose-room"
     },
     {
@@ -8049,34 +8039,22 @@
       "buildingNumber": "R-03",
       "building": "R-03",
       "beds": 2,
-      "patientName": "MUHAMMAD AFNAN MIR QAD",
-      "status": "Occupied",
+      "patientName": "",
+      "status": "VACANT",
       "bookingType": "Medical Isolation",
-      "company": "L & T",
-      "checkIn": "2026-08-27",
-      "checkOut": "2026-08-30",
-      "phoneNumber": "60",
-      "email": "1",
-      "purposeOfStay": "CONFIRMED",
+      "company": "",
+      "checkIn": "",
+      "checkOut": "",
+      "phoneNumber": "",
+      "email": "",
+      "purposeOfStay": "",
       "hospitalReferral": "",
       "roomCondition": "Cleaned & Ready",
-      "staffNotes": "{}",
-      "occupants": [
-        {
-          "bedNumber": 1,
-          "patientName": "MUHAMMAD AFNAN MIR QAD",
-          "company": "L & T",
-          "checkIn": "2026-08-27",
-          "checkOut": "2026-08-30",
-          "phoneNumber": "60",
-          "email": "1",
-          "bookingType": "Medical Isolation",
-          "purposeOfStay": "CONFIRMED",
-          "staffNotes": "{}",
-          "keyIssued": true
-        }
-      ],
-      "lastUpdated": "2026-10-02T11:25:27.067Z"
+      "staffNotes": "",
+      "occupants": [],
+      "lastUpdated": "2026-10-13T11:51:24.379Z",
+      "nationalId": "",
+      "keyIssued": false
     },
     {
       "id": "ISO-R-04",
