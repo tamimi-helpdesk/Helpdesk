@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, ShieldCheck, Key, Globe, CheckCircle2, AlertTriangle, ExternalLink, Copy, Check, RefreshCw, Smartphone, MessageSquare, Users } from 'lucide-react';
 import { GreenApiService, GreenApiConfig, GreenApiChat } from '../../services/greenApiService';
+import { WhatsAppUniversalService } from '../../services/whatsappUniversalService';
 import { GasService } from '../../services/gasService';
 import { ToastService } from '../../services/toastService';
 
@@ -20,6 +21,7 @@ export const GreenApiSetupModal: React.FC<GreenApiSetupModalProps> = ({
 
   const [instanceId, setInstanceId] = useState(currentConfig.instanceId || '');
   const [apiToken, setApiToken] = useState(currentConfig.apiToken || '');
+  const [apiUrl, setApiUrl] = useState(currentConfig.apiUrl || '');
   const [targetGroupChatId, setTargetGroupChatId] = useState(currentConfig.targetGroupChatId || '');
   const [targetGroupName, setTargetGroupName] = useState(currentConfig.targetGroupName || '');
   const [isTesting, setIsTesting] = useState(false);
@@ -45,7 +47,7 @@ export const GreenApiSetupModal: React.FC<GreenApiSetupModalProps> = ({
     setIsTesting(true);
     setTestResult(null);
     try {
-      const res = await GreenApiService.testConnection(instanceId, apiToken);
+      const res = await GreenApiService.testConnection(instanceId, apiToken, apiUrl);
       setTestResult(res);
       if (res.success) {
         ToastService.showSuccess('Green API Connected Successfully!');
@@ -64,7 +66,7 @@ export const GreenApiSetupModal: React.FC<GreenApiSetupModalProps> = ({
     }
     setIsDetectingGroups(true);
     try {
-      const res = await GreenApiService.getChats(instanceId, apiToken);
+      const res = await GreenApiService.getChats(instanceId, apiToken, apiUrl);
       if (res.success && res.chats.length > 0) {
         // Filter group chats
         const groupsOnly = res.chats.filter((c) => c.id.includes('@g.us') || c.type === 'group');
@@ -86,10 +88,24 @@ export const GreenApiSetupModal: React.FC<GreenApiSetupModalProps> = ({
     const updated = GreenApiService.saveConfig({
       instanceId: instanceId.trim(),
       apiToken: apiToken.trim(),
+      apiUrl: apiUrl.trim(),
       targetGroupChatId: targetGroupChatId.trim(),
       targetGroupName: targetGroupName.trim(),
       webhookUrl,
     });
+
+    // Also sync to WhatsAppUniversalService
+    WhatsAppUniversalService.saveConfig({
+      activeProvider: 'green_api',
+      greenApi: {
+        instanceId: instanceId.trim(),
+        apiToken: apiToken.trim(),
+        apiUrl: apiUrl.trim(),
+        targetGroupChatId: targetGroupChatId.trim(),
+        targetGroupName: targetGroupName.trim(),
+      },
+    });
+
     onConfigSaved(updated);
     ToastService.showSuccess(
       updated.isConfigured
@@ -102,13 +118,15 @@ export const GreenApiSetupModal: React.FC<GreenApiSetupModalProps> = ({
   const handleDisconnect = () => {
     if (confirm('Are you sure you want to disconnect and clear Green API credentials?')) {
       GreenApiService.clearConfig();
+      WhatsAppUniversalService.clearConfig();
       setInstanceId('');
       setApiToken('');
+      setApiUrl('');
       setTargetGroupChatId('');
       setTargetGroupName('');
       setTestResult(null);
       onConfigSaved(GreenApiService.getConfig());
-      ToastService.showInfo('Green API Disconnected. Switched to Free WhatsApp Direct Mode.');
+      ToastService.showInfo('Green API Disconnected.');
       onClose();
     }
   };
@@ -201,6 +219,29 @@ export const GreenApiSetupModal: React.FC<GreenApiSetupModalProps> = ({
                 />
                 <ShieldCheck className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
               </div>
+            </div>
+
+            {/* Green API Host URL (Optional) */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                  Green API Host URL (apiUrl - Optional):
+                </label>
+                <span className="text-[10px] text-slate-400 font-medium">Auto-detected if left empty</span>
+              </div>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={apiUrl}
+                  onChange={(e) => setApiUrl(e.target.value)}
+                  placeholder="https://api.green-api.com (or e.g. https://7103.api.green-api.com)"
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono font-medium text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                />
+                <Globe className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1">
+                Leave blank for default universal host (<code>https://api.green-api.com</code>) or enter your instance host cluster.
+              </p>
             </div>
 
             {/* Target WhatsApp Group ID & Detection */}

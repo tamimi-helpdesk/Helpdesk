@@ -75,15 +75,43 @@ try {
   console.warn("[Hub] Could not load database file, starting with fresh state:", err);
 }
 var saveTimeout = null;
-function persistHubState() {
-  if (saveTimeout) clearTimeout(saveTimeout);
-  saveTimeout = setTimeout(() => {
-    try {
-      import_fs.default.writeFileSync(DB_FILE_PATH, JSON.stringify(hubState, null, 2), "utf-8");
-    } catch (e) {
-      console.error("[Hub] Failed to persist state to disk:", e);
+var isWriting = false;
+var pendingWrite = false;
+function doPersistHubState() {
+  if (isWriting) {
+    pendingWrite = true;
+    return;
+  }
+  isWriting = true;
+  pendingWrite = false;
+  try {
+    const serialized = JSON.stringify(hubState, null, 2);
+    const tempPath = `${DB_FILE_PATH}.tmp.${Date.now()}`;
+    import_fs.default.writeFileSync(tempPath, serialized, "utf-8");
+    import_fs.default.renameSync(tempPath, DB_FILE_PATH);
+  } catch (e) {
+    console.error("[Hub] Failed to persist state to disk:", e);
+  } finally {
+    isWriting = false;
+    if (pendingWrite) {
+      pendingWrite = false;
+      setTimeout(doPersistHubState, 100);
     }
-  }, 300);
+  }
+}
+function persistHubState(immediate = false) {
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
+    saveTimeout = null;
+  }
+  if (immediate) {
+    doPersistHubState();
+  } else {
+    saveTimeout = setTimeout(() => {
+      saveTimeout = null;
+      doPersistHubState();
+    }, 150);
+  }
 }
 var sseClients = /* @__PURE__ */ new Set();
 function broadcastHubEvent(event) {
@@ -727,46 +755,95 @@ app.get("/api/gas/sheet-data", async (req, res) => {
     });
   }
 });
+function getGreenApiCandidateHosts(cleanId, customApiUrl) {
+  const list = [];
+  if (customApiUrl) {
+    const cleanUrl = String(customApiUrl).trim().replace(/\/+$/, "");
+    if (cleanUrl.startsWith("http")) {
+      list.push(cleanUrl);
+    }
+  }
+  if (!list.includes("https://api.green-api.com")) {
+    list.push("https://api.green-api.com");
+  }
+  if (cleanId.length >= 4) {
+    const subHost = `https://${cleanId.slice(0, 4)}.api.green-api.com`;
+    if (!list.includes(subHost)) {
+      list.push(subHost);
+    }
+  }
+  if (!list.includes("https://media.green-api.com")) {
+    list.push("https://media.green-api.com");
+  }
+  return list;
+}
 app.post("/api/green-api/get-chats", async (req, res) => {
-  const { instanceId, apiToken } = req.body || {};
+  const { instanceId, apiToken, apiUrl } = req.body || {};
   const cleanId = String(instanceId || "").trim();
   const cleanToken = String(apiToken || "").trim();
   if (!cleanId || !cleanToken) {
     return res.status(400).json({ success: false, error: "Instance ID and API Token are required." });
   }
-  try {
-    const url = `https://api.green-api.com/waInstance${cleanId}/getChats/${cleanToken}`;
-    const response = await fetch(url, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" }
-    });
-    if (!response.ok) {
-      const errBody = await response.text();
-      return res.status(response.status).json({
-        success: false,
-        error: `Green API returned ${response.status}: ${errBody || response.statusText}`
+  const hosts = getGreenApiCandidateHosts(cleanId, apiUrl);
+  let lastError = "Failed to fetch WhatsApp chats";
+  for (const host of hosts) {
+    try {
+      const url = `${host}/waInstance${cleanId}/getChats/${cleanToken}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" }
       });
+      if (response.ok) {
+        const chats = await response.json();
+        return res.json({ success: true, chats, activeHost: host });
+      } else {
+        const errBody = await response.text();
+        lastError = `Green API returned ${response.status}: ${errBody || response.statusText}`;
+      }
+    } catch (err) {
+      lastError = err.message || "Connection failed";
     }
-    const chats = await response.json();
-    return res.json({ success: true, chats });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message || "Failed to fetch WhatsApp chats" });
   }
+  return res.status(500).json({ success: false, error: lastError });
 });
 app.post("/api/green-api/status", async (req, res) => {
-  const { instanceId, apiToken } = req.body || {};
+  const { instanceId, apiToken, apiUrl } = req.body || {};
   const cleanId = String(instanceId || "").trim();
   const cleanToken = String(apiToken || "").trim();
   if (!cleanId || !cleanToken) {
-    return res.status(400).json({ success: false, error: "Instance ID and API Token are required." });
+    return res.status(400).json({ success: false, error: "Instance ID and API Token are required.", message: "Instance ID and API Token are required." });
   }
-  try {
-    const stateUrl = `https://api.green-api.com/waInstance${cleanId}/getStateInstance/${cleanToken}`;
-    const stateRes = await fetch(stateUrl);
-    const stateData = stateRes.ok ? await stateRes.json() : null;
+  const hosts = getGreenApiCandidateHosts(cleanId, apiUrl);
+  let lastError = "Failed to query Green API status";
+  let respondedState = null;
+  for (const host of hosts) {
+    try {
+      const stateUrl = `${host}/waInstance${cleanId}/getStateInstance/${cleanToken}`;
+      const stateRes = await fetch(stateUrl);
+      if (stateRes.ok) {
+        const stateData = await stateRes.json();
+        respondedState = { host, data: stateData };
+        break;
+      } else if (stateRes.status === 401 || stateRes.status === 403) {
+        return res.json({
+          success: false,
+          state: "unauthorized",
+          message: "Invalid Green API Instance ID or API Token. Please verify in your green-api.com dashboard.",
+          activeHost: host
+        });
+      } else {
+        const errText = await stateRes.text();
+        lastError = `HTTP ${stateRes.status}: ${errText || stateRes.statusText}`;
+      }
+    } catch (err) {
+      lastError = err.message || "Network error";
+    }
+  }
+  if (respondedState) {
+    const stateInstance = respondedState.data?.stateInstance || "unknown";
     let phone = "";
     try {
-      const waUrl = `https://api.green-api.com/waInstance${cleanId}/getWaSettings/${cleanToken}`;
+      const waUrl = `${respondedState.host}/waInstance${cleanId}/getWaSettings/${cleanToken}`;
       const waRes = await fetch(waUrl);
       if (waRes.ok) {
         const waData = await waRes.json();
@@ -774,17 +851,38 @@ app.post("/api/green-api/status", async (req, res) => {
       }
     } catch {
     }
+    const isAuthorized = stateInstance === "authorized";
+    let message = "";
+    if (isAuthorized) {
+      message = "Green API Instance is ONLINE and AUTHORIZED!";
+    } else if (stateInstance === "notAuthorized") {
+      message = "Green API connected! WhatsApp account is not linked. Please scan the QR code in your green-api.com console.";
+    } else if (stateInstance === "sleepMode") {
+      message = "WhatsApp phone is in Sleep Mode or screen locked. Open WhatsApp on phone to wake it up.";
+    } else if (stateInstance === "blocked") {
+      message = "WhatsApp account or instance is blocked by Green API.";
+    } else if (stateInstance === "starting") {
+      message = "Green API instance is starting up. Please wait 10-20 seconds and retry.";
+    } else {
+      message = `Green API Instance state: "${stateInstance}".`;
+    }
     return res.json({
-      success: Boolean(stateData?.stateInstance === "authorized"),
-      state: stateData?.stateInstance || "unknown",
-      phone
+      success: isAuthorized,
+      state: stateInstance,
+      phone,
+      activeHost: respondedState.host,
+      message
     });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message || "Failed to query Green API status" });
   }
+  return res.json({
+    success: false,
+    state: "error",
+    message: `Network error connecting to Green API: ${lastError}`,
+    error: lastError
+  });
 });
 app.post("/api/green-api/get-group-data", async (req, res) => {
-  const { instanceId, apiToken, groupId } = req.body || {};
+  const { instanceId, apiToken, groupId, apiUrl } = req.body || {};
   const cleanId = String(instanceId || "").trim();
   const cleanToken = String(apiToken || "").trim();
   let cleanGroup = String(groupId || "").trim();
@@ -794,10 +892,7 @@ app.post("/api/green-api/get-group-data", async (req, res) => {
   if (!cleanGroup.includes("@")) {
     cleanGroup = `${cleanGroup}@g.us`;
   }
-  const hosts = [
-    "https://api.green-api.com",
-    cleanId.length >= 4 ? `https://${cleanId.slice(0, 4)}.api.green-api.com` : ""
-  ].filter(Boolean);
+  const hosts = getGreenApiCandidateHosts(cleanId, apiUrl);
   for (const host of hosts) {
     try {
       const url = `${host}/waInstance${cleanId}/getGroupData/${cleanToken}`;
@@ -808,7 +903,7 @@ app.post("/api/green-api/get-group-data", async (req, res) => {
       });
       if (r.ok) {
         const data = await r.json();
-        return res.json({ success: true, groupData: data });
+        return res.json({ success: true, groupData: data, activeHost: host });
       }
     } catch {
     }
@@ -816,32 +911,37 @@ app.post("/api/green-api/get-group-data", async (req, res) => {
   return res.status(404).json({ success: false, error: "Group data could not be retrieved from Green API." });
 });
 app.post("/api/green-api/set-settings", async (req, res) => {
-  const { instanceId, apiToken } = req.body || {};
+  const { instanceId, apiToken, apiUrl } = req.body || {};
   const cleanId = String(instanceId || "").trim();
   const cleanToken = String(apiToken || "").trim();
   if (!cleanId || !cleanToken) {
     return res.status(400).json({ success: false, error: "Instance ID and API Token are required." });
   }
-  try {
-    const url = `https://api.green-api.com/waInstance${cleanId}/setSettings/${cleanToken}`;
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        incomingWebhook: "yes",
-        outgoingWebhook: "yes",
-        outgoingMessageWebhook: "yes",
-        stateWebhook: "yes"
-      })
-    });
-    const data = r.ok ? await r.json() : null;
-    return res.json({ success: Boolean(r.ok), data });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message });
+  const hosts = getGreenApiCandidateHosts(cleanId, apiUrl);
+  for (const host of hosts) {
+    try {
+      const url = `${host}/waInstance${cleanId}/setSettings/${cleanToken}`;
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          incomingWebhook: "yes",
+          outgoingWebhook: "yes",
+          outgoingMessageWebhook: "yes",
+          stateWebhook: "yes"
+        })
+      });
+      if (r.ok) {
+        const data = await r.json();
+        return res.json({ success: true, data, activeHost: host });
+      }
+    } catch {
+    }
   }
+  return res.status(500).json({ success: false, error: "Failed to update Green API settings." });
 });
 app.post("/api/green-api/get-messages", async (req, res) => {
-  const { instanceId, apiToken, chatId, count = 50 } = req.body || {};
+  const { instanceId, apiToken, chatId, count = 50, apiUrl } = req.body || {};
   const cleanId = String(instanceId || "").trim();
   const cleanToken = String(apiToken || "").trim();
   let cleanChat = String(chatId || "").trim();
@@ -851,10 +951,7 @@ app.post("/api/green-api/get-messages", async (req, res) => {
   if (cleanChat && !cleanChat.includes("@")) {
     cleanChat = `${cleanChat}@g.us`;
   }
-  const hosts = [
-    "https://api.green-api.com",
-    cleanId.length >= 4 ? `https://${cleanId.slice(0, 4)}.api.green-api.com` : ""
-  ].filter(Boolean);
+  const hosts = getGreenApiCandidateHosts(cleanId, apiUrl);
   try {
     const rawCollected = [];
     const deletedIds = /* @__PURE__ */ new Set();
@@ -994,17 +1091,60 @@ app.post("/api/whatsapp-universal/test", async (req, res) => {
       if (!cleanId || !cleanToken) {
         return res.json({ success: false, message: "Instance ID and API Token are required." });
       }
-      const host = cleanId.length >= 4 ? `https://${cleanId.slice(0, 4)}.api.green-api.com` : "https://api.green-api.com";
-      const response = await fetch(`${host}/waInstance${cleanId}/getStateInstance/${cleanToken}`);
-      if (!response.ok) {
-        return res.json({ success: false, message: `Green API returned HTTP ${response.status}: ${response.statusText}` });
+      const hosts = getGreenApiCandidateHosts(cleanId, config.apiUrl);
+      let lastError = "Unable to connect to Green API";
+      let respondedState = null;
+      for (const host of hosts) {
+        try {
+          const response = await fetch(`${host}/waInstance${cleanId}/getStateInstance/${cleanToken}`);
+          if (response.ok) {
+            const data = await response.json();
+            respondedState = { host, data };
+            break;
+          } else if (response.status === 401 || response.status === 403) {
+            return res.json({
+              success: false,
+              state: "unauthorized",
+              message: "Invalid Green API Instance ID or API Token. Please check your credentials in green-api.com.",
+              activeHost: host
+            });
+          } else {
+            const errText = await response.text();
+            lastError = `HTTP ${response.status}: ${errText || response.statusText}`;
+          }
+        } catch (err) {
+          lastError = err.message || "Network error";
+        }
       }
-      const data = await response.json();
-      const isAuth = data.stateInstance === "authorized";
+      if (respondedState) {
+        const stateInstance = respondedState.data?.stateInstance || "unknown";
+        const isAuth = stateInstance === "authorized";
+        let message = "";
+        if (isAuth) {
+          message = "Green API Instance is ONLINE and AUTHORIZED!";
+        } else if (stateInstance === "notAuthorized") {
+          message = "Green API connected! WhatsApp account is not linked. Please scan the QR code in your green-api.com dashboard.";
+        } else if (stateInstance === "sleepMode") {
+          message = "WhatsApp phone is in Sleep Mode. Open WhatsApp on your phone to reconnect.";
+        } else if (stateInstance === "blocked") {
+          message = "WhatsApp instance is blocked by Green API.";
+        } else if (stateInstance === "starting") {
+          message = "Green API instance is starting up. Please retry in a few moments.";
+        } else {
+          message = `Green API Instance state: "${stateInstance}".`;
+        }
+        return res.json({
+          success: isAuth,
+          state: stateInstance,
+          activeHost: respondedState.host,
+          message
+        });
+      }
       return res.json({
-        success: isAuth,
-        state: data.stateInstance,
-        message: isAuth ? "Green API Instance is ONLINE and AUTHORIZED!" : `Green API Status: "${data.stateInstance}". Please scan QR code in Green API dashboard.`
+        success: false,
+        state: "error",
+        message: `Failed to connect to Green API: ${lastError}`,
+        error: lastError
       });
     }
     if (provider === "meta_cloud") {

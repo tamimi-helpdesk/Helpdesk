@@ -15,11 +15,13 @@ export interface GreenApiChat {
 export interface GreenApiConfig {
   instanceId: string;
   apiToken: string;
+  apiUrl?: string;
   webhookUrl: string;
   targetGroupChatId: string;
   targetGroupName?: string;
   isConfigured: boolean;
   lastCheckedAt?: string;
+  lastTestedState?: string;
 }
 
 export interface WhatsAppFetchFilterOptions {
@@ -48,18 +50,38 @@ export const GreenApiService = {
         return {
           instanceId: parsed.instanceId || '',
           apiToken: parsed.apiToken || '',
+          apiUrl: parsed.apiUrl || '',
           webhookUrl: parsed.webhookUrl || '',
           targetGroupChatId: parsed.targetGroupChatId || '',
           targetGroupName: parsed.targetGroupName || '',
           isConfigured: Boolean(parsed.instanceId && parsed.apiToken),
           lastCheckedAt: parsed.lastCheckedAt,
+          lastTestedState: parsed.lastTestedState,
         };
+      }
+
+      // Check universal whatsapp config fallback if green_api is configured
+      const universalRaw = localStorage.getItem('tamimi_universal_whatsapp_cfg_v1');
+      if (universalRaw) {
+        const parsedUniversal = JSON.parse(universalRaw);
+        if (parsedUniversal.greenApi?.instanceId) {
+          return {
+            instanceId: parsedUniversal.greenApi.instanceId || '',
+            apiToken: parsedUniversal.greenApi.apiToken || '',
+            apiUrl: parsedUniversal.greenApi.apiUrl || '',
+            webhookUrl: '',
+            targetGroupChatId: parsedUniversal.greenApi.targetGroupChatId || '',
+            targetGroupName: parsedUniversal.greenApi.targetGroupName || '',
+            isConfigured: Boolean(parsedUniversal.greenApi.instanceId && parsedUniversal.greenApi.apiToken),
+          };
+        }
       }
     } catch {}
 
     return {
       instanceId: '',
       apiToken: '',
+      apiUrl: '',
       webhookUrl: '',
       targetGroupChatId: '',
       targetGroupName: '',
@@ -92,47 +114,84 @@ export const GreenApiService = {
     } catch {}
   },
 
-  async testConnection(instanceId: string, apiToken: string): Promise<{ success: boolean; state?: string; message: string }> {
+  async testConnection(
+    instanceId: string,
+    apiToken: string,
+    apiUrl?: string
+  ): Promise<{ success: boolean; state?: string; message: string; activeHost?: string }> {
     const cleanId = instanceId?.trim();
     const cleanToken = apiToken?.trim();
+    const cleanApiUrl = apiUrl?.trim();
 
     if (!cleanId || !cleanToken) {
       return { success: false, message: 'Please provide both Instance ID and API Token from your green-api.com console.' };
     }
 
+    // 1. ALWAYS try the backend server proxy first!
+    // Server-side Node.js fetch avoids browser CORS, iframe barriers, and cross-origin security errors
     try {
-      const url = `https://api.green-api.com/waInstance${cleanId}/getStateInstance/${cleanToken}`;
-      const res = await fetch(url, { method: 'GET' });
-      if (!res.ok) {
-        return { success: false, message: `Green API returned HTTP error ${res.status}: ${res.statusText}. Please verify your credentials.` };
-      }
-      const data = await res.json();
-      if (data && data.stateInstance) {
-        const isAuthorized = data.stateInstance === 'authorized';
+      const res = await fetch('/api/green-api/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instanceId: cleanId, apiToken: cleanToken, apiUrl: cleanApiUrl }),
+      });
+      if (res.ok) {
+        const data = await res.json();
         return {
-          success: isAuthorized,
-          state: data.stateInstance,
-          message: isAuthorized
-            ? 'WhatsApp instance is AUTHORIZED and ready for group messages!'
-            : `Instance state: "${data.stateInstance}". Scan the QR code in Green API console to link your WhatsApp phone.`,
+          success: Boolean(data.success),
+          state: data.state,
+          activeHost: data.activeHost,
+          message: data.message || (data.success ? 'WhatsApp instance is AUTHORIZED and ready for group messages!' : `Instance state: "${data.state}".`),
         };
       }
-      return { success: false, message: 'Unexpected response format from Green API.' };
-    } catch (err: any) {
-      return {
-        success: false,
-        message: `Network error reaching Green API: ${err.message || 'Unable to connect'}.`,
-      };
+    } catch (proxyErr) {
+      console.warn('Backend proxy /api/green-api/status failed, trying direct browser fetch fallback:', proxyErr);
     }
+
+    // 2. Direct browser fetch fallback across candidate hosts
+    const candidateHosts: string[] = [];
+    if (cleanApiUrl) candidateHosts.push(cleanApiUrl.replace(/\/+$/, ''));
+    if (!candidateHosts.includes('https://api.green-api.com')) candidateHosts.push('https://api.green-api.com');
+    if (cleanId.length >= 4) {
+      const sub = `https://${cleanId.slice(0, 4)}.api.green-api.com`;
+      if (!candidateHosts.includes(sub)) candidateHosts.push(sub);
+    }
+
+    for (const host of candidateHosts) {
+      try {
+        const url = `${host}/waInstance${cleanId}/getStateInstance/${cleanToken}`;
+        const res = await fetch(url, { method: 'GET' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.stateInstance) {
+            const isAuthorized = data.stateInstance === 'authorized';
+            return {
+              success: isAuthorized,
+              state: data.stateInstance,
+              activeHost: host,
+              message: isAuthorized
+                ? 'WhatsApp instance is AUTHORIZED and ready for group messages!'
+                : `Instance state: "${data.stateInstance}". Scan the QR code in Green API console to link your WhatsApp phone.`,
+            };
+          }
+        }
+      } catch {}
+    }
+
+    return {
+      success: false,
+      message: 'Network error reaching Green API. Please check your internet connection or verify credentials.',
+    };
   },
 
   /**
    * Fetch list of WhatsApp chats & groups from the Green API instance
    */
-  async getChats(instanceId?: string, apiToken?: string): Promise<{ success: boolean; chats: GreenApiChat[]; error?: string }> {
+  async getChats(instanceId?: string, apiToken?: string, apiUrl?: string): Promise<{ success: boolean; chats: GreenApiChat[]; error?: string; activeHost?: string }> {
     const cfg = this.getConfig();
     const id = instanceId?.trim() || cfg.instanceId?.trim();
     const token = apiToken?.trim() || cfg.apiToken?.trim();
+    const customUrl = apiUrl?.trim() || cfg.apiUrl?.trim();
 
     if (!id || !token) {
       return { success: false, chats: [], error: 'Green API Instance ID and Token are not configured.' };
@@ -143,39 +202,49 @@ export const GreenApiService = {
       const res = await fetch('/api/green-api/get-chats', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instanceId: id, apiToken: token }),
+        body: JSON.stringify({ instanceId: id, apiToken: token, apiUrl: customUrl }),
       });
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.chats)) {
-          return { success: true, chats: data.chats };
+          return { success: true, chats: data.chats, activeHost: data.activeHost };
         }
       }
     } catch (e) {
       console.warn('Backend proxy /api/green-api/get-chats error, trying direct Green API call:', e);
     }
 
-    // Fallback: direct browser fetch
-    try {
-      const directUrl = `https://api.green-api.com/waInstance${id}/getChats/${token}`;
-      const r = await fetch(directUrl);
-      if (r.ok) {
-        const data = await r.json();
-        return { success: true, chats: Array.isArray(data) ? data : [] };
-      }
-      return { success: false, chats: [], error: `Green API error: ${r.statusText}` };
-    } catch (err: any) {
-      return { success: false, chats: [], error: err.message || 'Failed to connect to Green API' };
+    // Fallback: direct browser fetch across candidate hosts
+    const candidateHosts: string[] = [];
+    if (customUrl) candidateHosts.push(customUrl.replace(/\/+$/, ''));
+    if (!candidateHosts.includes('https://api.green-api.com')) candidateHosts.push('https://api.green-api.com');
+    if (id.length >= 4) {
+      const sub = `https://${id.slice(0, 4)}.api.green-api.com`;
+      if (!candidateHosts.includes(sub)) candidateHosts.push(sub);
     }
+
+    for (const host of candidateHosts) {
+      try {
+        const directUrl = `${host}/waInstance${id}/getChats/${token}`;
+        const r = await fetch(directUrl);
+        if (r.ok) {
+          const data = await r.json();
+          return { success: true, chats: Array.isArray(data) ? data : [], activeHost: host };
+        }
+      } catch {}
+    }
+
+    return { success: false, chats: [], error: 'Failed to connect to Green API. Please verify Instance ID and API Token.' };
   },
 
   /**
    * Verify group data and get actual WhatsApp group name and participant count
    */
-  async verifyGroup(groupId: string, instanceId?: string, apiToken?: string): Promise<{ success: boolean; subject?: string; participantsCount?: number; error?: string }> {
+  async verifyGroup(groupId: string, instanceId?: string, apiToken?: string, apiUrl?: string): Promise<{ success: boolean; subject?: string; participantsCount?: number; error?: string }> {
     const cfg = this.getConfig();
     const id = instanceId?.trim() || cfg.instanceId?.trim();
     const token = apiToken?.trim() || cfg.apiToken?.trim();
+    const customUrl = apiUrl?.trim() || cfg.apiUrl?.trim();
     let cleanGroup = groupId?.trim();
 
     if (!id || !token || !cleanGroup) {
@@ -190,7 +259,7 @@ export const GreenApiService = {
       const res = await fetch('/api/green-api/get-group-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instanceId: id, apiToken: token, groupId: cleanGroup }),
+        body: JSON.stringify({ instanceId: id, apiToken: token, groupId: cleanGroup, apiUrl: customUrl }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -210,10 +279,11 @@ export const GreenApiService = {
   /**
    * Configure Green API settings to ensure webhook and message journaling are active
    */
-  async enableJournaling(instanceId?: string, apiToken?: string): Promise<boolean> {
+  async enableJournaling(instanceId?: string, apiToken?: string, apiUrl?: string): Promise<boolean> {
     const cfg = this.getConfig();
     const id = instanceId?.trim() || cfg.instanceId?.trim();
     const token = apiToken?.trim() || cfg.apiToken?.trim();
+    const customUrl = apiUrl?.trim() || cfg.apiUrl?.trim();
 
     if (!id || !token) return false;
 
@@ -221,7 +291,7 @@ export const GreenApiService = {
       const res = await fetch('/api/green-api/set-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instanceId: id, apiToken: token }),
+        body: JSON.stringify({ instanceId: id, apiToken: token, apiUrl: customUrl }),
       });
       return res.ok;
     } catch {
@@ -235,12 +305,14 @@ export const GreenApiService = {
   async fetchGroupMessages(options?: {
     instanceId?: string;
     apiToken?: string;
+    apiUrl?: string;
     chatId?: string;
     count?: number;
   }): Promise<{ success: boolean; messages: any[]; error?: string; chatId?: string }> {
     const cfg = this.getConfig();
     const id = options?.instanceId?.trim() || cfg.instanceId?.trim();
     const token = options?.apiToken?.trim() || cfg.apiToken?.trim();
+    const customUrl = options?.apiUrl?.trim() || cfg.apiUrl?.trim();
     let chatId = options?.chatId?.trim() || cfg.targetGroupChatId?.trim();
     const count = options?.count || 50;
 
@@ -257,7 +329,7 @@ export const GreenApiService = {
       const res = await fetch('/api/green-api/get-messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instanceId: id, apiToken: token, chatId, count }),
+        body: JSON.stringify({ instanceId: id, apiToken: token, apiUrl: customUrl, chatId, count }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -596,6 +668,9 @@ export const GreenApiService = {
    * One-click Sync: Fetch from WhatsApp group & immediately ingest into observations
    */
   async syncFromWhatsAppGroup(options?: {
+    instanceId?: string;
+    apiToken?: string;
+    apiUrl?: string;
     chatId?: string;
     count?: number;
     filterOptions?: WhatsAppFetchFilterOptions;
@@ -607,6 +682,9 @@ export const GreenApiService = {
     observations: FacilityObservation[];
   }> {
     const fetchRes = await this.fetchGroupMessages({
+      instanceId: options?.instanceId,
+      apiToken: options?.apiToken,
+      apiUrl: options?.apiUrl,
       chatId: options?.chatId,
       count: options?.count || 100,
     });

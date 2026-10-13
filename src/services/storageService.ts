@@ -755,7 +755,17 @@ export function sanitizeBooking(raw: any, index: number = 0): Booking {
     email: raw.email ? AuthService.sanitizeText(String(raw.email)) : undefined,
     departmentOrTeam: raw.departmentOrTeam ? AuthService.sanitizeText(String(raw.departmentOrTeam)) : undefined,
     notes: raw.notes ? AuthService.sanitizeText(String(raw.notes)) : undefined,
-    stage: String(raw.stage || (isMultipurpose ? 'Stage 1 Multipurpose Room 5' : 'Stage 1')),
+    stage: (() => {
+      if (raw.stage && String(raw.stage).trim() !== '') {
+        return String(raw.stage);
+      }
+      if (isMultipurpose) return 'Stage 1 Multipurpose Room 5';
+      const matchedFac = FACILITIES.find((f) => f.id === (isMultipurpose ? 'multipurpose-room' : facilityId));
+      if (matchedFac && matchedFac.stages && matchedFac.stages.length > 0) {
+        return matchedFac.stages[0];
+      }
+      return 'Stage 1';
+    })(),
     status: isCancelled ? 'CANCELLED' : 'CONFIRMED',
     sheetTabName: resolvedSheetTabName,
     facilityName: resolvedFacilityName,
@@ -1696,6 +1706,25 @@ export const StorageService = {
       }
       safeSetLocalStorage(LOST_FOUND_RECORDS_KEY, JSON.stringify(inMemoryLostFound));
       window.dispatchEvent(new CustomEvent('tamimi_lost_found_updated'));
+    } else if (entity === 'isolationRooms') {
+      this.initIsolationRooms();
+      if (Array.isArray(data)) {
+        inMemoryIsolationRooms = data.map((r) => this.normalizeRoom(r));
+      } else {
+        const roomId = String(data.id || data.buildingNumber || '').toLowerCase().trim();
+        const norm = this.normalizeRoom(data);
+        const idx = inMemoryIsolationRooms.findIndex(
+          (r) => String(r.id || r.buildingNumber || '').toLowerCase().trim() === roomId
+        );
+        if (idx >= 0) {
+          inMemoryIsolationRooms[idx] = { ...inMemoryIsolationRooms[idx], ...norm };
+        } else {
+          inMemoryIsolationRooms.push(norm);
+        }
+      }
+      safeSetLocalStorage(ISOLATION_ROOMS_KEY, JSON.stringify(inMemoryIsolationRooms));
+      window.dispatchEvent(new CustomEvent('tamimi_isolation_updated'));
+      notifyBookingsChanged();
     } else if (entity === 'supportTickets') {
       TicketService.applyRemoteUpsert(data);
     }

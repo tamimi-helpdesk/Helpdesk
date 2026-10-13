@@ -122,14 +122,21 @@ export class HubService {
         ToastService.hub(`Multi-terminal network: Updated ${changes} ${changes === 1 ? 'record' : 'records'}`);
       }
 
-      // Bi-directional check: If this device has any confirmed bookings not yet in the Hub, sync them up!
+      // Bi-directional check: If this device has confirmed bookings not yet on Hub AND not tombstoned or cancelled, sync them up
       try {
-        const localActiveBookings = StorageService.getAllBookings().filter((b) => b && b.id && b.status !== 'CANCELLED');
+        const deletedIds = data.deletedIds || {};
+        const cancelledIds = data.cancelledIds || {};
+        const localActiveBookings = StorageService.getAllBookings().filter((b) => {
+          if (!b || !b.id || b.status === 'CANCELLED') return false;
+          const k = String(b.id).toLowerCase().trim();
+          if (deletedIds[k] || cancelledIds[k]) return false;
+          return true;
+        });
         const hubBookingIds = new Set((data.bookings || []).map((b: any) => String(b?.id || '').toLowerCase().trim()));
         const missingOnHub = localActiveBookings.filter((b) => !hubBookingIds.has(String(b.id).toLowerCase().trim()));
 
         if (missingOnHub.length > 0) {
-          // Push missing local bookings to server hub so other computers receive them
+          // Push genuine fresh local bookings to server hub so other computers receive them
           for (const b of missingOnHub) {
             this.pushMutation({
               mutationType: 'UPSERT',

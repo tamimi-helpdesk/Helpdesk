@@ -47,6 +47,7 @@ export const UniversalWhatsAppModal: React.FC<UniversalWhatsAppModalProps> = ({
   // Green API state
   const [greenInstanceId, setGreenInstanceId] = useState(currentConfig.greenApi.instanceId || '');
   const [greenApiToken, setGreenApiToken] = useState(currentConfig.greenApi.apiToken || '');
+  const [greenApiUrl, setGreenApiUrl] = useState(currentConfig.greenApi.apiUrl || '');
   const [greenTargetGroup, setGreenTargetGroup] = useState(currentConfig.greenApi.targetGroupChatId || '');
   const [greenGroupName, setGreenGroupName] = useState(currentConfig.greenApi.targetGroupName || '');
 
@@ -91,6 +92,7 @@ export const UniversalWhatsAppModal: React.FC<UniversalWhatsAppModalProps> = ({
       setActiveProvider(cfg.activeProvider || 'green_api');
       setGreenInstanceId(cfg.greenApi?.instanceId || '');
       setGreenApiToken(cfg.greenApi?.apiToken || '');
+      setGreenApiUrl(cfg.greenApi?.apiUrl || '');
       setGreenTargetGroup(cfg.greenApi?.targetGroupChatId || '');
       setGreenGroupName(cfg.greenApi?.targetGroupName || '');
       setMetaPhoneId(cfg.metaCloud?.phoneNumberId || '');
@@ -141,7 +143,7 @@ export const UniversalWhatsAppModal: React.FC<UniversalWhatsAppModalProps> = ({
 
     let configPayload: any = {};
     if (activeProvider === 'green_api') {
-      configPayload = { instanceId: greenInstanceId, apiToken: greenApiToken };
+      configPayload = { instanceId: greenInstanceId, apiToken: greenApiToken, apiUrl: greenApiUrl };
     } else if (activeProvider === 'meta_cloud') {
       configPayload = { phoneNumberId: metaPhoneId, accessToken: metaToken };
     } else if (activeProvider === 'custom_gateway') {
@@ -173,7 +175,7 @@ export const UniversalWhatsAppModal: React.FC<UniversalWhatsAppModalProps> = ({
     }
     setIsDetectingGroups(true);
     try {
-      const res = await GreenApiService.getChats(greenInstanceId, greenApiToken);
+      const res = await GreenApiService.getChats(greenInstanceId, greenApiToken, greenApiUrl);
       if (res.success && res.chats.length > 0) {
         const groupsOnly = res.chats.filter((c) => c.id.includes('@g.us') || c.type === 'group');
         const listToUse = groupsOnly.length > 0 ? groupsOnly : res.chats;
@@ -197,6 +199,7 @@ export const UniversalWhatsAppModal: React.FC<UniversalWhatsAppModalProps> = ({
       greenApi: {
         instanceId: greenInstanceId.trim(),
         apiToken: greenApiToken.trim(),
+        apiUrl: greenApiUrl.trim(),
         targetGroupChatId: greenTargetGroup.trim(),
         targetGroupName: greenGroupName.trim(),
       },
@@ -412,6 +415,29 @@ export const UniversalWhatsAppModal: React.FC<UniversalWhatsAppModalProps> = ({
                     />
                     <ShieldCheck className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
                   </div>
+                </div>
+
+                {/* Green API Host URL (Optional) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                      Green API Host URL (apiUrl - Optional):
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-medium">Auto-detected if left empty</span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={greenApiUrl}
+                      onChange={(e) => setGreenApiUrl(e.target.value)}
+                      placeholder="https://api.green-api.com (or e.g. https://7103.api.green-api.com)"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-mono text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <Globe className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Leave blank to auto-detect (<code>api.green-api.com</code> or your cluster like <code>7103.api.green-api.com</code>).
+                  </p>
                 </div>
 
                 <div className="p-3.5 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2.5">

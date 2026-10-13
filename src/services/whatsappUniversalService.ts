@@ -14,6 +14,7 @@ export type WhatsAppProviderType = 'green_api' | 'meta_cloud' | 'custom_gateway'
 export interface GreenApiProviderSettings {
   instanceId: string;
   apiToken: string;
+  apiUrl?: string;
   targetGroupChatId: string;
   targetGroupName?: string;
 }
@@ -62,6 +63,7 @@ const DEFAULT_CONFIG: UniversalWhatsAppConfig = {
   greenApi: {
     instanceId: '',
     apiToken: '',
+    apiUrl: '',
     targetGroupChatId: '',
     targetGroupName: '',
   },
@@ -160,6 +162,7 @@ export const WhatsAppUniversalService = {
       GreenApiService.saveConfig({
         instanceId: merged.greenApi.instanceId,
         apiToken: merged.greenApi.apiToken,
+        apiUrl: merged.greenApi.apiUrl,
         targetGroupChatId: merged.greenApi.targetGroupChatId,
         targetGroupName: merged.greenApi.targetGroupName,
       });

@@ -195,6 +195,7 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
     if (uCfg.activeProvider === 'green_api') {
       const instanceId = uCfg.greenApi?.instanceId || gCfg.instanceId;
       const apiToken = uCfg.greenApi?.apiToken || gCfg.apiToken;
+      const apiUrl = uCfg.greenApi?.apiUrl || gCfg.apiUrl;
 
       if (!instanceId || !apiToken) {
         setApiHealth({
@@ -214,11 +215,25 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
       }));
 
       try {
-        const result = await GreenApiService.testConnection(instanceId, apiToken);
+        const result = await GreenApiService.testConnection(instanceId, apiToken, apiUrl);
         if (result.success) {
           setApiHealth({
             status: 'connected',
             message: `Connected (${result.state || 'Authorized'})`,
+            providerName: providerTitle,
+            lastChecked: new Date(),
+          });
+        } else if (result.state === 'notAuthorized') {
+          setApiHealth({
+            status: 'error',
+            message: 'Scan QR Code in green-api.com console',
+            providerName: providerTitle,
+            lastChecked: new Date(),
+          });
+        } else if (result.state === 'sleepMode') {
+          setApiHealth({
+            status: 'error',
+            message: 'WhatsApp Sleeping (Unlock phone screen)',
             providerName: providerTitle,
             lastChecked: new Date(),
           });
@@ -386,8 +401,17 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
 
   // Open the Time-Filtered Fetch Dialog
   const handleFetchGroupMessages = () => {
-    if (!greenApiConfig.isConfigured && !universalConfig.isConfigured) {
-      ToastService.showError('WhatsApp Gateway is not configured. Please set your credentials in API Gateway.');
+    const uConfig = WhatsAppUniversalService.getConfig();
+    const gConfig = GreenApiService.getConfig();
+    const hasCreds = Boolean(
+      (greenApiConfig.instanceId && greenApiConfig.apiToken) ||
+      (uConfig.greenApi?.instanceId && uConfig.greenApi?.apiToken) ||
+      (gConfig.instanceId && gConfig.apiToken) ||
+      (uConfig.activeProvider !== 'green_api' && uConfig.isConfigured)
+    );
+
+    if (!hasCreds) {
+      ToastService.showError('WhatsApp Gateway is not configured. Please enter your Green API credentials in API Settings.');
       setIsUniversalApiModalOpen(true);
       return;
     }
@@ -396,7 +420,13 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
 
   // Execute Fetch Group Messages with selected Time Filter & Replacement Option
   const handleExecuteFetchMessages = async () => {
-    if (!greenApiConfig.instanceId || !greenApiConfig.apiToken) {
+    const uConfig = WhatsAppUniversalService.getConfig();
+    const gConfig = GreenApiService.getConfig();
+    const instanceId = greenApiConfig.instanceId || uConfig.greenApi?.instanceId || gConfig.instanceId;
+    const apiToken = greenApiConfig.apiToken || uConfig.greenApi?.apiToken || gConfig.apiToken;
+    const apiUrl = greenApiConfig.apiUrl || uConfig.greenApi?.apiUrl || gConfig.apiUrl;
+
+    if (!instanceId || !apiToken) {
       ToastService.showError('WhatsApp API Gateway is not configured. Please enter your credentials first.');
       setIsUniversalApiModalOpen(true);
       return;
@@ -406,15 +436,17 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
     setSyncFeedback(null);
 
     try {
-      const uConfig = WhatsAppUniversalService.getConfig();
       const targetChatId =
         manualGroupId?.trim() ||
         greenApiConfig.targetGroupChatId?.trim() ||
-        uConfig.greenApi.targetGroupChatId?.trim() ||
-        uConfig.customGateway.targetChatId?.trim() ||
+        uConfig.greenApi?.targetGroupChatId?.trim() ||
+        uConfig.customGateway?.targetChatId?.trim() ||
         '';
 
       const res = await GreenApiService.syncFromWhatsAppGroup({
+        instanceId,
+        apiToken,
+        apiUrl,
         chatId: targetChatId,
         count: fetchDepth,
         filterOptions: {
@@ -456,15 +488,21 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
 
   // Auto-detect groups from Green API
   const handleDetectGroups = async () => {
-    if (!greenApiConfig.instanceId || !greenApiConfig.apiToken) {
+    const uConfig = WhatsAppUniversalService.getConfig();
+    const gConfig = GreenApiService.getConfig();
+    const instanceId = greenApiConfig.instanceId || uConfig.greenApi?.instanceId || gConfig.instanceId;
+    const apiToken = greenApiConfig.apiToken || uConfig.greenApi?.apiToken || gConfig.apiToken;
+    const apiUrl = greenApiConfig.apiUrl || uConfig.greenApi?.apiUrl || gConfig.apiUrl;
+
+    if (!instanceId || !apiToken) {
       ToastService.showError('Instance ID and API Token are required first.');
-      setIsGreenApiModalOpen(true);
+      setIsUniversalApiModalOpen(true);
       return;
     }
 
     setIsDetecting(true);
     try {
-      const res = await GreenApiService.getChats(greenApiConfig.instanceId, greenApiConfig.apiToken);
+      const res = await GreenApiService.getChats(instanceId, apiToken, apiUrl);
       if (res.success && res.chats.length > 0) {
         const groupsOnly = res.chats.filter((c) => c.id.includes('@g.us') || c.type === 'group');
         const listToUse = groupsOnly.length > 0 ? groupsOnly : res.chats;
@@ -738,7 +776,13 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
 
     setGroupVerification({ checking: true });
     try {
-      const res = await GreenApiService.verifyGroup(cleanId);
+      const uConfig = WhatsAppUniversalService.getConfig();
+      const gConfig = GreenApiService.getConfig();
+      const instanceId = greenApiConfig.instanceId || uConfig.greenApi?.instanceId || gConfig.instanceId;
+      const apiToken = greenApiConfig.apiToken || uConfig.greenApi?.apiToken || gConfig.apiToken;
+      const apiUrl = greenApiConfig.apiUrl || uConfig.greenApi?.apiUrl || gConfig.apiUrl;
+
+      const res = await GreenApiService.verifyGroup(cleanId, instanceId, apiToken, apiUrl);
       const mapped = {
         valid: res.success,
         groupName: res.subject,
