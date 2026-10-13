@@ -150,6 +150,17 @@ function doGet(e) {
         };
         break;
 
+      case "getBlankFromEmployees":
+      case "getBlankFromData":
+      case "getAutoFormData":
+        result = {
+          success: true,
+          data: getBlankFromEmployeesFromSheet(),
+          count: (getBlankFromEmployeesFromSheet() || []).length,
+          timestamp: new Date().toISOString()
+        };
+        break;
+
       case "getInvoices":
       case "getAllInvoices":
         result = {
@@ -2074,6 +2085,110 @@ function getAllBlankFormsFromSheet() {
       authorizedOfficer: r[11],
       notes: r[12],
       createdAt: r[13] || new Date().toISOString()
+    });
+  }
+  return list;
+}
+
+function getBlankFromEmployeesFromSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = findSheetByNameFuzzy(ss, "Blank From") || findSheetByNameFuzzy(ss, "Blank Forms");
+  if (!sheet) return [];
+
+  var displayData = sheet.getDataRange().getDisplayValues();
+  if (displayData.length <= 1) return [];
+
+  var headers = displayData[0].map(function(h) { return String(h || "").toLowerCase().trim(); });
+
+  function findIdx() {
+    var args = Array.prototype.slice.call(arguments);
+    for (var i = 0; i < headers.length; i++) {
+      var h = headers[i];
+      for (var j = 0; j < args.length; j++) {
+        var k = args[j].toLowerCase();
+        if (h.indexOf(k) !== -1 || h.replace(/[^a-z0-9]/g, '') === k.replace(/[^a-z0-9]/g, '')) {
+          return i;
+        }
+      }
+    }
+    return -1;
+  }
+
+  var idxId = findIdx("id", "record id", "sl");
+  var idxProp = findIdx("property");
+  var idxSector = findIdx("sector");
+  var idxHouse = findIdx("house");
+  var idxFloor = findIdx("floor");
+  var idxRoom = findIdx("room");
+  var idxUnit = findIdx("unit", "apartment");
+  var idxPropType = findIdx("property type", "type of property", "type");
+  var idxContract = findIdx("contract type");
+  var idxOcc = findIdx("occupancy");
+  var idxStatus = findIdx("status");
+  var idxEmpId = findIdx("employment id", "employee id", "badge", "empid");
+  var idxName = findIdx("name", "full name", "applicant name");
+  var idxGender = findIdx("gender", "sex");
+  var idxCat = findIdx("category");
+  var idxComp = findIdx("company");
+  var idxDiv = findIdx("division", "program");
+  var idxDept = findIdx("department", "dept");
+  var idxDesig = findIdx("designation", "position");
+  var idxIqama = findIdx("id/iqama", "iqama", "national id");
+  var idxPass = findIdx("passport");
+  var idxMob = findIdx("mobile", "phone");
+  var idxEmail = findIdx("email");
+  var idxNat = findIdx("nationality");
+  var idxDob = findIdx("dob", "d.o.b");
+  var idxMoveIn = findIdx("move in date", "check in date", "move_in_date");
+  var idxMoveOut = findIdx("move out date", "check out date", "move_out_date");
+  var idxEmerMob = findIdx("emergency contact", "emergency mobile", "emergency phone");
+  var idxEmerName = findIdx("name of contact", "emergency name");
+  var idxVehReg = findIdx("registration no", "plate no", "vehicle");
+  var idxVehMod = findIdx("model", "make / model");
+  var idxCarPark = findIdx("car park", "parking");
+
+  var list = [];
+  for (var i = 1; i < displayData.length; i++) {
+    var r = displayData[i];
+    var name = (idxName >= 0) ? r[idxName] : r[1];
+    if (!name || String(name).toLowerCase().indexOf("name on contract") !== -1) continue;
+
+    var empId = (idxEmpId >= 0 && r[idxEmpId]) ? r[idxEmpId] : ("10" + (100 + i));
+    var unit = (idxUnit >= 0 && r[idxUnit]) ? r[idxUnit] : "TBCV";
+
+    list.push({
+      id: (idxId >= 0 && r[idxId]) ? r[idxId] : String(i + 140),
+      property: (idxProp >= 0 && r[idxProp]) ? r[idxProp] : "TBCV",
+      sector: (idxSector >= 0 && r[idxSector]) ? r[idxSector] : "S01",
+      house: (idxHouse >= 0 && r[idxHouse]) ? r[idxHouse] : "H01",
+      floor: (idxFloor >= 0 && r[idxFloor]) ? r[idxFloor] : "FF",
+      room: (idxRoom >= 0 && r[idxRoom]) ? r[idxRoom] : "101",
+      unit: unit,
+      propertyType: (idxPropType >= 0 && r[idxPropType]) ? r[idxPropType] : "Senior",
+      contractType: (idxContract >= 0 && r[idxContract]) ? r[idxContract] : "Permanent",
+      occupancy: (idxOcc >= 0 && r[idxOcc]) ? r[idxOcc] : "Single Occupancy",
+      status: (idxStatus >= 0 && r[idxStatus]) ? r[idxStatus] : "Active",
+      employmentId: empId,
+      name: name,
+      gender: (idxGender >= 0 && r[idxGender]) ? r[idxGender] : "Male",
+      category: (idxCat >= 0 && r[idxCat]) ? r[idxCat] : "Rsg Staff",
+      company: (idxComp >= 0 && r[idxComp]) ? r[idxComp] : "Red Sea Global",
+      division: (idxDiv >= 0 && r[idxDiv]) ? r[idxDiv] : "Projects Delivery",
+      department: (idxDept >= 0 && r[idxDept]) ? r[idxDept] : "Operations",
+      designation: (idxDesig >= 0 && r[idxDesig]) ? r[idxDesig] : "Staff",
+      idIqama: (idxIqama >= 0) ? r[idxIqama] : "",
+      passport: (idxPass >= 0) ? r[idxPass] : "",
+      mobile: (idxMob >= 0) ? r[idxMob] : "",
+      email: (idxEmail >= 0) ? r[idxEmail] : "",
+      nationality: (idxNat >= 0) ? r[idxNat] : "Saudi Arabia",
+      dob: (idxDob >= 0) ? r[idxDob] : "",
+      moveInDate: (idxMoveIn >= 0) ? formatDateString(r[idxMoveIn]) : "8/24/2026",
+      moveOutDate: (idxMoveOut >= 0) ? formatDateString(r[idxMoveOut]) : "12/31/2026",
+      emergencyMobile: (idxEmerMob >= 0) ? r[idxEmerMob] : "",
+      emergencyName: (idxEmerName >= 0) ? r[idxEmerName] : "None",
+      vehicleRegNo: (idxVehReg >= 0) ? r[idxVehReg] : "",
+      vehicleModel: (idxVehMod >= 0) ? r[idxVehMod] : "",
+      carParkSpace: (idxCarPark >= 0) ? r[idxCarPark] : ""
     });
   }
   return list;
