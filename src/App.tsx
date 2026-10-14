@@ -233,11 +233,6 @@ export default function App() {
       const syncTasks = Promise.allSettled([
         GasService.syncFacility(facilityId, { forceFresh: true }),
         HubService.pullStateFromHub(),
-        import('./services/firebaseService').then(({ CloudDatabaseService }) => {
-          return CloudDatabaseService.checkForCloudData().then((chk) => {
-            if (chk.hasData) return CloudDatabaseService.restoreFromCloud();
-          });
-        }).catch(() => {})
       ]);
       const maxTimeout = new Promise((r) => setTimeout(r, 3200));
 
@@ -588,9 +583,6 @@ export default function App() {
       const fastSync = Promise.allSettled([
         HubService.pullStateFromHub(),
         GasService.syncFacility(activeFacility.id, { forceFresh: true }),
-        import('./services/firebaseService').then(({ CloudDatabaseService }) => {
-          return CloudDatabaseService.restoreFromCloud();
-        }).catch(() => {})
       ]);
       const timeout = new Promise((r) => setTimeout(r, 2400));
       await Promise.race([fastSync, timeout]);

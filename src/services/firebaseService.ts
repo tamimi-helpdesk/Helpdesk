@@ -521,7 +521,7 @@ class FirebaseService {
    * Restores all data from 'disasterBackups/latest' into local storage, memory,
    * and pushes to the Server Hub. Guarantees ZERO DATA LOSS on a new host.
    */
-  public async restoreFromCloud(): Promise<{
+  public async restoreFromCloud(mode: 'merge' | 'replace' = 'replace'): Promise<{
     success: boolean;
     restoredCount: number;
     error?: string;
@@ -557,7 +557,7 @@ class FirebaseService {
       }
 
       // 2. Restore data using BackupService and StorageService
-      const restoreResult = BackupService.restoreSnapshot(cloudData, 'replace');
+      const restoreResult = BackupService.restoreSnapshot(cloudData, mode);
 
       if (!restoreResult.success) {
         return { success: false, restoredCount: 0, error: restoreResult.message };
@@ -626,13 +626,12 @@ class FirebaseService {
       const localBookings = StorageService.getAllBookings();
       const cloudCheck = await this.checkForCloudData();
       
-      // If local has 0 bookings or cloud has significantly more data than local cache
-      const needsHydration = (!localBookings || localBookings.length === 0) ||
-                             (cloudCheck.hasData && cloudCheck.bookingsCount > 50 && localBookings.length < 10);
+      // Hydrate ONLY if local storage has 0 bookings and cloud has confirmed records
+      const needsHydration = (!localBookings || localBookings.length === 0) && cloudCheck.hasData && cloudCheck.bookingsCount > 0;
 
-      if (needsHydration && cloudCheck.hasData && cloudCheck.bookingsCount > 0) {
-        console.log('[FirebaseService] Populating authoritative state from Cloud Firestore...');
-        const result = await this.restoreFromCloud();
+      if (needsHydration) {
+        console.log('[FirebaseService] Populating initial state from Cloud Firestore via safe non-destructive merge...');
+        const result = await this.restoreFromCloud('merge');
         return result.success;
       }
     } catch (e) {
@@ -819,6 +818,46 @@ class FirebaseService {
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `bookings/${bookingId}`);
       return false;
+    }
+  }
+
+  /**
+   * Batch cancel multiple bookings in Cloud Firestore atomically
+   */
+  public async cancelBatchInCloud(bookingIds: string[], reason?: string): Promise<number> {
+    if (!this.db) this.init();
+    if (!this.db || !Array.isArray(bookingIds) || bookingIds.length === 0) return 0;
+
+    try {
+      const batchSize = 300;
+      let totalCancelled = 0;
+      const nowIso = new Date().toISOString();
+
+      for (let i = 0; i < bookingIds.length; i += batchSize) {
+        const chunk = bookingIds.slice(i, i + batchSize);
+        const batch = writeBatch(this.db);
+        for (const bId of chunk) {
+          if (!bId) continue;
+          const ref = doc(this.db, 'bookings', String(bId));
+          batch.set(
+            ref,
+            cleanForFirestore({
+              id: String(bId),
+              status: 'CANCELLED',
+              cancellationReason: reason || 'Cancelled via Batch Operation',
+              cancelledAt: nowIso,
+            }),
+            { merge: true }
+          );
+          totalCancelled++;
+        }
+        await batch.commit();
+      }
+      this.scheduleDebouncedCloudSync(30000);
+      return totalCancelled;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'bookings/batch-cancel');
+      return 0;
     }
   }
 

@@ -22,6 +22,7 @@ import { OfflineQueueService } from './offlineQueueService';
 import { FacilityLockdownService } from './facilityLockdownService';
 import { idbStorageService } from './idbStorageService';
 import { TicketService } from './ticketService';
+import { isResourceOrStageMatch, getCanonicalResourceName } from '../utils/resourceMatching';
 
 const STORAGE_KEY = 'executive_facility_bookings_v1';
 const GAS_CONFIG_KEY = 'executive_gas_config_v1';
@@ -37,6 +38,7 @@ const SLOT_BLOCKOUTS_KEY = 'executive_facility_blockouts_v1';
 // In-memory cache for ultra-fast sub-millisecond lookups
 let inMemoryBookings: Booking[] = [];
 let inMemoryIsolationRooms: IsolationRoomRecord[] = [];
+let inMemoryIsolationHistory: any[] = [];
 let inMemoryHandovers: HandoverItemRecord[] = [];
 let inMemoryParcels: ParcelRecord[] = [];
 let inMemoryLostFound: LostFoundRecord[] = [];
@@ -49,6 +51,30 @@ let isParcelInitialized = false;
 let isLostFoundInitialized = false;
 let isBlockoutsInitialized = false;
 let lastSyncChangesCount = 0;
+
+// Dynamic check of active configured facility rooms without hardcoding room count
+export function getActiveIsolationRoomSet(): Set<string> {
+  const set = new Set<string>();
+  INITIAL_ISOLATION_ROOMS.forEach((r) => {
+    if (r.id) set.add(r.id.toLowerCase().trim());
+    if (r.buildingNumber) {
+      set.add(r.buildingNumber.toLowerCase().trim());
+      const can = getCanonicalRoomNumber(r.buildingNumber);
+      if (can) set.add(can.toLowerCase().trim());
+    }
+  });
+  const fac = FACILITIES.find((f) => f.id === 'isolation-room');
+  if (fac && Array.isArray(fac.stages)) {
+    fac.stages.forEach((st) => {
+      const match = st.match(/[RB]-0?[0-9]+/i);
+      if (match) {
+        const can = getCanonicalRoomNumber(match[0]);
+        if (can) set.add(can.toLowerCase().trim());
+      }
+    });
+  }
+  return set;
+}
 
 // Enterprise Storage Safety: Safe LocalStorage Writer with Quota Exceeded Protection & Memory Fallback
 export function safeSetLocalStorage(key: string, value: string): boolean {
@@ -69,23 +95,62 @@ export function safeSetLocalStorage(key: string, value: string): boolean {
       }
       legacyKeys.forEach((k) => localStorage.removeItem(k));
 
-      // 2. Clear temp caches
+      // 2. Clear temp caches and optional historical archives to free space for operational records
       localStorage.removeItem('tamimi_temp_audit_cache');
       localStorage.removeItem('tamimi_analytics_cache_v1');
+      localStorage.removeItem('tamimi_historical_isolation_archive');
 
-      // 3. Retry setting item
+      // 3. Compact isolation rooms if excess history exists, checking configured facility rooms
+      const activeSet = getActiveIsolationRoomSet();
+      const activeRoomMap = new Map<string, IsolationRoomRecord>();
+      const excessRecords: any[] = [];
+      inMemoryIsolationRooms.forEach((r) => {
+        const can = getCanonicalRoomNumber(r.buildingNumber || r.id);
+        const k = (can || r.id || r.buildingNumber || '').toLowerCase().trim();
+        if (k && activeSet.has(k) && !activeRoomMap.has(k)) {
+          activeRoomMap.set(k, r);
+        } else {
+          excessRecords.push(r);
+        }
+      });
+
+      if (excessRecords.length > 0) {
+        idbStorageService.saveIsolationHistory(excessRecords).then((verified) => {
+          if (verified) {
+            try {
+              localStorage.setItem(ISOLATION_ROOMS_KEY, JSON.stringify(Array.from(activeRoomMap.values())));
+            } catch (_) {}
+          }
+        }).catch(() => {});
+      }
+
+      // If the key trying to be saved is an optional cache and space is tight, skip cleanly
+      if (key === 'tamimi_historical_isolation_archive' || key === 'tamimi_temp_audit_cache' || key === 'tamimi_analytics_cache_v1') {
+        idbStorageService.saveAsset({
+          id: `ls_overflow_${key}`,
+          category: 'general',
+          mimeType: 'application/json',
+          dataUrl: value,
+          createdAt: Date.now(),
+        }).catch(() => {});
+        return true;
+      }
+
+      // 4. Retry setting item
       localStorage.setItem(key, value);
       return true;
     } catch (retryErr) {
       console.error(`LocalStorage Quota Exceeded! Failed to persist ${key}. State preserved in memory & IndexedDB backup.`, retryErr);
       // Asynchronously store backup in IndexedDB so data is never permanently lost
-      idbStorageService.saveAsset({
-        id: `ls_overflow_${key}`,
-        category: 'general',
-        mimeType: 'application/json',
-        dataUrl: value,
-        createdAt: Date.now(),
-      }).catch(() => {});
+      try {
+        idbStorageService.saveAsset({
+          id: `ls_overflow_${key}`,
+          category: 'general',
+          mimeType: 'application/json',
+          dataUrl: value,
+          createdAt: Date.now(),
+        }).catch(() => {});
+      } catch (_) {}
       return false;
     }
   }
@@ -112,7 +177,7 @@ export function getRecentCancelledMap(): Map<string, number> {
   return map;
 }
 
-export function recordRecentCancellation(bookingId: string, reason?: string) {
+export function recordRecentCancellation(bookingId: string, reason?: string, pushToHub: boolean = true) {
   if (!bookingId) return;
   try {
     const cleanId = bookingId.toLowerCase().trim();
@@ -124,18 +189,27 @@ export function recordRecentCancellation(bookingId: string, reason?: string) {
     });
     safeSetLocalStorage(CANCELLED_CACHE_KEY, JSON.stringify(obj));
 
-    // Send instant cancel mutation to Hub in background
-    if (typeof fetch !== 'undefined') {
-      fetch('/api/hub/mutate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+    // Send instant cancel mutation to Hub in background only if pushToHub is true
+    if (pushToHub && typeof fetch !== 'undefined') {
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
           mutationType: 'CANCEL',
           entity: 'bookings',
           id: cleanId,
           reason: reason || 'Cancelled by user',
-        }),
-      }).catch(() => {});
+        }).catch(() => {});
+      }).catch(() => {
+        fetch('/api/hub/mutate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mutationType: 'CANCEL',
+            entity: 'bookings',
+            id: cleanId,
+            reason: reason || 'Cancelled by user',
+          }),
+        }).catch(() => {});
+      });
     }
   } catch (e) {}
 }
@@ -159,7 +233,7 @@ export function getDeletedIdsMap(): Set<string> {
   return set;
 }
 
-export function recordDeletedId(id: string, entity: string = 'general') {
+export function recordDeletedId(id: string, entity: string = 'general', pushToHub: boolean = true) {
   if (!id) return;
   try {
     const cleanId = String(id).toLowerCase().trim();
@@ -171,17 +245,25 @@ export function recordDeletedId(id: string, entity: string = 'general') {
     });
     safeSetLocalStorage(DELETED_CACHE_KEY, JSON.stringify(obj));
 
-    // Send instant delete mutation to Hub in background
-    if (typeof fetch !== 'undefined') {
-      fetch('/api/hub/mutate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+    // Send instant delete mutation to Hub in background only if pushToHub is true
+    if (pushToHub && typeof fetch !== 'undefined') {
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
           mutationType: 'DELETE',
           entity,
           id: cleanId,
-        }),
-      }).catch(() => {});
+        }).catch(() => {});
+      }).catch(() => {
+        fetch('/api/hub/mutate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mutationType: 'DELETE',
+            entity,
+            id: cleanId,
+          }),
+        }).catch(() => {});
+      });
     }
   } catch (e) {}
 }
@@ -487,15 +569,15 @@ export function getCanonicalRoomNumber(input?: string | number): string {
   if (!input && input !== 0) return '';
   const s = String(input).toUpperCase().trim();
   
-  // 1. Direct regex for Building R / Room R / ISO-R / R-01..R-06 / R1..R6
-  const rMatch = s.match(/(?:BUILDING\s*R|ROOM\s*R|ISO-?R|R)[\s\-_#]*0?([1-6])(?![0-9])/i);
+  // 1. Direct regex for Building R / Room R / ISO-R / R-01..R-99 / R1..R99
+  const rMatch = s.match(/(?:BUILDING\s*R|ROOM\s*R|ISO-?R|^R)[\s\-_#]*0?([0-9]{1,2})(?![0-9])/i);
   if (rMatch) {
     const num = rMatch[1].padStart(2, '0');
     return `R-${num}`;
   }
 
-  // 2. Direct regex for Building B / Room B / ISO-B / B-01..B-06 / B1..B6
-  const bMatch = s.match(/(?:BUILDING\s*B|ROOM\s*B|ISO-?B|B)[\s\-_#]*0?([1-6])(?![0-9])/i);
+  // 2. Direct regex for Building B / Room B / ISO-B / B-01..B-99 / B1..B99
+  const bMatch = s.match(/(?:BUILDING\s*B|ROOM\s*B|ISO-?B|^B)[\s\-_#]*0?([0-9]{1,2})(?![0-9])/i);
   if (bMatch) {
     const num = bMatch[1].padStart(2, '0');
     return `B-${num}`;
@@ -596,94 +678,12 @@ export function isFacilityMatch(b: Booking, facility: Facility): boolean {
   return false;
 }
 
+export function isResourceMatch(bookingStage?: string, selectedStage?: string, facility?: Facility): boolean {
+  return isResourceOrStageMatch(bookingStage, selectedStage, facility);
+}
+
 export function isStageMatch(bookingStage?: string, selectedStage?: string, facility?: Facility): boolean {
-  if (!selectedStage) return true;
-  if (!bookingStage) return true;
-  
-  const bs = bookingStage.toLowerCase().trim();
-  const ss = selectedStage.toLowerCase().trim();
-  
-  if (bs === ss) return true;
-  if (bs === '' || bs === 'default' || bs === 'main' || bs === 'n/a' || bs === 'all' || bs === 'general') return true;
-  if (ss === '' || ss === 'default' || ss === 'main' || ss === 'n/a' || ss === 'all' || ss === 'general') return true;
-  
-  // If facility has only 1 stage (like Cinema or Football Ground), all bookings for that facility belong to it
-  if (facility && facility.stages && facility.stages.length <= 1) {
-    return true;
-  }
-
-  // 1. Specific Room checks (Crucial for Multipurpose Room 5 vs Room 6):
-  const bRoom = bs.match(/room\s*([0-9]+[a-z]?)/i);
-  const sRoom = ss.match(/room\s*([0-9]+[a-z]?)/i);
-  if (bRoom && sRoom) {
-    if (bRoom[1].toLowerCase() !== sRoom[1].toLowerCase()) {
-      return false; // Room 5 can NEVER match Room 6
-    }
-    return true; // Both are Room 5 (or both Room 6) -> definitive match!
-  }
-  if (bRoom && !sRoom) {
-    const roomNum = bRoom[1].toLowerCase();
-    const hasOtherRoomNum = ss.match(/room\s*([0-9]+[a-z]?)/i);
-    if (hasOtherRoomNum && hasOtherRoomNum[1].toLowerCase() !== roomNum) return false;
-    if (new RegExp(`(?:^|\\b)${roomNum}(?:\\b|$)`, 'i').test(ss)) return true;
-  }
-  if (!bRoom && sRoom) {
-    const roomNum = sRoom[1].toLowerCase();
-    const hasOtherRoomNum = bs.match(/room\s*([0-9]+[a-z]?)/i);
-    if (hasOtherRoomNum && hasOtherRoomNum[1].toLowerCase() !== roomNum) return false;
-    if (new RegExp(`(?:^|\\b)${roomNum}(?:\\b|$)`, 'i').test(bs)) return true;
-  }
-
-  // 2. Specific Stage checks (e.g. Stage 1 vs Stage 2 for Cricket Ground):
-  const bStage = bs.match(/stage\s*([0-9]+)/i);
-  const sStage = ss.match(/stage\s*([0-9]+)/i);
-  if (bStage && sStage) {
-    if (bStage[1] !== sStage[1]) {
-      return false; // Stage 1 can NEVER match Stage 2
-    }
-  }
-
-  // 3. Specific Court / Net / Pitch / Area checks:
-  const bCourt = bs.match(/(?:court|pitch|net|bay|lane|table|chair)\s*([0-9]+[a-z]?)/i);
-  const sCourt = ss.match(/(?:court|pitch|net|bay|lane|table|chair)\s*([0-9]+[a-z]?)/i);
-  if (bCourt && sCourt) {
-    if (bCourt[1].toLowerCase() !== sCourt[1].toLowerCase()) {
-      return false;
-    }
-    return true;
-  }
-
-  // 4. Letter conflicts (e.g. Court A vs Court B)
-  const bLetter = bs.match(/(?:court|stage|room|area|pitch|net|chair|table|ground)\s*([a-z])\b/i);
-  const sLetter = ss.match(/(?:court|stage|room|area|pitch|net|chair|table|ground)\s*([a-z])\b/i);
-  if (bLetter && sLetter && bLetter[1].toLowerCase() !== sLetter[1].toLowerCase()) {
-    return false;
-  }
-
-  // 5. Half pitch / North / South / East / West / 3A / 3B / Full court conflicts
-  if ((bs.includes('north') && ss.includes('south')) || (bs.includes('south') && ss.includes('north'))) return false;
-  if ((bs.includes('east') && ss.includes('west')) || (bs.includes('west') && ss.includes('east'))) return false;
-  if ((bs.includes('3a') && ss.includes('3b')) || (bs.includes('3b') && ss.includes('3a'))) return false;
-  if ((bs.includes('full court') && (ss.includes('half court') || ss.includes('ring'))) ||
-      (ss.includes('full court') && (bs.includes('half court') || bs.includes('ring')))) {
-    return false;
-  }
-
-  // Check whole word inclusion (so "ground 10" won't match "ground 1")
-  const escapedSs = ss.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const escapedBs = bs.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const ssWordRegex = new RegExp(`(?:^|\\b)${escapedSs}(?:\\b|$)`, 'i');
-  const bsWordRegex = new RegExp(`(?:^|\\b)${escapedBs}(?:\\b|$)`, 'i');
-  if (ssWordRegex.test(bs) || bsWordRegex.test(ss)) {
-    return true;
-  }
-
-  // If both stage numbers matched and no conflicting room/court was found
-  if (bStage && sStage && bStage[1] === sStage[1]) {
-    return true;
-  }
-
-  return false;
+  return isResourceOrStageMatch(bookingStage, selectedStage, facility);
 }
 
 export function notifyBookingsChanged() {
@@ -756,11 +756,80 @@ export function sanitizeBooking(raw: any, index: number = 0): Booking {
     departmentOrTeam: raw.departmentOrTeam ? AuthService.sanitizeText(String(raw.departmentOrTeam)) : undefined,
     notes: raw.notes ? AuthService.sanitizeText(String(raw.notes)) : undefined,
     stage: (() => {
-      if (raw.stage && String(raw.stage).trim() !== '') {
-        return String(raw.stage);
+      const explicitStage = raw.stage && String(raw.stage).trim() !== '' ? String(raw.stage).trim() : '';
+      const effectiveFacId = isMultipurpose ? 'multipurpose-room' : (facilityId || resolveFacilityId(raw.facilityName || raw.sheetTabName));
+
+      // If explicitStage is already provided and not generic 'Stage 1', resolve canonical stage directly!
+      if (explicitStage && explicitStage.toLowerCase() !== 'stage 1') {
+        const canonical = getCanonicalResourceName(effectiveFacId, explicitStage);
+        if (canonical) return canonical;
       }
-      if (isMultipurpose) return 'Stage 1 Multipurpose Room 5';
-      const matchedFac = FACILITIES.find((f) => f.id === (isMultipurpose ? 'multipurpose-room' : facilityId));
+
+      // Context text boundary regex for inferring sub-resource when stage is generic 'Stage 1' or empty
+      const notesAndSlots = `${String(raw.notes || '')} ${(raw.slotIds || []).join(' ')} ${String(raw.customerName || '')}`.toLowerCase();
+
+      if (isMultipurpose) {
+        if (/\b(room|rm|mr|hall)[- ]?6\b/i.test(notesAndSlots)) {
+          return 'Stage 1 Multipurpose Room 6';
+        }
+        if (/\b(room|rm|mr|hall)[- ]?7\b/i.test(notesAndSlots)) {
+          return 'Stage 1 Multipurpose Room 7';
+        }
+        if (/\b(room|rm|mr|hall)[- ]?5\b/i.test(notesAndSlots)) {
+          return 'Stage 1 Multipurpose Room 5';
+        }
+        if (explicitStage) return getCanonicalResourceName('multipurpose-room', explicitStage);
+        return 'Stage 1 Multipurpose Room 5';
+      }
+
+      if (effectiveFacId === 'barber-booking') {
+        if (/\bchair[- ]?(2|b)\b/i.test(notesAndSlots)) return 'Chair 2';
+        if (/\bchair[- ]?(3|c)\b/i.test(notesAndSlots)) return 'Chair 3';
+        if (explicitStage) return getCanonicalResourceName('barber-booking', explicitStage);
+        return 'Barber Shop';
+      }
+
+      if (effectiveFacId === 'cinema') {
+        if (/\b(screen|hall|theater)[- ]?(2|b)\b/i.test(notesAndSlots)) return 'Screen 2';
+        if (/\b(screen|hall|theater)[- ]?(3|c)\b/i.test(notesAndSlots)) return 'Screen 3';
+        if (explicitStage) return getCanonicalResourceName('cinema', explicitStage);
+        return 'Cinema Hall';
+      }
+
+      if (effectiveFacId === 'cricket-ground') {
+        if (/\b(stage|pitch|ground|cg)[- ]?2\b/i.test(notesAndSlots)) {
+          return 'Stage 2 Cricket Ground';
+        }
+        if (/\b(stage|pitch|ground|cg)[- ]?3\b/i.test(notesAndSlots)) {
+          return 'Stage 3 Cricket Ground';
+        }
+        if (explicitStage) return getCanonicalResourceName('cricket-ground', explicitStage);
+        return 'Stage 1 Cricket Ground';
+      }
+
+      if (effectiveFacId === 'tennis-court') {
+        if (/\bcourt[- ]?(2|b)\b/i.test(notesAndSlots)) return 'Tennis Court 2';
+        if (explicitStage) return getCanonicalResourceName('tennis-court', explicitStage);
+        return 'Area 7 Tennis Court';
+      }
+
+      if (effectiveFacId === 'cricket-net') {
+        if (/\bnet[- ]?(2|b)\b/i.test(notesAndSlots)) return 'Cricket Net 2';
+        if (explicitStage) return getCanonicalResourceName('cricket-net', explicitStage);
+        return 'Area 7 Cricket Net';
+      }
+
+      if (effectiveFacId === 'football-ground') {
+        if (/\b(pitch|field|fg)[- ]?2\b/i.test(notesAndSlots)) return 'Football Pitch 2';
+        if (explicitStage) return getCanonicalResourceName('football-ground', explicitStage);
+        return 'Stage 3 Football Ground';
+      }
+
+      if (explicitStage) {
+        return getCanonicalResourceName(effectiveFacId, explicitStage);
+      }
+
+      const matchedFac = FACILITIES.find((f) => f.id === effectiveFacId);
       if (matchedFac && matchedFac.stages && matchedFac.stages.length > 0) {
         return matchedFac.stages[0];
       }
@@ -840,6 +909,24 @@ export function generateBookingId(facilityCode: string): string {
   const secs = now.getSeconds().toString().padStart(2, '0');
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
   return `${facilityCode}-${year}${month}${day}${hours}${mins}${secs}-${randomSuffix}`;
+}
+
+export function findIsolationRoomIndex(rooms: IsolationRoomRecord[], roomId: string): number {
+  if (!roomId || !Array.isArray(rooms)) return -1;
+  const cleanId = String(roomId).trim().toLowerCase();
+  const canId = getCanonicalRoomNumber(roomId).trim().toLowerCase();
+  return rooms.findIndex((r) => {
+    if (!r) return false;
+    const rId = (r.id || '').trim().toLowerCase();
+    const rBldg = (r.buildingNumber || '').trim().toLowerCase();
+    const rCan = getCanonicalRoomNumber(r.buildingNumber || r.id).trim().toLowerCase();
+    return (
+      rId === cleanId ||
+      rBldg === cleanId ||
+      rCan === cleanId ||
+      (canId !== '' && (rId === canId || rBldg === canId || rCan === canId))
+    );
+  });
 }
 
 export const StorageService = {
@@ -943,7 +1030,57 @@ export const StorageService = {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          inMemoryIsolationRooms = parsed.map((r: IsolationRoomRecord) => this.normalizeRoom(r));
+          // Check active room configuration dynamically using facility definitions
+          const activeSet = getActiveIsolationRoomSet();
+          const activeRoomMap = new Map<string, IsolationRoomRecord>();
+          const historicalRecords: any[] = [];
+
+          parsed.forEach((r: any) => {
+            if (!r) return;
+            const can = getCanonicalRoomNumber(r.buildingNumber || r.id);
+            const key = (can || r.id || r.buildingNumber || '').toUpperCase().trim();
+            // If the record corresponds to an active configured facility room, preserve occupancy
+            if (key && activeSet.has(key.toLowerCase())) {
+              if (!activeRoomMap.has(key)) {
+                activeRoomMap.set(key, this.normalizeRoom(r));
+              } else {
+                const existing = activeRoomMap.get(key)!;
+                const existingOccCount = (existing.occupants || []).length;
+                const rOccCount = (r.occupants || []).length;
+                if (rOccCount > existingOccCount || (!existing.lastUpdated && r.lastUpdated)) {
+                  historicalRecords.push(existing);
+                  activeRoomMap.set(key, this.normalizeRoom(r));
+                } else {
+                  historicalRecords.push(r);
+                }
+              }
+            } else {
+              historicalRecords.push(r);
+            }
+          });
+
+          // Ensure all initial default rooms exist in activeRoomMap
+          INITIAL_ISOLATION_ROOMS.forEach((initR) => {
+            const can = getCanonicalRoomNumber(initR.buildingNumber);
+            const key = (can || initR.id || initR.buildingNumber || '').toUpperCase().trim();
+            if (key && !activeRoomMap.has(key)) {
+              activeRoomMap.set(key, this.normalizeRoom(initR));
+            }
+          });
+
+          inMemoryIsolationRooms = Array.from(activeRoomMap.values());
+
+          // Safely migrate historical archive to IndexedDB idempotently with verification
+          if (historicalRecords.length > 0) {
+            idbStorageService.saveIsolationHistory(historicalRecords).then((verified) => {
+              // Verify migrated data before retiring old excess copy from localStorage
+              if (verified) {
+                safeSetLocalStorage(ISOLATION_ROOMS_KEY, JSON.stringify(inMemoryIsolationRooms));
+              }
+            }).catch(() => {});
+          } else {
+            safeSetLocalStorage(ISOLATION_ROOMS_KEY, JSON.stringify(inMemoryIsolationRooms));
+          }
         } else {
           inMemoryIsolationRooms = INITIAL_ISOLATION_ROOMS.map((r) => this.normalizeRoom(r));
           safeSetLocalStorage(ISOLATION_ROOMS_KEY, JSON.stringify(inMemoryIsolationRooms));
@@ -966,6 +1103,50 @@ export const StorageService = {
     }
 
     return inMemoryIsolationRooms;
+  },
+
+  async getHistoricalIsolationArchive(): Promise<any[]> {
+    if (inMemoryIsolationHistory.length > 0) {
+      return inMemoryIsolationHistory;
+    }
+    try {
+      // 1. Try loading from IndexedDB dedicated historical store
+      const idbHistory = await idbStorageService.getIsolationHistory();
+      if (Array.isArray(idbHistory) && idbHistory.length > 0) {
+        inMemoryIsolationHistory = idbHistory;
+        return inMemoryIsolationHistory;
+      }
+
+      // 2. Fallback: query Server Hub archive endpoint
+      if (typeof fetch !== 'undefined') {
+        const res = await fetch('/api/hub/isolation-history');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.success && Array.isArray(data.history)) {
+            inMemoryIsolationHistory = data.history;
+            idbStorageService.saveIsolationHistory(data.history).catch(() => {});
+            return inMemoryIsolationHistory;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Notice loading historical isolation archive:', e);
+    }
+    return inMemoryIsolationHistory;
+  },
+
+  async saveHistoricalStay(record: any): Promise<boolean> {
+    if (!record) return false;
+    try {
+      const cleanRecord = {
+        ...record,
+        archivedAt: new Date().toISOString(),
+      };
+      inMemoryIsolationHistory = [cleanRecord, ...inMemoryIsolationHistory];
+      return await idbStorageService.saveIsolationHistory(inMemoryIsolationHistory);
+    } catch (e) {
+      return false;
+    }
   },
 
   normalizeRoom(room: IsolationRoomRecord): IsolationRoomRecord {
@@ -1032,11 +1213,11 @@ export const StorageService = {
     }
   },
 
+  findIsolationRoomIndex: findIsolationRoomIndex,
+
   updateIsolationRoom(roomId: string, updates: Partial<IsolationRoomRecord>): IsolationRoomRecord | null {
     const rooms = this.getIsolationRooms();
-    const idx = rooms.findIndex(
-      (r) => r.id.toLowerCase() === roomId.toLowerCase() || r.buildingNumber.toLowerCase() === roomId.toLowerCase()
-    );
+    const idx = this.findIsolationRoomIndex(rooms, roomId);
     if (idx === -1) return null;
 
     const merged = {
@@ -1047,6 +1228,29 @@ export const StorageService = {
     const updated = this.normalizeRoom(merged);
     rooms[idx] = updated;
     this.saveIsolationRooms(rooms);
+
+    if (typeof fetch !== 'undefined') {
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
+          mutationType: 'UPSERT',
+          entity: 'isolationRooms',
+          id: updated.id,
+          data: updated,
+        }).catch(() => {});
+      }).catch(() => {
+        fetch('/api/hub/mutate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mutationType: 'UPSERT',
+            entity: 'isolationRooms',
+            id: updated.id,
+            data: updated,
+          }),
+        }).catch(() => {});
+      });
+    }
+
     return updated;
   },
 
@@ -1070,10 +1274,9 @@ export const StorageService = {
     }
   ): IsolationRoomRecord | null {
     const rooms = this.getIsolationRooms();
-    const room = rooms.find(
-      (r) => r.id.toLowerCase() === roomId.toLowerCase() || r.buildingNumber.toLowerCase() === roomId.toLowerCase()
-    );
-    if (!room) return null;
+    const idx = findIsolationRoomIndex(rooms, roomId);
+    if (idx === -1) return null;
+    const room = rooms[idx];
 
     const canonical = getCanonicalRoomNumber(room.buildingNumber) || room.buildingNumber;
     unrecordDeletedId(`${room.buildingNumber}-B${bedNumber}`);
@@ -1103,18 +1306,37 @@ export const StorageService = {
     currentOccupants.push(newOccupant);
     currentOccupants.sort((a, b) => a.bedNumber - b.bedNumber);
 
-    return this.updateIsolationRoom(roomId, {
+    const updated = this.updateIsolationRoom(roomId, {
       occupants: currentOccupants,
       status: 'Occupied',
     });
+
+    if (updated && typeof fetch !== 'undefined') {
+      fetch('/api/hub/mutate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mutationType: 'UPSERT',
+          entity: 'isolationRooms',
+          id: updated.id,
+          data: updated,
+        }),
+      }).catch(() => {});
+    }
+
+    notifyBookingsChanged();
+    try {
+      window.dispatchEvent(new CustomEvent('tamimi_isolation_updated'));
+    } catch (e) {}
+
+    return updated;
   },
 
   dischargeBedOccupant(roomId: string, bedNumber: 1 | 2): IsolationRoomRecord | null {
     const rooms = this.getIsolationRooms();
-    const room = rooms.find(
-      (r) => r.id.toLowerCase() === roomId.toLowerCase() || r.buildingNumber.toLowerCase() === roomId.toLowerCase()
-    );
-    if (!room) return null;
+    const idx = this.findIsolationRoomIndex(rooms, roomId);
+    if (idx === -1) return null;
+    const room = rooms[idx];
 
     const dischargedOccupant = (room.occupants || []).find((o) => o.bedNumber === bedNumber);
     const canonicalRoom = getCanonicalRoomNumber(room.buildingNumber) || room.buildingNumber;
@@ -1181,16 +1403,25 @@ export const StorageService = {
     });
 
     if (updated && typeof fetch !== 'undefined') {
-      fetch('/api/hub/mutate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
           mutationType: 'UPSERT',
           entity: 'isolationRooms',
           id: updated.id,
           data: updated,
-        }),
-      }).catch(() => {});
+        }).catch(() => {});
+      }).catch(() => {
+        fetch('/api/hub/mutate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mutationType: 'UPSERT',
+            entity: 'isolationRooms',
+            id: updated.id,
+            data: updated,
+          }),
+        }).catch(() => {});
+      });
     }
 
     notifyBookingsChanged();
@@ -1206,14 +1437,17 @@ export const StorageService = {
     sourceBedNumber: 1 | 2,
     targetRoomId: string,
     targetBedNumber: 1 | 2
-  ): { success: boolean; error?: string } {
+  ): { success: boolean; error?: string; sourceRoom?: IsolationRoomRecord; targetRoom?: IsolationRoomRecord } {
     const rooms = this.getIsolationRooms();
-    const srcRoom = rooms.find((r) => r.id === sourceRoomId || r.buildingNumber === sourceRoomId);
-    const tgtRoom = rooms.find((r) => r.id === targetRoomId || r.buildingNumber === targetRoomId);
+    const srcIdx = this.findIsolationRoomIndex(rooms, sourceRoomId);
+    const tgtIdx = this.findIsolationRoomIndex(rooms, targetRoomId);
 
-    if (!srcRoom || !tgtRoom) {
+    if (srcIdx === -1 || tgtIdx === -1) {
       return { success: false, error: 'Source or destination room not found.' };
     }
+
+    const srcRoom = rooms[srcIdx];
+    const tgtRoom = rooms[tgtIdx];
 
     const occToMove = (srcRoom.occupants || []).find((o) => o.bedNumber === sourceBedNumber);
     if (!occToMove) {
@@ -1222,22 +1456,157 @@ export const StorageService = {
 
     // Check if target bed is occupied
     const targetOccupant = (tgtRoom.occupants || []).find((o) => o.bedNumber === targetBedNumber);
-    if (targetOccupant) {
+    if (targetOccupant && targetOccupant.patientName && targetOccupant.patientName.trim()) {
+      // If intra-room and transferring to the same bed number, it's a no-op
+      if (srcIdx === tgtIdx && sourceBedNumber === targetBedNumber) {
+        return { success: true, sourceRoom: srcRoom, targetRoom: tgtRoom };
+      }
       return {
         success: false,
         error: `Bed ${targetBedNumber} in ${tgtRoom.buildingNumber} is already occupied by ${targetOccupant.patientName}.`,
       };
     }
 
-    // Discharge from source
-    this.dischargeBedOccupant(srcRoom.id, sourceBedNumber);
+    const transferTimestamp = new Date().toISOString();
 
-    // Admit to target
-    this.admitBedOccupant(tgtRoom.id, targetBedNumber, {
+    // Preserve all patient identifiers and append transfer history note
+    const transferredOccupant: BedOccupant = {
       ...occToMove,
-    });
+      bedNumber: targetBedNumber,
+      staffNotes: `${occToMove.staffNotes ? occToMove.staffNotes + ' | ' : ''}Transferred from Room ${srcRoom.buildingNumber} Bed ${sourceBedNumber} on ${transferTimestamp.slice(0, 10)}`,
+    };
 
-    return { success: true };
+    let updatedSrcRoom: IsolationRoomRecord;
+    let updatedTgtRoom: IsolationRoomRecord;
+
+    if (srcIdx === tgtIdx) {
+      // Intra-room transfer: bed switch within the same room
+      const remainingOccupants = (srcRoom.occupants || []).filter((o) => o.bedNumber !== sourceBedNumber && o.bedNumber !== targetBedNumber);
+      remainingOccupants.push(transferredOccupant);
+      remainingOccupants.sort((a, b) => a.bedNumber - b.bedNumber);
+
+      updatedSrcRoom = this.normalizeRoom({
+        ...srcRoom,
+        occupants: remainingOccupants,
+        lastUpdated: transferTimestamp,
+      });
+      updatedTgtRoom = updatedSrcRoom;
+      rooms[srcIdx] = updatedSrcRoom;
+    } else {
+      // Inter-room transfer: update both source and target rooms atomically
+      const remainingSrcOccupants = (srcRoom.occupants || []).filter((o) => o.bedNumber !== sourceBedNumber);
+      updatedSrcRoom = this.normalizeRoom({
+        ...srcRoom,
+        occupants: remainingSrcOccupants,
+        lastUpdated: transferTimestamp,
+      });
+
+      const filteredTgtOccupants = (tgtRoom.occupants || []).filter((o) => o.bedNumber !== targetBedNumber);
+      filteredTgtOccupants.push(transferredOccupant);
+      filteredTgtOccupants.sort((a, b) => a.bedNumber - b.bedNumber);
+
+      updatedTgtRoom = this.normalizeRoom({
+        ...tgtRoom,
+        occupants: filteredTgtOccupants,
+        lastUpdated: transferTimestamp,
+      });
+
+      rooms[srcIdx] = updatedSrcRoom;
+      rooms[tgtIdx] = updatedTgtRoom;
+    }
+
+    // Cross-room occupant deduplication: guarantee no occupant appears in multiple rooms simultaneously
+    const occKeyToDedupe = String(transferredOccupant.id || transferredOccupant.patientName || '').toLowerCase().trim();
+    if (occKeyToDedupe) {
+      rooms.forEach((r, idx) => {
+        if (idx !== tgtIdx && r.occupants && r.occupants.length > 0) {
+          const filtered = r.occupants.filter((occ) => {
+            const occKey = String(occ.id || occ.patientName || '').toLowerCase().trim();
+            return occKey !== occKeyToDedupe;
+          });
+          if (filtered.length !== r.occupants.length) {
+            rooms[idx] = this.normalizeRoom({ ...r, occupants: filtered });
+          }
+        }
+      });
+    }
+
+    // Persist all rooms locally
+    this.saveIsolationRooms(rooms);
+
+    // Record transfer audit log in historical archive
+    const historyAuditRecord = {
+      id: `HIST-XFER-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      action: 'TRANSFER',
+      patientName: transferredOccupant.patientName,
+      sourceRoom: srcRoom.buildingNumber,
+      sourceBed: sourceBedNumber,
+      targetRoom: tgtRoom.buildingNumber,
+      targetBed: targetBedNumber,
+      timestamp: transferTimestamp,
+      company: transferredOccupant.company,
+      nationalId: transferredOccupant.nationalId,
+      notes: transferredOccupant.staffNotes,
+    };
+    inMemoryIsolationHistory = [historyAuditRecord, ...inMemoryIsolationHistory];
+    idbStorageService.saveIsolationHistory(inMemoryIsolationHistory).catch(() => {});
+
+    const multiRecordPayload = srcIdx === tgtIdx ? [updatedSrcRoom] : [updatedSrcRoom, updatedTgtRoom];
+
+    // Enqueue to offline queue for network disconnect resilience and retry
+    try {
+      OfflineQueueService.enqueue({
+        targetId: `transfer_${srcRoom.buildingNumber}_${tgtRoom.buildingNumber}_${Date.now()}`,
+        action: 'saveBooking',
+        facilityName: 'Isolation Tracker',
+        description: `Transfer occupant ${transferredOccupant.patientName} from Room ${srcRoom.buildingNumber} to Room ${tgtRoom.buildingNumber}`,
+        payload: {
+          mutationType: 'UPSERT_BATCH',
+          entity: 'isolationRooms',
+          data: multiRecordPayload,
+        },
+      });
+    } catch (_) {}
+
+    // Atomically broadcast BOTH rooms to Server Hub so remote clients update both source and target in one step
+    try {
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
+          mutationType: 'UPSERT_BATCH',
+          entity: 'isolationRooms',
+          data: multiRecordPayload,
+        }).catch(() => {});
+      }).catch(() => {
+        if (typeof fetch !== 'undefined') {
+          fetch('/api/hub/mutate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mutationType: 'UPSERT_BATCH',
+              entity: 'isolationRooms',
+              data: multiRecordPayload,
+            }),
+          }).catch(() => {});
+        }
+      });
+    } catch (e) {}
+
+    // Also update Cloud Firestore for both rooms
+    try {
+      import('./firebaseService').then(({ CloudDatabaseService }) => {
+        CloudDatabaseService.saveEntityToCloud('isolationRooms', updatedSrcRoom.id, updatedSrcRoom).catch(() => {});
+        if (srcIdx !== tgtIdx) {
+          CloudDatabaseService.saveEntityToCloud('isolationRooms', updatedTgtRoom.id, updatedTgtRoom).catch(() => {});
+        }
+      }).catch(() => {});
+    } catch (e) {}
+
+    notifyBookingsChanged();
+    try {
+      window.dispatchEvent(new CustomEvent('tamimi_isolation_updated'));
+    } catch (e) {}
+
+    return { success: true, sourceRoom: updatedSrcRoom, targetRoom: updatedTgtRoom };
   },
 
   admitIsolationPatient(
@@ -1314,10 +1683,9 @@ export const StorageService = {
 
   dischargeIsolationPatient(roomId: string): IsolationRoomRecord | null {
     const rooms = this.getIsolationRooms();
-    const room = rooms.find(
-      (r) => r.id.toLowerCase() === roomId.toLowerCase() || r.buildingNumber.toLowerCase() === roomId.toLowerCase()
-    );
-    if (room) {
+    const idx = this.findIsolationRoomIndex(rooms, roomId);
+    if (idx === -1) return null;
+    const room = rooms[idx];
       const canonicalRoom = getCanonicalRoomNumber(room.buildingNumber) || room.buildingNumber;
       // Blacklist both beds
       [1, 2].forEach((bNum) => {
@@ -1364,7 +1732,6 @@ export const StorageService = {
       });
       safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
       notifyBookingsChanged();
-    }
 
     const updated = this.updateIsolationRoom(roomId, {
       occupants: [],
@@ -1383,19 +1750,6 @@ export const StorageService = {
       staffNotes: '',
       status: 'VACANT',
     });
-
-    if (updated && typeof fetch !== 'undefined') {
-      fetch('/api/hub/mutate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mutationType: 'UPSERT',
-          entity: 'isolationRooms',
-          id: updated.id,
-          data: updated,
-        }),
-      }).catch(() => {});
-    }
 
     notifyBookingsChanged();
     try {
@@ -1507,7 +1861,7 @@ export const StorageService = {
   applyRemoteDeletion(id: string, entity?: string) {
     if (!id) return;
     const cleanId = String(id).toLowerCase().trim();
-    recordDeletedId(cleanId, entity || 'general');
+    recordDeletedId(cleanId, entity || 'general', false);
 
     // 1. Remove from Bookings
     this.init();
@@ -1573,7 +1927,7 @@ export const StorageService = {
   applyRemoteCancellation(id: string, reason?: string) {
     if (!id) return;
     const cleanId = String(id).toLowerCase().trim();
-    recordRecentCancellation(cleanId, reason);
+    recordRecentCancellation(cleanId, reason, false);
 
     this.init();
     let changed = false;
@@ -1585,6 +1939,42 @@ export const StorageService = {
           status: 'CANCELLED',
           cancellationReason: reason || 'Cancelled remotely',
           cancelledAt: new Date().toISOString(),
+        };
+      }
+      return b;
+    });
+
+    if (changed) {
+      safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
+      notifyBookingsChanged();
+      this.reconcileIsolationRoomsFromBookings();
+    }
+  },
+
+  applyRemoteBatchCancellation(ids: string[], reason?: string) {
+    if (!Array.isArray(ids) || ids.length === 0) return;
+    const cleanIds = ids.map((id) => String(id || '').toLowerCase().trim()).filter(Boolean);
+    if (cleanIds.length === 0) return;
+
+    cleanIds.forEach((cleanId) => {
+      recordRecentCancellation(cleanId, reason, false);
+    });
+
+    this.init();
+    const cleanIdSet = new Set(cleanIds);
+    let changed = false;
+    const cancelTimestamp = new Date().toISOString();
+
+    inMemoryBookings = inMemoryBookings.map((b) => {
+      if (!b || !b.id) return b;
+      const bId = String(b.id).toLowerCase().trim();
+      if (cleanIdSet.has(bId) && b.status !== 'CANCELLED') {
+        changed = true;
+        return {
+          ...b,
+          status: 'CANCELLED',
+          cancellationReason: reason || 'Cancelled remotely',
+          cancelledAt: cancelTimestamp,
         };
       }
       return b;
@@ -1661,15 +2051,144 @@ export const StorageService = {
 
   applyRemoteUpsert(entity: string, data: any) {
     if (!entity || !data) return;
+
+    // Handle array payloads cleanly & atomically
+    if (Array.isArray(data)) {
+      if (entity === 'bookings') {
+        this.init();
+        let changed = false;
+        const recentCancelled = getRecentCancelledMap();
+        for (const item of data) {
+          if (!item || typeof item !== 'object') continue;
+          const sanitized = sanitizeBooking(item);
+          const targetId = String(sanitized.id || item.id || '').toLowerCase().trim();
+          if (targetId && isIdDeleted(targetId)) continue;
+
+          if (targetId && (isRecentlyCancelled(targetId) || recentCancelled.has(targetId))) {
+            sanitized.status = 'CANCELLED';
+          }
+
+          const idx = inMemoryBookings.findIndex((b) => String(b.id || '').toLowerCase().trim() === targetId);
+          if (idx >= 0) {
+            const existing = inMemoryBookings[idx];
+            // If existing was CANCELLED and incoming update is not marked CANCELLED, preserve CANCELLED!
+            if (existing.status === 'CANCELLED' && sanitized.status !== 'CANCELLED' && !item.forceRevive) {
+              sanitized.status = 'CANCELLED';
+              sanitized.cancellationReason = existing.cancellationReason || sanitized.cancellationReason || 'Cancelled';
+              sanitized.cancelledAt = existing.cancelledAt || sanitized.cancelledAt || new Date().toISOString();
+            }
+
+            if (
+              existing.status === sanitized.status &&
+              existing.date === sanitized.date &&
+              existing.startTime === sanitized.startTime &&
+              existing.endTime === sanitized.endTime &&
+              existing.stage === sanitized.stage &&
+              existing.customerName === sanitized.customerName &&
+              existing.facilityId === sanitized.facilityId
+            ) {
+              continue;
+            }
+            inMemoryBookings[idx] = { ...existing, ...sanitized };
+            changed = true;
+          } else {
+            inMemoryBookings.unshift(sanitized);
+            changed = true;
+          }
+        }
+        if (changed) {
+          safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
+          notifyBookingsChanged();
+          this.reconcileIsolationRoomsFromBookings();
+        }
+        return;
+      }
+
+      if (entity === 'isolationRooms') {
+        this.initIsolationRooms();
+        for (const rawRoom of data) {
+          if (!rawRoom || typeof rawRoom !== 'object') continue;
+          const norm = this.normalizeRoom(rawRoom);
+          const roomTarget = String(norm.id || norm.buildingNumber || '').trim();
+          const idx = findIsolationRoomIndex(inMemoryIsolationRooms, roomTarget);
+          if (idx >= 0) {
+            inMemoryIsolationRooms[idx] = this.normalizeRoom({ ...inMemoryIsolationRooms[idx], ...norm });
+          } else {
+            inMemoryIsolationRooms.push(norm);
+          }
+        }
+
+        // Cross-room occupant deduplication: guarantee no occupant appears in multiple rooms simultaneously
+        const seenOccupantKeys = new Set<string>();
+        inMemoryIsolationRooms.forEach((room) => {
+          if (room.occupants && room.occupants.length > 0) {
+            room.occupants = room.occupants.filter((occ) => {
+              const occKey = String(occ.id || occ.patientName || '').toLowerCase().trim();
+              if (!occKey) return true;
+              if (seenOccupantKeys.has(occKey)) {
+                return false;
+              }
+              seenOccupantKeys.add(occKey);
+              return true;
+            });
+            room.status = room.occupants.length > 0 ? 'Occupied' : 'VACANT';
+            if (room.occupants.length === 0) {
+              room.patientName = '';
+              room.company = '';
+            }
+          }
+        });
+
+        safeSetLocalStorage(ISOLATION_ROOMS_KEY, JSON.stringify(inMemoryIsolationRooms));
+        window.dispatchEvent(new CustomEvent('tamimi_isolation_updated'));
+        notifyBookingsChanged();
+        return;
+      }
+
+      data.forEach((item) => {
+        if (item && typeof item === 'object') {
+          this.applyRemoteUpsert(entity, item);
+        }
+      });
+      return;
+    }
+
     const targetId = String(data.id || '').toLowerCase().trim();
     if (targetId && isIdDeleted(targetId)) return; // Never revive deleted items
 
     if (entity === 'bookings') {
       this.init();
       const sanitized = sanitizeBooking(data);
-      const idx = inMemoryBookings.findIndex((b) => String(b.id || '').toLowerCase().trim() === targetId);
+      const bookingTargetId = String(sanitized.id || data.id || '').toLowerCase().trim();
+      if (bookingTargetId && isIdDeleted(bookingTargetId)) return; // Never revive deleted items
+      // Enforce cancellation if previously cancelled locally or in cancellation cache
+      if (bookingTargetId && (isRecentlyCancelled(bookingTargetId) || getRecentCancelledMap().has(bookingTargetId))) {
+        sanitized.status = 'CANCELLED';
+      }
+
+      const idx = inMemoryBookings.findIndex((b) => String(b.id || '').toLowerCase().trim() === bookingTargetId);
       if (idx >= 0) {
-        inMemoryBookings[idx] = { ...inMemoryBookings[idx], ...sanitized };
+        const existing = inMemoryBookings[idx];
+        // If existing was CANCELLED and incoming update is not marked CANCELLED, preserve CANCELLED!
+        if (existing.status === 'CANCELLED' && sanitized.status !== 'CANCELLED' && !data.forceRevive) {
+          sanitized.status = 'CANCELLED';
+          sanitized.cancellationReason = existing.cancellationReason || sanitized.cancellationReason || 'Cancelled';
+          sanitized.cancelledAt = existing.cancelledAt || sanitized.cancelledAt || new Date().toISOString();
+        }
+
+        // Idempotency: if status and fields are already identical, skip redundant write
+        if (
+          existing.status === sanitized.status &&
+          existing.date === sanitized.date &&
+          existing.startTime === sanitized.startTime &&
+          existing.endTime === sanitized.endTime &&
+          existing.stage === sanitized.stage &&
+          existing.customerName === sanitized.customerName &&
+          existing.facilityId === sanitized.facilityId
+        ) {
+          return;
+        }
+        inMemoryBookings[idx] = { ...existing, ...sanitized };
       } else {
         inMemoryBookings.unshift(sanitized);
       }
@@ -1708,19 +2227,45 @@ export const StorageService = {
       window.dispatchEvent(new CustomEvent('tamimi_lost_found_updated'));
     } else if (entity === 'isolationRooms') {
       this.initIsolationRooms();
-      if (Array.isArray(data)) {
-        inMemoryIsolationRooms = data.map((r) => this.normalizeRoom(r));
-      } else {
-        const roomId = String(data.id || data.buildingNumber || '').toLowerCase().trim();
-        const norm = this.normalizeRoom(data);
-        const idx = inMemoryIsolationRooms.findIndex(
-          (r) => String(r.id || r.buildingNumber || '').toLowerCase().trim() === roomId
-        );
+      const rawRooms = Array.isArray(data) ? data : [data];
+      for (const rawRoom of rawRooms) {
+        if (!rawRoom || typeof rawRoom !== 'object') continue;
+        const norm = this.normalizeRoom(rawRoom);
+        const canonical = getCanonicalRoomNumber(norm.buildingNumber || norm.id).toLowerCase();
+        const roomId = String(norm.id || norm.buildingNumber || '').toLowerCase().trim();
+
+        const idx = inMemoryIsolationRooms.findIndex((r) => {
+          const rCanonical = getCanonicalRoomNumber(r.buildingNumber || r.id).toLowerCase();
+          const rId = String(r.id || r.buildingNumber || '').toLowerCase().trim();
+          return (canonical && rCanonical === canonical) || (roomId && rId === roomId);
+        });
+
         if (idx >= 0) {
-          inMemoryIsolationRooms[idx] = { ...inMemoryIsolationRooms[idx], ...norm };
+          inMemoryIsolationRooms[idx] = this.normalizeRoom({ ...inMemoryIsolationRooms[idx], ...norm });
         } else {
           inMemoryIsolationRooms.push(norm);
         }
+
+        // Cross-room occupant deduplication: guarantee no occupant appears in multiple rooms simultaneously
+        const seenOccupantKeys = new Set<string>();
+        inMemoryIsolationRooms.forEach((room) => {
+          if (room.occupants && room.occupants.length > 0) {
+            room.occupants = room.occupants.filter((occ) => {
+              const occKey = String(occ.id || occ.patientName || '').toLowerCase().trim();
+              if (!occKey) return true;
+              if (seenOccupantKeys.has(occKey)) {
+                return false;
+              }
+              seenOccupantKeys.add(occKey);
+              return true;
+            });
+            room.status = room.occupants.length > 0 ? 'Occupied' : 'VACANT';
+            if (room.occupants.length === 0) {
+              room.patientName = '';
+              room.company = '';
+            }
+          }
+        });
       }
       safeSetLocalStorage(ISOLATION_ROOMS_KEY, JSON.stringify(inMemoryIsolationRooms));
       window.dispatchEvent(new CustomEvent('tamimi_isolation_updated'));
@@ -2168,14 +2713,46 @@ export const StorageService = {
       };
 
       if (existingOccIdx >= 0) {
-        // Update if existing occupant has missing details
+        const existing = targetRoom.occupants[existingOccIdx];
+        const existingName = (existing.patientName || '').toLowerCase().trim();
+        const incomingName = (b.customerName || '').toLowerCase().trim();
+
+        // Source-of-truth Rule 1: Direct admissions & transfers are authoritative.
+        // Never overwrite an existing resident with a different booking name or generic placeholders.
+        if (existingName && incomingName && existingName !== incomingName) {
+          return; // Preserve existing resident occupancy
+        }
+
+        // Source-of-truth Rule 2: Non-destructive backfill for missing fields only.
+        // Never overwrite existing specific medical notes, company, or nationalId with empty/generic strings.
+        const isGenericCompany = !existing.company || existing.company === 'General Resident';
         targetRoom.occupants[existingOccIdx] = {
-          ...targetRoom.occupants[existingOccIdx],
-          ...newOccupant,
+          ...existing,
+          patientName: existing.patientName || newOccupant.patientName,
+          phoneNumber: existing.phoneNumber || newOccupant.phoneNumber,
+          email: existing.email || newOccupant.email,
+          company: !isGenericCompany ? existing.company : (newOccupant.company && newOccupant.company !== 'General Resident' ? newOccupant.company : existing.company),
+          checkIn: existing.checkIn || newOccupant.checkIn,
+          checkOut: existing.checkOut || newOccupant.checkOut,
+          bookingType: existing.bookingType || newOccupant.bookingType,
+          nationalId: existing.nationalId || newOccupant.nationalId,
+          purposeOfStay: existing.purposeOfStay || newOccupant.purposeOfStay,
+          hospitalReferral: existing.hospitalReferral || newOccupant.hospitalReferral,
+          staffNotes: existing.staffNotes ? existing.staffNotes : newOccupant.staffNotes,
+          bookedByStaff: existing.bookedByStaff || newOccupant.bookedByStaff,
+          keyIssued: existing.keyIssued ?? newOccupant.keyIssued,
         };
       } else {
-        targetRoom.occupants.push(newOccupant);
-        hasChanges = true;
+        // Source-of-truth Rule 3: Transferred patient check.
+        // If this patient is already occupying another bed in any room, do not resurrect them in an old bed from a legacy booking.
+        const patientKey = (newOccupant.patientName || '').toLowerCase().trim();
+        const isOccupiedElsewhere = updatedRooms.some((r) =>
+          (r.occupants || []).some((occ) => (occ.patientName || '').toLowerCase().trim() === patientKey)
+        );
+        if (!isOccupiedElsewhere) {
+          targetRoom.occupants.push(newOccupant);
+          hasChanges = true;
+        }
       }
     });
 
@@ -2241,28 +2818,23 @@ export const StorageService = {
             !isDeleted('occupants', `Room ${localR.buildingNumber} (Bed ${occ.bedNumber})`)
         );
 
-        if (validRemoteOccupants.length > 0) {
-          return {
+        const remoteTime = remoteMatch.lastUpdated ? new Date(remoteMatch.lastUpdated).getTime() : 0;
+        const localTime = localR.lastUpdated ? new Date(localR.lastUpdated).getTime() : 0;
+        const remoteIsAuthoritative = remoteTime >= localTime || !localR.lastUpdated;
+
+        if (remoteIsAuthoritative) {
+          return this.normalizeRoom({
             ...remoteMatch,
             occupants: validRemoteOccupants,
-            status: 'Occupied' as const,
-          };
-        } else if (validLocalOccupants.length > 0) {
-          return {
+            status: validRemoteOccupants.length > 0 ? ('Occupied' as const) : ('VACANT' as const),
+          });
+        } else {
+          return this.normalizeRoom({
             ...localR,
             occupants: validLocalOccupants,
-            status: 'Occupied' as const,
-          };
+            status: validLocalOccupants.length > 0 ? ('Occupied' as const) : ('VACANT' as const),
+          });
         }
-        return {
-          ...remoteMatch,
-          occupants: [],
-          status: 'VACANT' as const,
-          patientName: '',
-          company: '',
-          checkIn: '',
-          checkOut: '',
-        };
       }
 
       // If no remote match, filter local occupants as well
@@ -2275,11 +2847,32 @@ export const StorageService = {
           !isDeleted('occupants', `Room ${localR.buildingNumber} (Bed ${occ.bedNumber})`)
       );
 
-      return {
+      return this.normalizeRoom({
         ...localR,
         occupants: validLocalOccupants,
         status: validLocalOccupants.length > 0 ? ('Occupied' as const) : ('VACANT' as const),
-      };
+      });
+    });
+
+    // Cross-room occupant deduplication: guarantee no occupant appears in multiple rooms simultaneously
+    const seenOccupantKeys = new Set<string>();
+    merged.forEach((room) => {
+      if (room.occupants && room.occupants.length > 0) {
+        room.occupants = room.occupants.filter((occ) => {
+          const occKey = String(occ.id || occ.patientName || '').toLowerCase().trim();
+          if (!occKey) return true;
+          if (seenOccupantKeys.has(occKey)) {
+            return false; // Remove duplicate occupancy from transfer/race condition
+          }
+          seenOccupantKeys.add(occKey);
+          return true;
+        });
+        room.status = room.occupants.length > 0 ? 'Occupied' : 'VACANT';
+        if (room.occupants.length === 0) {
+          room.patientName = '';
+          room.company = '';
+        }
+      }
     });
 
     inMemoryIsolationRooms = merged;
@@ -2514,7 +3107,7 @@ export const StorageService = {
   },
 
   // Cancel an entire recurring group by recurringGroupId or master ID
-  cancelRecurringGroup(groupId: string, reason?: string): { success: boolean; cancelledCount: number; error?: string } {
+  cancelRecurringGroup(groupId: string, reason?: string, cancelledBy?: string): { success: boolean; cancelledCount: number; error?: string } {
     this.init();
     if (!groupId) return { success: false, cancelledCount: 0, error: 'Group ID is required' };
     const cleanGroupId = String(groupId).trim().toLowerCase();
@@ -2543,10 +3136,10 @@ export const StorageService = {
         this.getMasterScheduleRef(b).toLowerCase() === cleanGroupId ||
         this.getMasterScheduleRef(b).toLowerCase().replace(/[^a-z0-9]/g, '') === cleanNoDashes;
       if (isMatch && b.status !== 'CANCELLED') {
-        recordRecentCancellation(b.id, cancelReasonText);
+        recordRecentCancellation(b.id, cancelReasonText, false);
         cancelledCount++;
         const cancelledAt = new Date().toISOString();
-        const effectiveCancelledBy = AuthService.getCurrentUser()?.username || 'Staff';
+        const effectiveCancelledBy = cancelledBy || AuthService.getCurrentUser()?.username || 'Staff';
 
         // Record in cancellation log
         const logEntry: CancellationLogEntry = {
@@ -2583,11 +3176,58 @@ export const StorageService = {
 
     this.saveBookings(inMemoryBookings);
 
-    // Push cancellations to Cloud Firestore in real time
+    const cancelledIds = matching.map((b) => b.id).filter(Boolean);
+
+    // Propagate cancellations to Server Hub immediately (pushes CANCEL_BATCH and releases slots on all computers)
+    try {
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
+          mutationType: 'CANCEL_BATCH',
+          entity: 'bookings',
+          ids: cancelledIds,
+          recurringGroupId: cleanGroupId,
+          reason: cancelReasonText,
+        }).catch(() => {});
+      }).catch(() => {
+        if (typeof fetch !== 'undefined') {
+          fetch('/api/hub/mutate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mutationType: 'CANCEL_BATCH',
+              entity: 'bookings',
+              ids: cancelledIds,
+              recurringGroupId: cleanGroupId,
+              reason: cancelReasonText,
+            }),
+          }).catch(() => {});
+        }
+      });
+    } catch (e) {}
+
+    // Enqueue cancellations into OfflineQueueService for offline resilience
+    matching.forEach((b) => {
+      OfflineQueueService.enqueue({
+        targetId: b.id,
+        action: 'cancelBooking',
+        facilityName: b.facilityName || b.facilityId || 'Facility Booking',
+        description: `Cancel recurring session for ${b.customerName}`,
+        payload: {
+          id: b.id,
+          phoneNumber: b.phoneNumber,
+          reason: cancelReasonText,
+        },
+      });
+    });
+
+    // Push cancellations to Cloud Firestore in real time via atomic batch
     try {
       import('./firebaseService').then(({ CloudDatabaseService }) => {
-        matching.forEach((b) => {
-          CloudDatabaseService.cancelBookingInCloud(b.id, cancelReasonText).catch(() => {});
+        CloudDatabaseService.cancelBatchInCloud(cancelledIds, cancelReasonText).catch(() => {
+          // Fallback to per-item if batch fails
+          matching.forEach((b) => {
+            CloudDatabaseService.cancelBookingInCloud(b.id, cancelReasonText).catch(() => {});
+          });
         });
       }).catch(() => {});
     } catch (e) {}
@@ -3043,6 +3683,7 @@ export const StorageService = {
     conflictDates: { date: string; bookedBy: string; existingBookingId: string }[];
   } {
     this.init();
+    const facility = FACILITIES.find((f) => f.id === params.facilityId);
     const reqStart = timeToMinutes(params.startTime);
     const reqEnd = timeToMinutes(params.endTime);
 
@@ -3056,7 +3697,7 @@ export const StorageService = {
           b.status === 'CONFIRMED' &&
           b.facilityId === params.facilityId &&
           normalizeDateString(b.date) === normD &&
-          b.stage === params.stage &&
+          isStageMatch(b.stage, params.stage, facility) &&
           timeToMinutes(b.startTime) < reqEnd &&
           timeToMinutes(b.endTime) > reqStart
       );
@@ -3115,13 +3756,13 @@ export const StorageService = {
 
     for (const d of params.dates) {
       const normD = normalizeDateString(d);
-      // Check collision
+      // Check collision using facility-aware stage matching
       const collision = inMemoryBookings.find(
         (b) =>
           b.status === 'CONFIRMED' &&
           b.facilityId === params.facilityId &&
           normalizeDateString(b.date) === normD &&
-          b.stage === params.stage &&
+          isStageMatch(b.stage, params.stage, facility) &&
           timeToMinutes(b.startTime) < reqEnd &&
           timeToMinutes(b.endTime) > reqStart
       );
@@ -3185,20 +3826,27 @@ export const StorageService = {
 
     // Broadcast recurring bookings to multi-computer real-time hub
     try {
-      if (typeof fetch !== 'undefined') {
-        createdBookings.forEach((b) => {
+      import('./hubService').then(({ HubService }) => {
+        // Send batch mutation to hub with individual item compatibility
+        HubService.pushMutation({
+          mutationType: 'UPSERT',
+          entity: 'bookings',
+          data: createdBookings,
+        }).catch(() => {});
+      }).catch(() => {
+        // Fallback fetch if import delayed
+        if (typeof fetch !== 'undefined') {
           fetch('/api/hub/mutate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               mutationType: 'UPSERT',
               entity: 'bookings',
-              id: b.id,
-              data: b,
+              data: createdBookings,
             }),
           }).catch(() => {});
-        });
-      }
+        }
+      });
     } catch (e) {}
 
     // Guaranteed Google Sheets batch sync
@@ -4337,10 +4985,12 @@ export const StorageService = {
     const sMin = timeToMinutes(startTime);
     const eMin = timeToMinutes(endTime);
 
+    const facility = FACILITIES.find((f) => f.id === facilityId);
+
     return inMemoryBlockouts.find((b) => {
       if (b.facilityId !== facilityId) return false;
       if (normalizeDateString(b.date) !== normDate) return false;
-      if (b.stage && b.stage !== 'ALL' && stage && stage !== 'ALL' && !isStageMatch(b.stage, stage)) {
+      if (b.stage && b.stage !== 'ALL' && stage && stage !== 'ALL' && !isStageMatch(b.stage, stage, facility)) {
         return false;
       }
       const bStart = timeToMinutes(b.startTime);

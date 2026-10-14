@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+.server_session_secret
+tamimi_server_sessions.json
+tamimi_server_db.json.bak*
+*.tmp.*
+

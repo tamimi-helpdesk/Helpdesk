@@ -121,7 +121,10 @@ export const OfflineQueueService = {
   },
 
   /**
-   * Add a transaction to the offline sync queue
+   * Add a transaction to the offline sync queue with conflict resolution:
+   * When a cancellation or deletion is enqueued for a record, any older pending
+   * 'saveBooking' or creation operation for that same record is immediately purged
+   * to guarantee an older pending UPSERT cannot overwrite a newer cancellation.
    */
   enqueue(item: {
     targetId: string;
@@ -131,10 +134,32 @@ export const OfflineQueueService = {
     payload: any;
   }): void {
     const queue = this.getQueue();
-    // Deduplicate if same action and targetId exists
-    const filtered = queue.filter(
-      (q) => !(q.targetId === item.targetId && q.action === item.action)
-    );
+    const targetClean = String(item.targetId || '').toLowerCase().trim();
+
+    // Conflict Resolution:
+    // If newer action is a cancellation or deletion, purge any pending saves for the same targetId
+    const filtered = queue.filter((q) => {
+      const qTargetClean = String(q.targetId || '').toLowerCase().trim();
+      if (qTargetClean === targetClean && targetClean !== '') {
+        if (
+          (item.action === 'cancelBooking' || item.action === 'deleteBooking') &&
+          q.action === 'saveBooking'
+        ) {
+          return false; // Purge older pending save!
+        }
+        if (
+          (item.action === 'dischargeIsolationBed' || item.action === 'deleteBooking') &&
+          q.action === 'saveIsolationBed'
+        ) {
+          return false;
+        }
+        // Deduplicate exact same action
+        if (q.action === item.action) {
+          return false;
+        }
+      }
+      return true;
+    });
 
     const queuedItem: QueuedSyncItem = {
       id: `SYNC-Q-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -230,10 +255,26 @@ export const OfflineQueueService = {
         try {
           let result: { success: boolean; error?: string } = { success: false };
 
-          switch (item.action) {
-            case 'saveBooking':
-              result = await gasServiceRef.pushBookingToRemoteDirect(item.payload);
-              break;
+          if (item.payload && typeof item.payload === 'object' && item.payload.mutationType) {
+            try {
+              if (typeof fetch !== 'undefined') {
+                const res = await fetch('/api/hub/mutate', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(item.payload),
+                });
+                result = { success: res.ok };
+              } else {
+                result = { success: true };
+              }
+            } catch (err: any) {
+              result = { success: false, error: err.message };
+            }
+          } else {
+            switch (item.action) {
+              case 'saveBooking':
+                result = await gasServiceRef.pushBookingToRemoteDirect(item.payload);
+                break;
             case 'cancelBooking':
               result = await gasServiceRef.cancelBookingRemoteDirect(item.payload || item.targetId, item.payload?.phone || item.payload?.phoneNumber, item.payload?.reason);
               break;
@@ -317,6 +358,7 @@ export const OfflineQueueService = {
             default:
               result = { success: true };
           }
+        }
 
           if (result.success) {
             successCount++;

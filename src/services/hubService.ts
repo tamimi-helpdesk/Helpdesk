@@ -9,6 +9,8 @@ export class HubService {
   private static isSyncing = false;
   private static sseFailures = 0;
 
+  private static lastKnownVersion = 0;
+
   // Initialize real-time synchronization listener
   public static init() {
     if (typeof window === 'undefined') return;
@@ -19,9 +21,21 @@ export class HubService {
     // 2. Connect Real-time SSE Stream
     this.connectSSE();
 
-    // 3. Fallback Periodic Polling (Every 6 seconds to ensure instant multi-device consistency)
-    setInterval(() => {
-      this.pullStateFromHub().catch(() => {});
+    // 3. Ultra-lightweight periodic version check (Every 6 seconds, <50 bytes instead of full state)
+    setInterval(async () => {
+      try {
+        const vRes = await fetch('/api/hub/version');
+        if (vRes.ok) {
+          const vData = await vRes.json();
+          if (vData && typeof vData.version === 'number') {
+            if (vData.version > this.lastKnownVersion) {
+              await this.pullStateFromHub();
+            }
+          }
+        }
+      } catch (e) {
+        // Quiet fallback
+      }
     }, 6000);
 
     // 4. Focus & Visibility Sync (Instantly pull when user focuses or returns to window)
@@ -55,23 +69,39 @@ export class HubService {
         try {
           const data = JSON.parse(e.data);
           if (data.type === 'CONNECTED') {
+            if (typeof data.version === 'number') {
+              this.lastKnownVersion = data.version;
+            }
             this.pullStateFromHub().catch(() => {});
           } else if (data.type === 'DELETE') {
+            if (typeof data.version === 'number') this.lastKnownVersion = data.version;
             if (data.id) {
               StorageService.applyRemoteDeletion(data.id, data.entity);
               ToastService.hub('Terminal network: Record removed by another user');
             }
           } else if (data.type === 'CANCEL') {
+            if (typeof data.version === 'number') this.lastKnownVersion = data.version;
             if (data.id) {
               StorageService.applyRemoteCancellation(data.id, data.payload?.reason);
               ToastService.hub('Terminal network: Booking status updated');
             }
-          } else if (data.type === 'UPSERT') {
+          } else if (data.type === 'CANCEL_BATCH') {
+            if (typeof data.version === 'number') this.lastKnownVersion = data.version;
+            const ids = Array.isArray(data.payload?.ids)
+              ? data.payload.ids
+              : (Array.isArray(data.payload) ? data.payload : []);
+            if (ids.length > 0) {
+              StorageService.applyRemoteBatchCancellation(ids, data.payload?.reason);
+              ToastService.hub('Terminal network: Batch schedule status updated');
+            }
+          } else if (data.type === 'UPSERT' || data.type === 'UPSERT_BATCH') {
+            if (typeof data.version === 'number') this.lastKnownVersion = data.version;
             if (data.entity && data.payload) {
               StorageService.applyRemoteUpsert(data.entity, data.payload);
-              ToastService.hub('Terminal network: New booking synced in real time');
+              ToastService.hub('Terminal network: Real-time update synced');
             }
           } else if (data.type === 'SYNC_ALL') {
+            if (typeof data.version === 'number') this.lastKnownVersion = data.version;
             this.pullStateFromHub().catch(() => {});
           }
         } catch (err) {}
@@ -114,6 +144,10 @@ export class HubService {
       const data = await res.json();
       if (!data || !data.success) return false;
 
+      if (typeof data.version === 'number') {
+        this.lastKnownVersion = data.version;
+      }
+
       StorageService.resetSyncChangesCount();
       // Apply state to StorageService
       StorageService.applyFullHubSnapshot(data);
@@ -126,11 +160,14 @@ export class HubService {
       try {
         const deletedIds = data.deletedIds || {};
         const cancelledIds = data.cancelledIds || {};
+        const now = Date.now();
         const localActiveBookings = StorageService.getAllBookings().filter((b) => {
           if (!b || !b.id || b.status === 'CANCELLED') return false;
           const k = String(b.id).toLowerCase().trim();
           if (deletedIds[k] || cancelledIds[k]) return false;
-          return true;
+          // Protect against stale snapshots reviving deleted records
+          const createdTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return now - createdTime < 15 * 60 * 1000;
         });
         const hubBookingIds = new Set((data.bookings || []).map((b: any) => String(b?.id || '').toLowerCase().trim()));
         const missingOnHub = localActiveBookings.filter((b) => !hubBookingIds.has(String(b.id).toLowerCase().trim()));
@@ -158,17 +195,31 @@ export class HubService {
 
   // Push instant mutation to server hub (broadcasts to all computers)
   public static async pushMutation(payload: {
-    mutationType: 'DELETE' | 'CANCEL' | 'UPSERT' | 'SYNC_ALL';
+    mutationType: 'DELETE' | 'CANCEL' | 'CANCEL_BATCH' | 'UPSERT' | 'UPSERT_BATCH' | 'BATCH_UPSERT' | 'SYNC_ALL';
     entity?: string;
     id?: string;
+    ids?: string[];
     data?: any;
     reason?: string;
     [key: string]: any;
   }): Promise<any> {
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      try {
+        if (typeof localStorage !== 'undefined') {
+          const rawSession = localStorage.getItem('tamimi_helpdesk_auth_session_v2');
+          if (rawSession) {
+            const parsed = JSON.parse(rawSession);
+            if (parsed && parsed.sessionToken) {
+              headers['Authorization'] = `Bearer ${parsed.sessionToken}`;
+            }
+          }
+        }
+      } catch (_) {}
+
       const res = await fetch('/api/hub/mutate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
       });
       const contentType = res.headers.get('content-type') || '';

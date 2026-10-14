@@ -5,17 +5,87 @@ import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { createServer as createViteServer } from 'vite';
+import crypto from 'crypto';
+import { isResourceOrStageMatch, getCanonicalResourceName } from './src/utils/resourceMatching.ts';
 
-const app = express();
+export const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+// Request body limits to prevent DoS attacks
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Enterprise Security Headers & CORS Configuration
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-session-token');
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  // CSRF Protection for state-changing requests using cookie authentication
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+    const cookies = parseCookies(req.headers.cookie);
+    const authHeader = req.headers.authorization;
+    const xSessionToken = req.headers['x-session-token'];
+
+    // If request relies solely on cookies (no Authorization Bearer or custom token header)
+    if (cookies['tamimi_session'] && !authHeader && !xSessionToken) {
+      const host = req.headers.host;
+      if (origin && host) {
+        try {
+          const originHost = new URL(origin).host;
+          if (originHost !== host) {
+            return res.status(403).json({ success: false, error: 'CSRF protection: untrusted origin.' });
+          }
+        } catch (_) {
+          return res.status(403).json({ success: false, error: 'CSRF protection: invalid origin.' });
+        }
+      }
+    }
+  }
+
+  next();
+});
+
+function parseCookies(cookieHeader?: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+  cookieHeader.split(';').forEach((part) => {
+    const [name, ...val] = part.trim().split('=');
+    if (name) cookies[name.trim()] = decodeURIComponent(val.join('='));
+  });
+  return cookies;
+}
 
 // ---------------------------------------------------------------------------
 // CENTRAL DATA HUB & REAL-TIME EVENT STREAM (Cross-Device Instant Sync Engine)
 // ---------------------------------------------------------------------------
 const DB_FILE_PATH = path.join(process.cwd(), 'tamimi_server_db.json');
+const DB_HISTORY_FILE_PATH = path.join(process.cwd(), 'tamimi_historical_isolation_archive.json');
+
+// Cleanup any incomplete temporary files left from previous process crashes
+try {
+  const dirEntries = fs.readdirSync(process.cwd());
+  for (const entry of dirEntries) {
+    if (entry.startsWith('tamimi_server_db.json.tmp.') || entry.startsWith('tamimi_server_db.json.tmp.exit')) {
+      try {
+        fs.unlinkSync(path.join(process.cwd(), entry));
+      } catch (_) {}
+    }
+  }
+} catch (_) {}
 
 interface ServerHubState {
   version: number;
@@ -31,9 +101,10 @@ interface ServerHubState {
   invoices: any[];
   notices: any[];
   supportTickets: any[];
+  isolationHistory?: any[];
 }
 
-let hubState: ServerHubState = {
+export let hubState: ServerHubState = {
   version: 1,
   lastUpdated: new Date().toISOString(),
   deletedIds: {},
@@ -49,19 +120,103 @@ let hubState: ServerHubState = {
   supportTickets: [],
 };
 
+// Historical isolation archive stored separately from active operational records
+// to prevent JSON serialization blocking on high-frequency booking mutations
+export let serverIsolationHistory: any[] = [];
+
+// Load historical isolation archive if available
+try {
+  if (fs.existsSync(DB_HISTORY_FILE_PATH)) {
+    const rawHist = fs.readFileSync(DB_HISTORY_FILE_PATH, 'utf-8');
+    const parsedHist = JSON.parse(rawHist);
+    if (Array.isArray(parsedHist)) {
+      serverIsolationHistory = parsedHist;
+    }
+  }
+} catch (err) {
+  console.warn('[Hub] Notice reading historical isolation archive:', err);
+}
+
 // Load saved server database on boot
 try {
   if (fs.existsSync(DB_FILE_PATH)) {
     const raw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed.version === 'number') {
+      let loadedIsolationRooms = Array.isArray(parsed.isolationRooms) ? parsed.isolationRooms : [];
+
+      // If legacy file still has embedded historical records or excess records, preserve ALL into archive
+      if (Array.isArray(parsed.isolationHistory) && parsed.isolationHistory.length > 0) {
+        const existingKeys = new Set(serverIsolationHistory.map((r) => r.id || `${r.buildingNumber}_${r.checkIn}`));
+        parsed.isolationHistory.forEach((r: any) => {
+          const k = r.id || `${r.buildingNumber}_${r.checkIn}`;
+          if (!existingKeys.has(k)) {
+            serverIsolationHistory.push(r);
+            existingKeys.add(k);
+          }
+        });
+      }
+
+      if (loadedIsolationRooms.length > 50) {
+        console.log(`[Hub] Preserving and migrating ${loadedIsolationRooms.length} isolation room records to separate archive...`);
+        const existingKeys = new Set(serverIsolationHistory.map((r) => r.id || `${r.buildingNumber}_${r.checkIn}`));
+        const activeRoomMap = new Map<string, any>();
+        const isStandardRoom = (code: string) => /^[RB]-0?[1-9]|1[0-2]$/i.test(code);
+
+        loadedIsolationRooms.forEach((r) => {
+          if (!r) return;
+          const canonical = getCanonicalServerRoomNumber(r.buildingNumber || r.id);
+          const key = (canonical || r.id || r.buildingNumber || '').toUpperCase().trim();
+
+          if (key && isStandardRoom(key)) {
+            if (!activeRoomMap.has(key)) {
+              activeRoomMap.set(key, r);
+            } else {
+              const existing = activeRoomMap.get(key);
+              const existingOccCount = (existing.occupants || []).length;
+              const rOccCount = (r.occupants || []).length;
+              if (rOccCount > existingOccCount || (!existing.lastUpdated && r.lastUpdated)) {
+                const archKey = existing.id || `${existing.buildingNumber}_${existing.checkIn}`;
+                if (!existingKeys.has(archKey)) {
+                  serverIsolationHistory.push(existing);
+                  existingKeys.add(archKey);
+                }
+                activeRoomMap.set(key, r);
+              } else {
+                const archKey = r.id || `${r.buildingNumber}_${r.checkIn}`;
+                if (!existingKeys.has(archKey)) {
+                  serverIsolationHistory.push(r);
+                  existingKeys.add(archKey);
+                }
+              }
+            }
+          } else {
+            const archKey = r.id || `${r.buildingNumber}_${r.checkIn}`;
+            if (!existingKeys.has(archKey)) {
+              serverIsolationHistory.push(r);
+              existingKeys.add(archKey);
+            }
+          }
+        });
+
+        loadedIsolationRooms = Array.from(activeRoomMap.values());
+
+        // Immediately persist historical archive so all records are durable
+        try {
+          fs.writeFileSync(DB_HISTORY_FILE_PATH, JSON.stringify(serverIsolationHistory), 'utf-8');
+          console.log(`[Hub] Successfully persisted ${serverIsolationHistory.length} historical isolation records in archive.`);
+        } catch (histErr) {
+          console.error('[Hub] Failed to write historical archive:', histErr);
+        }
+      }
+
       hubState = {
-        ...hubState,
-        ...parsed,
+        version: parsed.version || 1,
+        lastUpdated: parsed.lastUpdated || new Date().toISOString(),
         deletedIds: parsed.deletedIds || {},
         cancelledIds: parsed.cancelledIds || {},
         bookings: Array.isArray(parsed.bookings) ? parsed.bookings : [],
-        isolationRooms: Array.isArray(parsed.isolationRooms) ? parsed.isolationRooms : [],
+        isolationRooms: loadedIsolationRooms,
         handovers: Array.isArray(parsed.handovers) ? parsed.handovers : [],
         parcels: Array.isArray(parsed.parcels) ? parsed.parcels : [],
         lostFound: Array.isArray(parsed.lostFound) ? parsed.lostFound : [],
@@ -70,55 +225,192 @@ try {
         notices: Array.isArray(parsed.notices) ? parsed.notices : [],
         supportTickets: Array.isArray(parsed.supportTickets) ? parsed.supportTickets : [],
       };
-      console.log(`[Hub] Loaded persisted server database (v${hubState.version}) with ${hubState.bookings.length} bookings, ${Object.keys(hubState.deletedIds).length} tombstones.`);
+      console.log(`[Hub] Loaded persisted server database (v${hubState.version}) with ${hubState.bookings.length} bookings, ${hubState.isolationRooms.length} active rooms, ${Object.keys(hubState.deletedIds).length} tombstones.`);
     }
   }
 } catch (err) {
   console.warn('[Hub] Could not load database file, starting with fresh state:', err);
 }
 
-// Robust Atomic State Persister
-let saveTimeout: NodeJS.Timeout | null = null;
-let isWriting = false;
-let pendingWrite = false;
+// ---------------------------------------------------------------------------
+// Non-Blocking Serialized Write Queue with Atomic Renaming, Retries & Durability Guarantees
+// ---------------------------------------------------------------------------
+interface PendingWriteRequest {
+  version: number;
+  resolve: () => void;
+  reject: (err: any) => void;
+}
 
-function doPersistHubState() {
-  if (isWriting) {
-    pendingWrite = true;
-    return;
-  }
-  isWriting = true;
-  pendingWrite = false;
-  try {
-    const serialized = JSON.stringify(hubState, null, 2);
-    const tempPath = `${DB_FILE_PATH}.tmp.${Date.now()}`;
-    fs.writeFileSync(tempPath, serialized, 'utf-8');
-    fs.renameSync(tempPath, DB_FILE_PATH);
-  } catch (e) {
-    console.error('[Hub] Failed to persist state to disk:', e);
-  } finally {
-    isWriting = false;
-    if (pendingWrite) {
-      pendingWrite = false;
-      setTimeout(doPersistHubState, 100);
+let isWriting = false;
+let isDirty = true; // Initially dirty after boot or mutate
+let lastPersistedVersion = -1;
+let writeWaiters: PendingWriteRequest[] = [];
+let currentDiskWritePromise: Promise<void> | null = null;
+
+async function executeAtomicDiskWrite(maxRetries = 3): Promise<void> {
+  const targetVersion = hubState.version;
+  let lastError: any = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const tempPath = `${DB_FILE_PATH}.tmp.${process.pid}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    try {
+      const serialized = JSON.stringify(hubState);
+      await fs.promises.writeFile(tempPath, serialized, 'utf-8');
+      await fs.promises.rename(tempPath, DB_FILE_PATH);
+      
+      // Update clean marker if no newer mutation arrived during write
+      lastPersistedVersion = Math.max(lastPersistedVersion, targetVersion);
+      if (hubState.version === targetVersion) {
+        isDirty = false;
+      }
+      return;
+    } catch (e) {
+      lastError = e;
+      console.warn(`[Hub] Disk write attempt ${attempt}/${maxRetries} failed:`, e);
+      try {
+        if (fs.existsSync(tempPath)) await fs.promises.unlink(tempPath);
+      } catch (_) {}
+
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 50));
+      }
     }
   }
+
+  console.error('[Hub] All atomic disk write attempts failed:', lastError);
+  throw lastError;
 }
 
-function persistHubState(immediate: boolean = false) {
-  if (saveTimeout) {
-    clearTimeout(saveTimeout);
-    saveTimeout = null;
+function processDiskWriteQueue() {
+  if (isWriting) {
+    return; // Write in progress; next queue will be picked up in finally block
   }
-  if (immediate) {
-    doPersistHubState();
-  } else {
-    saveTimeout = setTimeout(() => {
-      saveTimeout = null;
-      doPersistHubState();
-    }, 150);
+
+  if (writeWaiters.length === 0) {
+    if (isDirty && hubState.version !== lastPersistedVersion) {
+      isWriting = true;
+      currentDiskWritePromise = executeAtomicDiskWrite()
+        .catch((e) => console.error('[Hub] Background flush error:', e))
+        .finally(() => {
+          isWriting = false;
+          currentDiskWritePromise = null;
+          if (writeWaiters.length > 0 || (isDirty && hubState.version !== lastPersistedVersion)) {
+            setImmediate(processDiskWriteQueue);
+          }
+        });
+    }
+    return;
+  }
+
+  const batch = [...writeWaiters];
+  writeWaiters = [];
+  const versionPersisting = hubState.version;
+
+  isWriting = true;
+  currentDiskWritePromise = (async () => {
+    try {
+      await executeAtomicDiskWrite();
+      batch.forEach((w) => w.resolve());
+    } catch (err) {
+      batch.forEach((w) => w.reject(err));
+    } finally {
+      isWriting = false;
+      currentDiskWritePromise = null;
+      if (writeWaiters.length > 0 || (isDirty && hubState.version !== lastPersistedVersion)) {
+        setImmediate(processDiskWriteQueue);
+      }
+    }
+  })();
+}
+
+export function markHubStateDirty() {
+  isDirty = true;
+}
+
+export function persistHubState(immediate: boolean = true): Promise<void> {
+  markHubStateDirty();
+  const currentVer = hubState.version;
+
+  if (!isDirty && currentVer <= lastPersistedVersion) {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    writeWaiters.push({ version: currentVer, resolve, reject });
+    processDiskWriteQueue();
+  });
+}
+
+export const doPersistHubState = persistHubState;
+
+// Canonical room normalization helper for server
+function getCanonicalServerRoomNumber(input?: string | number): string {
+  if (!input && input !== 0) return '';
+  const s = String(input).toUpperCase().trim();
+  const rMatch = s.match(/(?:BUILDING\s*R|ROOM\s*R|ISO-?R|^R)[\s\-_#]*0?([0-9]{1,2})(?![0-9])/i);
+  if (rMatch) {
+    const num = rMatch[1].padStart(2, '0');
+    return `R-${num}`;
+  }
+  const bMatch = s.match(/(?:BUILDING\s*B|ROOM\s*B|ISO-?B|^B)[\s\-_#]*0?([0-9]{1,2})(?![0-9])/i);
+  if (bMatch) {
+    const num = bMatch[1].padStart(2, '0');
+    return `B-${num}`;
+  }
+  const numOnlyMatch = s.match(/^0?([1-9]|1[0-2])$/);
+  if (numOnlyMatch) {
+    const n = parseInt(numOnlyMatch[1], 10);
+    if (n <= 6) return `R-0${n}`;
+    return `B-0${n - 6}`;
+  }
+  return s;
+}
+
+function findServerIsolationRoomIndex(rooms: any[], roomIdOrBldg: string): number {
+  if (!roomIdOrBldg || !Array.isArray(rooms)) return -1;
+  const clean = String(roomIdOrBldg).trim().toLowerCase();
+  const canonical = getCanonicalServerRoomNumber(roomIdOrBldg).trim().toLowerCase();
+  return rooms.findIndex((r) => {
+    if (!r) return false;
+    const rId = String(r.id || '').trim().toLowerCase();
+    const rBldg = String(r.buildingNumber || '').trim().toLowerCase();
+    const rCan = getCanonicalServerRoomNumber(r.buildingNumber || r.id).trim().toLowerCase();
+    return (
+      rId === clean ||
+      rBldg === clean ||
+      (canonical !== '' && (rCan === canonical || rBldg === canonical))
+    );
+  });
+}
+
+function flushHubStateSync() {
+  if (!isDirty && hubState.version === lastPersistedVersion) {
+    return;
+  }
+  try {
+    const serialized = JSON.stringify(hubState);
+    const tempPath = `${DB_FILE_PATH}.tmp.exit_${process.pid}_${Date.now()}`;
+    fs.writeFileSync(tempPath, serialized, 'utf-8');
+    fs.renameSync(tempPath, DB_FILE_PATH);
+    isDirty = false;
+    lastPersistedVersion = hubState.version;
+  } catch (e) {
+    console.error('[Hub] Synchronous flush on shutdown failed:', e);
   }
 }
+
+// Graceful shutdown handlers: flush dirty state to disk
+process.on('SIGTERM', () => {
+  flushHubStateSync();
+  process.exit(0);
+});
+process.on('SIGINT', () => {
+  flushHubStateSync();
+  process.exit(0);
+});
+process.on('beforeExit', () => {
+  flushHubStateSync();
+});
 
 // Connected SSE Clients for instantaneous push to all devices
 interface SSEClient {
@@ -170,8 +462,298 @@ app.get('/api/hub/events', (req: Request, res: Response) => {
   });
 });
 
-// 2. Full State Snapshot endpoint
-app.get('/api/hub/state', (req: Request, res: Response) => {
+// 1.5. Lightweight Version check endpoint (Ultra-fast polling without multi-megabyte payload)
+app.get('/api/hub/version', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    version: hubState.version,
+    lastUpdated: hubState.lastUpdated,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SERVER-SIDE AUTHENTICATION, RBAC & SECURITY AUDIT LOGGING
+// ---------------------------------------------------------------------------
+export interface ServerSession {
+  token: string;
+  username: string;
+  role: string;
+  fullName: string;
+  email?: string;
+  createdAt: number;
+  lastActiveAt: number;
+  ip?: string;
+}
+
+export interface ServerAuditLog {
+  id: string;
+  timestamp: string;
+  eventType: 'LOGIN_SUCCESS' | 'LOGIN_FAILED' | 'MUTATION_ACCEPTED' | 'MUTATION_REJECTED' | 'CONFLICT_DETECTED' | 'FORBIDDEN_ATTEMPT' | 'UNAUTHORIZED_ATTEMPT';
+  details: string;
+  ip: string;
+  username?: string;
+  role?: string;
+}
+
+const SESSION_SECRET_FILE = path.join(process.cwd(), '.server_session_secret');
+const SESSIONS_STORAGE_FILE = path.join(process.cwd(), 'tamimi_server_sessions.json');
+let SESSION_SECRET: string;
+try {
+  if (fs.existsSync(SESSION_SECRET_FILE)) {
+    SESSION_SECRET = fs.readFileSync(SESSION_SECRET_FILE, 'utf-8').trim();
+  } else {
+    SESSION_SECRET = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(SESSION_SECRET_FILE, SESSION_SECRET, 'utf-8');
+  }
+} catch (_) {
+  SESSION_SECRET = 'tamimi_secure_session_secret_2026_enterprise';
+}
+
+export function signSessionToken(sessionData: { username: string; role: string; fullName: string; email?: string }): string {
+  const payload = Buffer.from(JSON.stringify({
+    u: sessionData.username,
+    r: sessionData.role,
+    f: sessionData.fullName,
+    e: sessionData.email || '',
+    iat: Date.now(),
+    nonce: crypto.randomBytes(8).toString('hex'),
+  })).toString('base64url');
+  const hmac = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
+  return `tkn_${payload}.${hmac}`;
+}
+
+export function verifySignedToken(token: string): ServerSession | null {
+  if (!token || !token.startsWith('tkn_')) return null;
+  const parts = token.slice(4).split('.');
+  if (parts.length !== 2) return null;
+  const [payloadStr, signature] = parts;
+  const expectedHmac = crypto.createHmac('sha256', SESSION_SECRET).update(payloadStr).digest('base64url');
+  
+  if (signature.length !== expectedHmac.length) return null;
+  const isMatch = crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedHmac));
+  if (!isMatch) return null;
+
+  try {
+    const data = JSON.parse(Buffer.from(payloadStr, 'base64url').toString('utf-8'));
+    const now = Date.now();
+    const MAX_LIFESPAN = 12 * 60 * 60 * 1000;
+    
+    if (now - data.iat > MAX_LIFESPAN) return null;
+
+    return {
+      token,
+      username: data.u,
+      role: data.r,
+      fullName: data.f,
+      email: data.e || undefined,
+      createdAt: data.iat,
+      lastActiveAt: now,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+export const serverSessions = new Map<string, ServerSession>();
+export const serverAuditLogs: ServerAuditLog[] = [];
+
+export function persistServerSessions() {
+  try {
+    const sessionsObj: Record<string, ServerSession> = {};
+    for (const [k, v] of serverSessions.entries()) {
+      sessionsObj[k] = v;
+    }
+    fs.writeFileSync(SESSIONS_STORAGE_FILE, JSON.stringify(sessionsObj, null, 2), 'utf-8');
+  } catch (e) {
+    console.warn('[Security] Notice persisting server sessions:', e);
+  }
+}
+
+export function loadServerSessions() {
+  try {
+    if (fs.existsSync(SESSIONS_STORAGE_FILE)) {
+      const raw = fs.readFileSync(SESSIONS_STORAGE_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const now = Date.now();
+        const IDLE_LIMIT = 30 * 60 * 1000;
+        const MAX_LIFESPAN = 12 * 60 * 60 * 1000;
+        for (const [k, v] of Object.entries(parsed)) {
+          const s = v as ServerSession;
+          if (s && s.token && (now - s.lastActiveAt <= IDLE_LIMIT) && (now - s.createdAt <= MAX_LIFESPAN)) {
+            serverSessions.set(k, s);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Security] Notice loading server sessions:', e);
+  }
+}
+loadServerSessions();
+
+export function logServerSecurity(
+  eventType: ServerAuditLog['eventType'],
+  details: string,
+  req?: Request,
+  user?: { username?: string; role?: string }
+) {
+  const clientIp = req ? String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown') : 'internal';
+  const entry: ServerAuditLog = {
+    id: `SEC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    timestamp: new Date().toISOString(),
+    eventType,
+    details,
+    ip: clientIp,
+    username: user?.username,
+    role: user?.role,
+  };
+  serverAuditLogs.unshift(entry);
+  if (serverAuditLogs.length > 200) serverAuditLogs.pop();
+  if (eventType === 'FORBIDDEN_ATTEMPT' || eventType === 'UNAUTHORIZED_ATTEMPT' || eventType === 'LOGIN_FAILED') {
+    console.warn(`[Security Alert] ${eventType}: ${details} (IP: ${clientIp})`);
+  }
+}
+
+export function createTestSession(role: string = 'FACILITY_OPERATOR', username: string = 'Helpdesk'): string {
+  const token = signSessionToken({
+    username,
+    role,
+    fullName: username === 'Helpdesk' ? 'Tamimi Helpdesk Operator' : 'Super Administrator',
+    email: username === 'Helpdesk' ? 'helpdesk@tamimi.com' : 'limon.voice@gmail.com',
+  });
+  const session: ServerSession = {
+    token,
+    username,
+    role,
+    fullName: username === 'Helpdesk' ? 'Tamimi Helpdesk Operator' : 'Super Administrator',
+    email: username === 'Helpdesk' ? 'helpdesk@tamimi.com' : 'limon.voice@gmail.com',
+    createdAt: Date.now(),
+    lastActiveAt: Date.now(),
+  };
+  serverSessions.set(token, session);
+  persistServerSessions();
+  return token;
+}
+
+// Initial pre-registered authorized tokens for default service operations
+const defaultInitialToken = signSessionToken({
+  username: 'Helpdesk',
+  role: 'FACILITY_OPERATOR',
+  fullName: 'Tamimi Helpdesk Operator',
+  email: 'helpdesk@tamimi.com',
+});
+serverSessions.set(defaultInitialToken, {
+  token: defaultInitialToken,
+  username: 'Helpdesk',
+  role: 'FACILITY_OPERATOR',
+  fullName: 'Tamimi Helpdesk Operator',
+  email: 'helpdesk@tamimi.com',
+  createdAt: Date.now(),
+  lastActiveAt: Date.now(),
+});
+
+function getClientToken(req: Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  const xToken = req.headers['x-session-token'];
+  if (typeof xToken === 'string' && xToken.trim()) {
+    return xToken.trim();
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  if (cookies['tamimi_session']) {
+    return cookies['tamimi_session'].trim();
+  }
+  return null;
+}
+
+export function verifyServerSession(req: Request): ServerSession | null {
+  const token = getClientToken(req);
+  if (!token) return null;
+
+  let session = serverSessions.get(token);
+  if (!session) {
+    const verified = verifySignedToken(token);
+    if (verified) {
+      serverSessions.set(token, verified);
+      session = verified;
+    } else {
+      return null;
+    }
+  }
+
+  const now = Date.now();
+  const IDLE_LIMIT = 30 * 60 * 1000;
+  const MAX_LIFESPAN = 12 * 60 * 60 * 1000;
+
+  if (now - session.lastActiveAt > IDLE_LIMIT || now - session.createdAt > MAX_LIFESPAN) {
+    serverSessions.delete(token);
+    persistServerSessions();
+    return null;
+  }
+
+  session.lastActiveAt = now;
+  return session;
+}
+
+export function requireAuth(allowedRoles?: string[]) {
+  return (req: Request, res: Response, next: any) => {
+    const session = verifyServerSession(req);
+    if (!session) {
+      logServerSecurity('UNAUTHORIZED_ATTEMPT', `Unauthorized access to ${req.method} ${req.path}`, req);
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized: A valid authenticated session is required to perform this action.',
+      });
+    }
+
+    if (allowedRoles && allowedRoles.length > 0) {
+      const userRoleClean = session.role.toLowerCase().trim();
+      const hasPermission = allowedRoles.some((r) => r.toLowerCase().trim() === userRoleClean);
+      if (!hasPermission) {
+        logServerSecurity('FORBIDDEN_ATTEMPT', `User "${session.username}" with role "${session.role}" attempted restricted action on ${req.method} ${req.path}`, req, session);
+        return res.status(403).json({
+          success: false,
+          error: `Forbidden: Insufficient role privileges for this operation. Required: ${allowedRoles.join(' or ')}.`,
+        });
+      }
+    }
+
+    (req as any).user = session;
+    next();
+  };
+}
+
+export class AsyncMutex {
+  private queue: Promise<void> = Promise.resolve();
+
+  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    let release: () => void = () => {};
+    const waitPromise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const currentQueue = this.queue;
+    this.queue = this.queue.then(() => waitPromise);
+    await currentQueue;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+}
+export const mutationMutex = new AsyncMutex();
+
+// Explicit Security Hardening: Block arbitrary code execution
+app.all('/api/execute-code', (req: Request, res: Response) => {
+  logServerSecurity('FORBIDDEN_ATTEMPT', `Blocked attempt to invoke arbitrary code execution via ${req.method} /api/execute-code`, req);
+  return res.status(403).json({ success: false, error: 'Arbitrary code execution endpoint is permanently disabled for production security.' });
+});
+
+// 2. Full State Snapshot endpoint (Authenticated, excludes bloated historical archive)
+app.get('/api/hub/state', requireAuth(), (req: Request, res: Response) => {
   res.json({
     success: true,
     version: hubState.version,
@@ -180,6 +762,7 @@ app.get('/api/hub/state', (req: Request, res: Response) => {
     cancelledIds: hubState.cancelledIds,
     bookings: hubState.bookings,
     isolationRooms: hubState.isolationRooms,
+    isolationHistoryCount: (serverIsolationHistory.length > 0 ? serverIsolationHistory : (hubState.isolationHistory || [])).length,
     handovers: hubState.handovers,
     parcels: hubState.parcels,
     lostFound: hubState.lostFound,
@@ -190,156 +773,946 @@ app.get('/api/hub/state', (req: Request, res: Response) => {
   });
 });
 
-// 3. Fast Atomic Mutation endpoint (Instant multi-device broadcast)
+// 2.5 Historical Isolation Archive endpoint (Read-only on-demand archive, authenticated)
+app.get('/api/hub/isolation-history', requireAuth(['Super Administrator', 'Admin', 'SUPER_ADMIN', 'CLINIC_OFFICER', 'FACILITY_OPERATOR']), (req: Request, res: Response) => {
+  const historyList = serverIsolationHistory.length > 0 ? serverIsolationHistory : (hubState.isolationHistory || []);
+  res.json({
+    success: true,
+    count: historyList.length,
+    history: historyList,
+  });
+});
+
+// Authentication Endpoints
+app.post('/api/auth/login', (req: Request, res: Response) => {
+  const { username, password, sessionToken } = req.body || {};
+  const cleanUser = String(username || '').trim();
+  const cleanPass = String(password || '').trim();
+
+  let matchedUser: { username: string; role: string; fullName: string; email?: string } | null = null;
+
+  if (
+    cleanUser.toLowerCase() === 'limon.voice@gmail.com' &&
+    (cleanPass === 'Limon@2026' || cleanPass === '202688')
+  ) {
+    matchedUser = {
+      username: 'limon.voice@gmail.com',
+      role: 'Super Administrator',
+      fullName: 'Supreme Administrator (Limon)',
+      email: 'limon.voice@gmail.com',
+    };
+  } else if (
+    cleanUser.toLowerCase() === 'limon' &&
+    (cleanPass === 'Limon@2026' || cleanPass === '202688')
+  ) {
+    matchedUser = {
+      username: 'limon',
+      role: 'Super Administrator',
+      fullName: 'Supreme Administrator (Limon)',
+      email: 'limon.voice@gmail.com',
+    };
+  } else if (
+    (cleanPass === 'Amaala@188' || cleanPass === '188188') &&
+    (cleanUser.toLowerCase() === 'helpdesk' || cleanUser === '')
+  ) {
+    matchedUser = {
+      username: 'Helpdesk',
+      role: 'FACILITY_OPERATOR',
+      fullName: 'Tamimi Helpdesk Operator',
+      email: 'helpdesk@tamimi.com',
+    };
+  } else if (cleanPass === 'Amaala@188' || cleanPass === '188188') {
+    matchedUser = {
+      username: cleanUser,
+      role: 'FACILITY_OPERATOR',
+      fullName: cleanUser,
+    };
+  }
+
+  if (!matchedUser) {
+    logServerSecurity('LOGIN_FAILED', `Failed login attempt for username "${cleanUser}"`, req);
+    return res.status(401).json({ success: false, error: 'Invalid username or password.' });
+  }
+
+  const token = signSessionToken({
+    username: matchedUser.username,
+    role: matchedUser.role,
+    fullName: matchedUser.fullName,
+    email: matchedUser.email,
+  });
+
+  const session: ServerSession = {
+    token,
+    username: matchedUser.username,
+    role: matchedUser.role,
+    fullName: matchedUser.fullName,
+    email: matchedUser.email,
+    createdAt: Date.now(),
+    lastActiveAt: Date.now(),
+    ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown'),
+  };
+
+  serverSessions.set(token, session);
+  persistServerSessions();
+  res.setHeader('Set-Cookie', `tamimi_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200`);
+  logServerSecurity('LOGIN_SUCCESS', `User "${session.username}" logged in with role "${session.role}"`, req, session);
+
+  return res.json({
+    success: true,
+    sessionToken: token,
+    role: session.role,
+    username: session.username,
+    fullName: session.fullName,
+    email: session.email,
+  });
+});
+
+app.post('/api/auth/verify', (req: Request, res: Response) => {
+  const session = verifyServerSession(req);
+  if (!session) {
+    return res.json({ success: false, valid: false });
+  }
+  return res.json({
+    success: true,
+    valid: true,
+    user: {
+      username: session.username,
+      role: session.role,
+      fullName: session.fullName,
+      email: session.email,
+    },
+  });
+});
+
+app.post('/api/auth/logout', (req: Request, res: Response) => {
+  const token = getClientToken(req);
+  if (token) {
+    serverSessions.delete(token);
+    persistServerSessions();
+  }
+  res.setHeader('Set-Cookie', 'tamimi_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');
+  return res.json({ success: true });
+});
+
+app.get('/api/security/audit-logs', requireAuth(['Super Administrator', 'Admin']), (req: Request, res: Response) => {
+  return res.json({ success: true, count: serverAuditLogs.length, logs: serverAuditLogs });
+});
+
+// ---------------------------------------------------------------------------
+// SERVER-SIDE BOOKING CONFLICT & RESOURCE MATCHING ENGINE
+// ---------------------------------------------------------------------------
+function parseTimeToMinutes(timeStr: any, isEndTime: boolean = false): number {
+  if (!timeStr && timeStr !== 0) return 0;
+  const s = String(timeStr).trim();
+  const ampmMatch = s.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)/i);
+  if (ampmMatch) {
+    let hours = parseInt(ampmMatch[1], 10);
+    const minutes = parseInt(ampmMatch[2], 10);
+    const meridian = ampmMatch[3].toUpperCase();
+    if (meridian === 'PM' && hours < 12) hours += 12;
+    if (meridian === 'AM' && hours === 12) hours = 0;
+    const total = hours * 60 + minutes;
+    if (isEndTime && total === 0) return 1440;
+    return total;
+  }
+  const match24 = s.match(/(?:[T\s]|^)(\d{1,2}):(\d{2})/);
+  if (match24) {
+    const hours = parseInt(match24[1], 10);
+    const minutes = parseInt(match24[2], 10);
+    const total = (hours % 24) * 60 + (minutes % 60);
+    if (isEndTime && (total === 0 || hours === 24)) return 1440;
+    return total;
+  }
+  return 0;
+}
+
+export function doTimeRangesOverlap(startA: string, endA: string, startB: string, endB: string): boolean {
+  const sA = parseTimeToMinutes(startA, false);
+  const eA = parseTimeToMinutes(endA, true);
+  const sB = parseTimeToMinutes(startB, false);
+  const eB = parseTimeToMinutes(endB, true);
+  return sA < eB && eA > sB;
+}
+
+export function resolveServerFacilityId(nameOrTab?: string): string {
+  if (!nameOrTab) return 'barber-booking';
+  const s = String(nameOrTab).toLowerCase().trim();
+  if (s.includes('barber') || s === 'bb') return 'barber-booking';
+  if (s.includes('football') || s === 'fg') return 'football-ground';
+  if (s.includes('cricket') && s.includes('net')) return 'cricket-net';
+  if (s.includes('cricket') || s === 'cg') return 'cricket-ground';
+  if (s.includes('multipurpose') || s.includes('multi-purpose') || s.includes('multi') || s === 'mr') return 'multipurpose-room';
+  if (s.includes('cinema') || s.includes('movie') || s === 'cn') return 'cinema';
+  if (s.includes('tennis') || s === 'tc') return 'tennis-court';
+  if (s.includes('basket') || s === 'bc') return 'basketball-court';
+  if (s.includes('isolation') || s.includes('iso') || s.includes('quarantine') || s.includes('hospital')) return 'isolation-room';
+  return nameOrTab;
+}
+
+export function checkServerBookingConflict(
+  newB: any,
+  existingBookings: any[] = (hubState.bookings || []),
+  cancelledIds: Record<string, number> = (hubState.cancelledIds || {}),
+  deletedIds: Record<string, number> = (hubState.deletedIds || {})
+): { conflict: boolean; hasConflict: boolean; conflictingBooking?: any } {
+  if (!newB || typeof newB !== 'object') return { conflict: false, hasConflict: false };
+  const newStatus = String(newB.status || '').toUpperCase().trim();
+  if (newStatus === 'CANCELLED' || newStatus === 'CANCELED' || newStatus === 'REJECTED' || newStatus === 'VOID') {
+    return { conflict: false, hasConflict: false };
+  }
+
+  const newId = String(newB.id || '').toLowerCase().trim();
+  const newDate = String(newB.date || '').trim();
+  const newFacId = resolveServerFacilityId(newB.facilityId || newB.sheetTabName || newB.facilityName);
+  const newStage = String(newB.stage || '').trim();
+  const newStart = String(newB.startTime || '').trim();
+  const newEnd = String(newB.endTime || '').trim();
+
+  if (!newDate || !newStart || !newEnd) return { conflict: false, hasConflict: false };
+
+  const bookingsList = Array.isArray(existingBookings) ? existingBookings : (hubState.bookings || []);
+  for (const existB of bookingsList) {
+    if (!existB || typeof existB !== 'object') continue;
+    const existId = String(existB.id || '').toLowerCase().trim();
+
+    // Idempotent retry: Same booking ID updating itself is not a conflict
+    if (newId && existId && newId === existId) continue;
+
+    // Skip cancelled or deleted bookings
+    if (deletedIds[existId] || cancelledIds[existId]) continue;
+    const existStatus = String(existB.status || '').toUpperCase().trim();
+    if (existStatus === 'CANCELLED' || existStatus === 'CANCELED' || existStatus === 'REJECTED' || existStatus === 'VOID') {
+      continue;
+    }
+
+    // Must be same date
+    if (String(existB.date || '').trim() !== newDate) continue;
+
+    // Must be same facility
+    const existFacId = resolveServerFacilityId(existB.facilityId || existB.sheetTabName || existB.facilityName);
+    if (newFacId !== existFacId) continue;
+
+    // Must be same resource/stage using facility-specific matching rules
+    if (!isResourceOrStageMatch(newStage, existB.stage, newFacId)) {
+      continue;
+    }
+
+    // Check time overlap
+    if (doTimeRangesOverlap(newStart, newEnd, existB.startTime, existB.endTime)) {
+      return { conflict: true, hasConflict: true, conflictingBooking: existB };
+    }
+  }
+
+  return { conflict: false, hasConflict: false };
+}
+
+export function reconcileServerIsolationRooms(incomingRooms: any[]): any[] {
+  if (!Array.isArray(incomingRooms) || incomingRooms.length === 0) {
+    return hubState.isolationRooms;
+  }
+
+  const roomMap = new Map<string, any>();
+  // Populate from current server rooms first
+  (hubState.isolationRooms || []).forEach((r) => {
+    if (!r) return;
+    const can = getCanonicalServerRoomNumber(r.buildingNumber || r.id);
+    if (can) {
+      roomMap.set(can.toUpperCase(), {
+        ...r,
+        id: can,
+        buildingNumber: can,
+        occupants: Array.isArray(r.occupants) ? [...r.occupants] : [],
+      });
+    }
+  });
+
+  incomingRooms.forEach((inR) => {
+    if (!inR) return;
+    const can = getCanonicalServerRoomNumber(inR.buildingNumber || inR.id);
+    if (!can) return;
+    const canKey = can.toUpperCase();
+
+    const existing = roomMap.get(canKey);
+    const inOccs = Array.isArray(inR.occupants) ? inR.occupants : [];
+
+    // Filter against server tombstones
+    const isDeletedOccupant = (occ: any) => {
+      if (!occ) return true;
+      const occId = String(occ.id || occ.bookingId || '').toLowerCase().trim();
+      const bedKey = `${canKey}-B${occ.bedNumber}`.toLowerCase();
+      return Boolean((occId && hubState.deletedIds[occId]) || hubState.deletedIds[bedKey]);
+    };
+
+    const validInOccs = inOccs.filter((o: any) => !isDeletedOccupant(o));
+
+    if (!existing) {
+      roomMap.set(canKey, {
+        id: can,
+        buildingNumber: can,
+        occupants: validInOccs,
+        status: validInOccs.length > 0 ? 'Occupied' : (inR.status || 'VACANT'),
+        lastUpdated: inR.lastUpdated || new Date().toISOString(),
+      });
+      return;
+    }
+
+    const exOccs = Array.isArray(existing.occupants) ? existing.occupants : [];
+    const validExOccs = exOccs.filter((o: any) => !isDeletedOccupant(o));
+
+    const inTime = inR.lastUpdated ? new Date(inR.lastUpdated).getTime() : 0;
+    const exTime = existing.lastUpdated ? new Date(existing.lastUpdated).getTime() : 0;
+
+    const hasExplicitDischargeOrTransfer = Boolean(
+      (inR.transferHistory && inR.transferHistory.length > 0) ||
+      inR.dischargeDate ||
+      (inR.status === 'VACANT' && validInOccs.length === 0 && (inTime >= exTime || inR.transferHistory || inR.dischargeDate)) ||
+      (inR.status === 'VACANT' && (!existing.status || existing.status === 'VACANT'))
+    );
+
+    let mergedOccs: any[] = [];
+    if (hasExplicitDischargeOrTransfer) {
+      mergedOccs = validInOccs;
+    } else if (inTime > exTime) {
+      mergedOccs = validInOccs.map((inOcc: any) => {
+        const matchingEx = validExOccs.find((e: any) => e.bedNumber === inOcc.bedNumber);
+        if (!matchingEx) return inOcc;
+        return {
+          ...matchingEx,
+          ...inOcc,
+          staffNotes: inOcc.staffNotes || matchingEx.staffNotes,
+          hospitalReferral: inOcc.hospitalReferral || matchingEx.hospitalReferral,
+          purposeOfStay: inOcc.purposeOfStay || matchingEx.purposeOfStay,
+          nationalId: inOcc.nationalId || matchingEx.nationalId,
+          company: (inOcc.company && inOcc.company !== 'General Resident') ? inOcc.company : (matchingEx.company || inOcc.company),
+        };
+      });
+    } else {
+      // Partial background import without explicit discharge: preserve valid existing occupants
+      mergedOccs = [...validExOccs];
+      validInOccs.forEach((inOcc: any) => {
+        if (!mergedOccs.some((e: any) => e.bedNumber === inOcc.bedNumber)) {
+          mergedOccs.push(inOcc);
+        }
+      });
+    }
+
+    mergedOccs.sort((a: any, b: any) => (a.bedNumber || 1) - (b.bedNumber || 1));
+
+    const finalStatus = inR.status === 'Maintenance'
+      ? 'Maintenance'
+      : (mergedOccs.length > 0 ? 'Occupied' : (hasExplicitDischargeOrTransfer ? 'VACANT' : (existing.status || 'VACANT')));
+
+    roomMap.set(canKey, {
+      ...existing,
+      ...inR,
+      id: can,
+      buildingNumber: can,
+      occupants: mergedOccs,
+      status: finalStatus,
+      transferHistory: inR.transferHistory || existing.transferHistory,
+      dischargeDate: inR.dischargeDate || existing.dischargeDate,
+      lastUpdated: new Date(Math.max(inTime, exTime, Date.now())).toISOString(),
+    });
+  });
+
+  // Cross-room occupant deduplication
+  const seenOccNames = new Set<string>();
+  const finalRooms = Array.from(roomMap.values());
+  finalRooms.forEach((r) => {
+    if (Array.isArray(r.occupants) && r.occupants.length > 0) {
+      r.occupants = r.occupants.filter((occ: any) => {
+        const nameKey = String(occ.id || occ.patientName || '').toLowerCase().trim();
+        if (!nameKey) return true;
+        if (seenOccNames.has(nameKey)) return false;
+        seenOccNames.add(nameKey);
+        return true;
+      });
+      r.status = r.occupants.length > 0 ? 'Occupied' : (r.status === 'Maintenance' ? 'Maintenance' : 'VACANT');
+      if (r.occupants.length === 0) {
+        r.patientName = '';
+        r.company = '';
+      }
+    }
+  });
+
+  hubState.isolationRooms = finalRooms;
+  return hubState.isolationRooms;
+}
+
+const ALLOWED_MUTATION_TYPES = new Set(['UPSERT', 'UPSERT_BATCH', 'BATCH_UPSERT', 'DELETE', 'CANCEL', 'CANCEL_BATCH', 'SYNC_ALL', 'TRANSFER']);
+const ALLOWED_ENTITIES = new Set([
+  'bookings',
+  'isolationRooms',
+  'handovers',
+  'parcels',
+  'lostFound',
+  'blankForms',
+  'invoices',
+  'notices',
+  'supportTickets',
+]);
+
+// 3. Fast Atomic Mutation endpoint (Instant multi-device broadcast with Mutex Serialization)
 app.post('/api/hub/mutate', (req: Request, res: Response) => {
+  return mutationMutex.runExclusive(async () => {
+  // Authentication & Session Validation
+  const session = verifyServerSession(req);
+  if (!session) {
+    logServerSecurity('UNAUTHORIZED_ATTEMPT', `Unauthorized attempt to call /api/hub/mutate (${req.body?.mutationType} ${req.body?.entity})`, req);
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized: A valid authenticated session is required to perform mutations.',
+    });
+  }
+
   const { mutationType, entity, id, data, reason } = req.body;
   const now = Date.now();
   const cleanId = id ? String(id).toLowerCase().trim() : '';
 
-  if (!mutationType) {
-    return res.status(400).json({ success: false, error: 'Missing mutationType' });
+  // Validate cleanId to prevent path traversal or injection
+  if (cleanId && (cleanId.includes('..') || cleanId.includes('/') || cleanId.includes('\\') || cleanId.length > 200)) {
+    return res.status(400).json({ success: false, error: 'Invalid record ID format.' });
+  }
+
+  if (!mutationType || !ALLOWED_MUTATION_TYPES.has(mutationType)) {
+    return res.status(400).json({ success: false, error: `Invalid or unsupported mutationType: "${mutationType}"` });
+  }
+
+  // Normalize batch mutation types to canonical UPSERT
+  const effectiveMutationType = (mutationType === 'UPSERT_BATCH' || mutationType === 'BATCH_UPSERT')
+    ? 'UPSERT'
+    : mutationType;
+
+  const targetEntity = entity || (req.body.bookings ? 'bookings' : undefined);
+
+  if (targetEntity && !ALLOWED_ENTITIES.has(targetEntity)) {
+    return res.status(400).json({ success: false, error: `Invalid entity target: "${targetEntity}"` });
   }
 
   hubState.version += 1;
   hubState.lastUpdated = new Date().toISOString();
 
-  if (mutationType === 'DELETE' && cleanId) {
-    // 1. Record tombstone
-    hubState.deletedIds[cleanId] = now;
-
-    // 2. Remove from all entity stores
-    hubState.bookings = hubState.bookings.filter((b) => String(b.id || '').toLowerCase().trim() !== cleanId);
-    hubState.handovers = hubState.handovers.filter((h) => String(h.id || '').toLowerCase().trim() !== cleanId);
-    hubState.parcels = hubState.parcels.filter((p) => String(p.id || '').toLowerCase().trim() !== cleanId);
-    hubState.lostFound = hubState.lostFound.filter((l) => String(l.id || '').toLowerCase().trim() !== cleanId);
-    hubState.blankForms = hubState.blankForms.filter((f) => String(f.id || '').toLowerCase().trim() !== cleanId);
-    hubState.invoices = hubState.invoices.filter((i) => String(i.id || '').toLowerCase().trim() !== cleanId);
-    hubState.notices = hubState.notices.filter((n) => String(n.id || '').toLowerCase().trim() !== cleanId);
-    hubState.supportTickets = hubState.supportTickets.filter((s) => String(s.id || '').toLowerCase().trim() !== cleanId);
-
-    // If it's an isolation room booking or occupant, clean occupant
-    hubState.isolationRooms = hubState.isolationRooms.map((room) => {
-      if (!room.occupants) return room;
-      const filtered = room.occupants.filter((occ: any) => {
-        const occId = String(occ.id || occ.bookingId || '').toLowerCase().trim();
-        return occId !== cleanId;
-      });
-      return { ...room, occupants: filtered };
-    });
-
-    persistHubState();
-    broadcastHubEvent({ type: 'DELETE', entity, id: cleanId, version: hubState.version });
-    return res.json({ success: true, version: hubState.version, deleted: cleanId });
-  }
-
-  if (mutationType === 'CANCEL' && cleanId) {
-    // Record cancellation
-    hubState.cancelledIds[cleanId] = now;
-    let found = false;
-
-    hubState.bookings = hubState.bookings.map((b) => {
-      if (String(b.id || '').toLowerCase().trim() === cleanId) {
-        found = true;
-        return {
-          ...b,
-          status: 'CANCELLED',
-          cancellationReason: reason || 'Cancelled via Portal',
-          cancelledAt: new Date().toISOString(),
-        };
+  try {
+    if (effectiveMutationType === 'DELETE') {
+      const isPrivileged = session.role === 'Super Administrator' || session.role === 'Admin' || session.role === 'SUPER_ADMIN';
+      if (!isPrivileged) {
+        logServerSecurity('FORBIDDEN_ATTEMPT', `User "${session.username}" lacking admin privileges attempted DELETE on ${cleanId}`, req, session);
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden: Deleting records requires Administrative or Super Administrator privileges.',
+        });
       }
-      return b;
-    });
 
-    invalidateGasCache();
-    persistHubState();
-    broadcastHubEvent({ type: 'CANCEL', entity: 'bookings', id: cleanId, version: hubState.version, payload: { reason } });
-    return res.json({ success: true, version: hubState.version, cancelled: cleanId, found });
-  }
+      if (!cleanId) {
+        return res.status(400).json({ success: false, error: 'Target ID is required for DELETE operation.' });
+      }
 
-  if (mutationType === 'UPSERT' && entity && data) {
-    const targetId = String(data.id || id || '').toLowerCase().trim();
+      // 1. Record tombstone
+      hubState.deletedIds[cleanId] = now;
 
-    // Check if item is deleted by tombstone
-    if (targetId && hubState.deletedIds[targetId] && !req.body.forceRevive) {
-      return res.json({ success: false, rejectedTombstone: true, error: `Item ${targetId} was permanently deleted.` });
+      // 2. Remove from all entity stores
+      hubState.bookings = hubState.bookings.filter((b) => String(b.id || '').toLowerCase().trim() !== cleanId);
+      hubState.handovers = hubState.handovers.filter((h) => String(h.id || '').toLowerCase().trim() !== cleanId);
+      hubState.parcels = hubState.parcels.filter((p) => String(p.id || '').toLowerCase().trim() !== cleanId);
+      hubState.lostFound = hubState.lostFound.filter((l) => String(l.id || '').toLowerCase().trim() !== cleanId);
+      hubState.blankForms = hubState.blankForms.filter((f) => String(f.id || '').toLowerCase().trim() !== cleanId);
+      hubState.invoices = hubState.invoices.filter((i) => String(i.id || '').toLowerCase().trim() !== cleanId);
+      hubState.notices = hubState.notices.filter((n) => String(n.id || '').toLowerCase().trim() !== cleanId);
+      hubState.supportTickets = hubState.supportTickets.filter((s) => String(s.id || '').toLowerCase().trim() !== cleanId);
+
+      // If it's an isolation room booking or occupant, clean occupant
+      hubState.isolationRooms = hubState.isolationRooms.map((room) => {
+        if (!room.occupants) return room;
+        const filtered = room.occupants.filter((occ: any) => {
+          const occId = String(occ.id || occ.bookingId || '').toLowerCase().trim();
+          return occId !== cleanId;
+        });
+        return { ...room, occupants: filtered };
+      });
+
+      await persistHubState();
+      broadcastHubEvent({ type: 'DELETE', entity: targetEntity, id: cleanId, version: hubState.version });
+      return res.json({ success: true, version: hubState.version, deleted: cleanId });
     }
 
-    // Upsert into corresponding collection
-    if (entity === 'bookings') {
-      const idx = hubState.bookings.findIndex((b) => String(b.id || '').toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.bookings[idx] = { ...hubState.bookings[idx], ...data };
-      } else {
-        hubState.bookings.unshift(data);
+    if (effectiveMutationType === 'CANCEL') {
+      if (!cleanId) {
+        return res.status(400).json({ success: false, error: 'Target ID is required for CANCEL operation.' });
       }
-    } else if (entity === 'handovers') {
-      const idx = hubState.handovers.findIndex((h) => String(h.id || '').toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.handovers[idx] = { ...hubState.handovers[idx], ...data };
-      } else {
-        hubState.handovers.unshift(data);
+
+      // Record cancellation
+      hubState.cancelledIds[cleanId] = now;
+      let found = false;
+
+      hubState.bookings = hubState.bookings.map((b) => {
+        if (String(b.id || '').toLowerCase().trim() === cleanId) {
+          found = true;
+          return {
+            ...b,
+            status: 'CANCELLED',
+            cancellationReason: reason || 'Cancelled via Portal',
+            cancelledAt: new Date().toISOString(),
+          };
+        }
+        return b;
+      });
+
+      invalidateGasCache();
+      await persistHubState();
+      broadcastHubEvent({ type: 'CANCEL', entity: 'bookings', id: cleanId, version: hubState.version, payload: { reason } });
+      return res.json({ success: true, version: hubState.version, cancelled: cleanId, found });
+    }
+
+    if (effectiveMutationType === 'CANCEL_BATCH') {
+      const rawIds: string[] = Array.isArray(req.body.ids)
+        ? req.body.ids
+        : (Array.isArray(data) ? data : (req.body.id ? [req.body.id] : []));
+      const cleanIds: string[] = rawIds.map((x) => String(x || '').toLowerCase().trim()).filter(Boolean);
+
+      // Also match by recurringGroupId or groupId if provided
+      const targetGroupId = String(req.body.recurringGroupId || req.body.groupId || '').trim().toLowerCase();
+      const cleanGroupNoDashes = targetGroupId.replace(/[^a-z0-9]/g, '');
+      if (targetGroupId) {
+        hubState.bookings.forEach((b) => {
+          if (!b) return;
+          const bGrp = String(b.recurringGroupId || '').toLowerCase().trim();
+          const bGrpClean = bGrp.replace(/[^a-z0-9]/g, '');
+          if (bGrp === targetGroupId || (cleanGroupNoDashes && bGrpClean === cleanGroupNoDashes)) {
+            if (b.id) {
+              const bIdClean = String(b.id).toLowerCase().trim();
+              if (!cleanIds.includes(bIdClean)) {
+                cleanIds.push(bIdClean);
+              }
+            }
+          }
+        });
       }
-    } else if (entity === 'parcels') {
-      const idx = hubState.parcels.findIndex((p) => String(p.id || '').toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.parcels[idx] = { ...hubState.parcels[idx], ...data };
-      } else {
-        hubState.parcels.unshift(data);
+
+      if (cleanIds.length === 0) {
+        return res.status(400).json({ success: false, error: 'Missing or empty ids/groupId for CANCEL_BATCH' });
       }
-    } else if (entity === 'lostFound') {
-      const idx = hubState.lostFound.findIndex((l) => String(l.id || '').toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.lostFound[idx] = { ...hubState.lostFound[idx], ...data };
-      } else {
-        hubState.lostFound.unshift(data);
+
+      cleanIds.forEach((cId) => {
+        hubState.cancelledIds[cId] = now;
+      });
+
+      let cancelCount = 0;
+      const cancelledTimestamp = new Date().toISOString();
+      const effectiveReason = reason || 'Cancelled via Batch Operation';
+
+      hubState.bookings = hubState.bookings.map((b) => {
+        const bId = String(b.id || '').toLowerCase().trim();
+        if (cleanIds.includes(bId)) {
+          cancelCount++;
+          return {
+            ...b,
+            status: 'CANCELLED',
+            cancellationReason: effectiveReason,
+            cancelledAt: cancelledTimestamp,
+          };
+        }
+        return b;
+      });
+
+      invalidateGasCache();
+      await persistHubState();
+
+      // Broadcast batch event
+      broadcastHubEvent({
+        type: 'CANCEL_BATCH',
+        entity: 'bookings',
+        version: hubState.version,
+        payload: { ids: cleanIds, recurringGroupId: targetGroupId || undefined, reason: effectiveReason },
+      });
+      // Defense-in-depth: Also broadcast individual CANCEL events so all client event listeners release slots
+      for (const cId of cleanIds) {
+        broadcastHubEvent({ type: 'CANCEL', entity: 'bookings', id: cId, version: hubState.version, payload: { reason: effectiveReason } });
       }
-    } else if (entity === 'isolationRooms') {
-      if (Array.isArray(data)) {
-        hubState.isolationRooms = data;
-      } else {
-        const roomId = String(data.id || data.buildingNumber || '').toLowerCase().trim();
-        const idx = hubState.isolationRooms.findIndex((r) => String(r.id || r.buildingNumber || '').toLowerCase().trim() === roomId);
-        if (idx >= 0) {
-          hubState.isolationRooms[idx] = { ...hubState.isolationRooms[idx], ...data };
+
+      return res.json({ success: true, version: hubState.version, cancelledCount: cancelCount, cancelledIds: cleanIds });
+    }
+
+    if (mutationType === 'TRANSFER') {
+      const { sourceRoomId, sourceBedNumber, targetRoomId, targetBedNumber } = req.body;
+      const transferTimestamp = new Date().toISOString();
+      let updatedSrcRoom: any = null;
+      let updatedTgtRoom: any = null;
+
+      // Handle multi-record batch payload if passed in data
+      if (Array.isArray(data) && data.length > 0) {
+        for (const r of data) {
+          const roomTarget = String(r.id || r.buildingNumber || '').trim();
+          const idx = findServerIsolationRoomIndex(hubState.isolationRooms, roomTarget);
+          if (idx >= 0) {
+            hubState.isolationRooms[idx] = { ...hubState.isolationRooms[idx], ...r, lastUpdated: transferTimestamp };
+          } else {
+            hubState.isolationRooms.push({ ...r, lastUpdated: transferTimestamp });
+          }
+        }
+        updatedSrcRoom = data[0];
+        updatedTgtRoom = data.length > 1 ? data[1] : data[0];
+      } else if (sourceRoomId && targetRoomId && sourceBedNumber && targetBedNumber) {
+        const srcIdx = findServerIsolationRoomIndex(hubState.isolationRooms, sourceRoomId);
+        const tgtIdx = findServerIsolationRoomIndex(hubState.isolationRooms, targetRoomId);
+
+        if (srcIdx === -1 || tgtIdx === -1) {
+          return res.status(404).json({ success: false, error: 'Source or target isolation room not found.' });
+        }
+
+        const srcRoom = hubState.isolationRooms[srcIdx];
+        const tgtRoom = hubState.isolationRooms[tgtIdx];
+        const occToMove = (srcRoom.occupants || []).find((o: any) => o.bedNumber === sourceBedNumber);
+
+        if (!occToMove) {
+          return res.status(400).json({ success: false, error: `No occupant found on Bed ${sourceBedNumber} in Room ${srcRoom.buildingNumber || srcRoom.id}.` });
+        }
+
+        const targetOccupant = (tgtRoom.occupants || []).find((o: any) => o.bedNumber === targetBedNumber);
+        if (targetOccupant && targetOccupant.patientName && targetOccupant.patientName.trim()) {
+          if (!(srcIdx === tgtIdx && sourceBedNumber === targetBedNumber)) {
+            return res.status(409).json({ success: false, error: `Bed ${targetBedNumber} in ${tgtRoom.buildingNumber || tgtRoom.id} is already occupied.` });
+          }
+        }
+
+        const transferredOccupant = {
+          ...occToMove,
+          bedNumber: targetBedNumber,
+          staffNotes: `${occToMove.staffNotes ? occToMove.staffNotes + ' | ' : ''}Transferred from Room ${srcRoom.buildingNumber || srcRoom.id} Bed ${sourceBedNumber} on ${transferTimestamp.slice(0, 10)}`,
+        };
+
+        if (srcIdx === tgtIdx) {
+          const remaining = (srcRoom.occupants || []).filter((o: any) => o.bedNumber !== sourceBedNumber && o.bedNumber !== targetBedNumber);
+          remaining.push(transferredOccupant);
+          remaining.sort((a: any, b: any) => a.bedNumber - b.bedNumber);
+          hubState.isolationRooms[srcIdx] = {
+            ...srcRoom,
+            occupants: remaining,
+            lastUpdated: transferTimestamp,
+            status: remaining.length > 0 ? 'Occupied' : 'VACANT',
+          };
+          updatedSrcRoom = hubState.isolationRooms[srcIdx];
+          updatedTgtRoom = updatedSrcRoom;
         } else {
-          hubState.isolationRooms.push(data);
+          const remainingSrc = (srcRoom.occupants || []).filter((o: any) => o.bedNumber !== sourceBedNumber);
+          hubState.isolationRooms[srcIdx] = {
+            ...srcRoom,
+            occupants: remainingSrc,
+            lastUpdated: transferTimestamp,
+            status: remainingSrc.length > 0 ? 'Occupied' : 'VACANT',
+          };
+
+          const remainingTgt = (tgtRoom.occupants || []).filter((o: any) => o.bedNumber !== targetBedNumber);
+          remainingTgt.push(transferredOccupant);
+          remainingTgt.sort((a: any, b: any) => a.bedNumber - b.bedNumber);
+          hubState.isolationRooms[tgtIdx] = {
+            ...tgtRoom,
+            occupants: remainingTgt,
+            lastUpdated: transferTimestamp,
+            status: remainingTgt.length > 0 ? 'Occupied' : 'VACANT',
+          };
+          updatedSrcRoom = hubState.isolationRooms[srcIdx];
+          updatedTgtRoom = hubState.isolationRooms[tgtIdx];
+        }
+      } else {
+        return res.status(400).json({ success: false, error: 'Invalid TRANSFER payload: missing rooms or beds.' });
+      }
+
+      // Cross-room occupant deduplication across all server rooms
+      const targetOccs = updatedTgtRoom.occupants || [];
+      const occKeys = targetOccs.map((o: any) => String(o.id || o.patientName || '').toLowerCase().trim()).filter(Boolean);
+      if (occKeys.length > 0) {
+        hubState.isolationRooms.forEach((r, idx) => {
+          const isTarget = String(r.id || r.buildingNumber).toLowerCase().trim() === String(updatedTgtRoom.id || updatedTgtRoom.buildingNumber).toLowerCase().trim();
+          if (!isTarget && Array.isArray(r.occupants) && r.occupants.length > 0) {
+            r.occupants = r.occupants.filter((occ: any) => {
+              const k = String(occ.id || occ.patientName || '').toLowerCase().trim();
+              return !k || !occKeys.includes(k);
+            });
+            r.status = r.occupants.length > 0 ? 'Occupied' : 'VACANT';
+          }
+        });
+      }
+
+      // Record transfer in server historical archive
+      const historyAudit = {
+        id: `HIST-XFER-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        action: 'TRANSFER',
+        timestamp: transferTimestamp,
+        sourceRoom: sourceRoomId || updatedSrcRoom.buildingNumber,
+        sourceBed: sourceBedNumber,
+        targetRoom: targetRoomId || updatedTgtRoom.buildingNumber,
+        targetBed: targetBedNumber,
+      };
+      serverIsolationHistory.unshift(historyAudit);
+
+      const multiRecordPayload = [updatedSrcRoom, updatedTgtRoom].filter(Boolean);
+
+      // Instant SSE Broadcast
+      broadcastHubEvent({
+        type: 'UPSERT_BATCH',
+        entity: 'isolationRooms',
+        version: hubState.version,
+        payload: multiRecordPayload,
+      });
+      for (const r of multiRecordPayload) {
+        broadcastHubEvent({
+          type: 'UPSERT',
+          entity: 'isolationRooms',
+          id: String(r.id || ''),
+          version: hubState.version,
+          payload: r,
+        });
+      }
+
+      await persistHubState();
+
+      return res.json({
+        success: true,
+        version: hubState.version,
+        sourceRoom: updatedSrcRoom,
+        targetRoom: updatedTgtRoom,
+      });
+    }
+
+    if (effectiveMutationType === 'UPSERT') {
+      const rawPayload = (data !== undefined && data !== null)
+        ? data
+        : (req.body.bookings !== undefined ? req.body.bookings : req.body.items);
+
+      if (rawPayload === undefined || rawPayload === null) {
+        return res.status(400).json({ success: false, error: 'Missing data payload for UPSERT mutation.' });
+      }
+
+      if (!targetEntity) {
+        return res.status(400).json({ success: false, error: 'Target entity is required for UPSERT mutation.' });
+      }
+
+      const rawList = Array.isArray(rawPayload) ? rawPayload : [rawPayload];
+      // Flatten in case of nested arrays
+      const flatList = rawList.flat();
+      const validItems: any[] = [];
+      const invalidItems: any[] = [];
+
+      for (let i = 0; i < flatList.length; i++) {
+        const raw = flatList[i];
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+          invalidItems.push({ index: i, error: 'Record must be a non-null object' });
+          continue;
+        }
+
+        // Sanitize keys to prevent prototype pollution
+        const cleanItem: Record<string, any> = {};
+        for (const [k, v] of Object.entries(raw)) {
+          if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+          cleanItem[k] = v;
+        }
+
+        // Ensure stable, unique identifier for bookings
+        if (targetEntity === 'bookings') {
+          if (!cleanItem.id || String(cleanItem.id).trim() === '') {
+            cleanItem.id = (!Array.isArray(rawPayload) && id)
+              ? String(id).trim()
+              : `BK-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 7)}`;
+          } else {
+            cleanItem.id = String(cleanItem.id).trim();
+          }
+
+          // Normalize basic booking fields
+          if (cleanItem.status) {
+            const rawStat = String(cleanItem.status).toUpperCase().trim();
+            if (rawStat === 'CANCELLED' || rawStat === 'CANCELED' || rawStat === 'VOID') {
+              cleanItem.status = 'CANCELLED';
+            } else {
+              cleanItem.status = 'CONFIRMED';
+            }
+          } else {
+            cleanItem.status = 'CONFIRMED';
+          }
+        }
+
+        validItems.push(cleanItem);
+      }
+
+      let upsertedCount = 0;
+      const broadcastedItems: any[] = [];
+
+      for (const item of validItems) {
+        const targetId = String(item.id || id || '').toLowerCase().trim();
+
+        // Check if item is deleted by tombstone
+        if (targetId && hubState.deletedIds[targetId] && !req.body.forceRevive) {
+          continue;
+        }
+
+        // Upsert into corresponding collection cleanly
+        if (targetEntity === 'bookings') {
+          // Enforce server-side availability & collision prevention on exclusive facility resources
+          const conflictCheck = checkServerBookingConflict(item, hubState.bookings, hubState.cancelledIds, hubState.deletedIds);
+          if (conflictCheck.conflict) {
+            const c = conflictCheck.conflictingBooking;
+            logServerSecurity(
+              'CONFLICT_DETECTED',
+              `Prevented conflicting simultaneous booking on ${item.stage} (${item.date} ${item.startTime}-${item.endTime}) by ${item.customerName || 'Resident'}. Collides with existing booking ${c?.id}.`,
+              req,
+              session
+            );
+            return res.status(409).json({
+              success: false,
+              conflict: true,
+              error: `Booking Conflict: Resource "${item.stage}" is already reserved on ${item.date} from ${c?.startTime} to ${c?.endTime} by ${c?.customerName}.`,
+              conflictingBooking: c,
+            });
+          }
+
+          // If booking was previously cancelled (in cancelledIds or existing), preserve CANCELLED status unless force revived
+          const existingIdx = hubState.bookings.findIndex((b) => String(b.id || '').toLowerCase().trim() === targetId);
+          const wasCancelled = (targetId && hubState.cancelledIds[targetId]) || (existingIdx >= 0 && hubState.bookings[existingIdx].status === 'CANCELLED');
+
+          if (wasCancelled && item.status !== 'CANCELLED' && !req.body.forceRevive) {
+            item.status = 'CANCELLED';
+            if (existingIdx >= 0) {
+              item.cancellationReason = hubState.bookings[existingIdx].cancellationReason || item.cancellationReason || 'Cancelled';
+              item.cancelledAt = hubState.bookings[existingIdx].cancelledAt || item.cancelledAt || new Date().toISOString();
+            }
+          }
+
+          if (existingIdx >= 0) {
+            hubState.bookings[existingIdx] = { ...hubState.bookings[existingIdx], ...item };
+          } else {
+            hubState.bookings.unshift(item);
+          }
+          upsertedCount++;
+          broadcastedItems.push(item);
+        } else if (targetEntity === 'isolationRooms') {
+          const roomTarget = String(item.id || item.buildingNumber || '').trim();
+          const idx = findServerIsolationRoomIndex(hubState.isolationRooms, roomTarget);
+          if (idx >= 0) {
+            hubState.isolationRooms[idx] = { ...hubState.isolationRooms[idx], ...item };
+          } else {
+            hubState.isolationRooms.push(item);
+          }
+          upsertedCount++;
+          broadcastedItems.push(item);
+        } else if (targetEntity === 'handovers') {
+          const idx = hubState.handovers.findIndex((h) => String(h.id || '').toLowerCase().trim() === targetId);
+          if (idx >= 0) hubState.handovers[idx] = { ...hubState.handovers[idx], ...item };
+          else hubState.handovers.unshift(item);
+          upsertedCount++;
+          broadcastedItems.push(item);
+        } else if (targetEntity === 'parcels') {
+          const idx = hubState.parcels.findIndex((p) => String(p.id || '').toLowerCase().trim() === targetId);
+          if (idx >= 0) hubState.parcels[idx] = { ...hubState.parcels[idx], ...item };
+          else hubState.parcels.unshift(item);
+          upsertedCount++;
+          broadcastedItems.push(item);
+        } else if (targetEntity === 'lostFound') {
+          const idx = hubState.lostFound.findIndex((l) => String(l.id || '').toLowerCase().trim() === targetId);
+          if (idx >= 0) hubState.lostFound[idx] = { ...hubState.lostFound[idx], ...item };
+          else hubState.lostFound.unshift(item);
+          upsertedCount++;
+          broadcastedItems.push(item);
+        } else if (targetEntity === 'blankForms') {
+          const idx = hubState.blankForms.findIndex((f) => String(f.id || '').toLowerCase().trim() === targetId);
+          if (idx >= 0) hubState.blankForms[idx] = { ...hubState.blankForms[idx], ...item };
+          else hubState.blankForms.unshift(item);
+          upsertedCount++;
+          broadcastedItems.push(item);
+        } else if (targetEntity === 'invoices') {
+          const idx = hubState.invoices.findIndex((i) => String(i.id || '').toLowerCase().trim() === targetId);
+          if (idx >= 0) hubState.invoices[idx] = { ...hubState.invoices[idx], ...item };
+          else hubState.invoices.unshift(item);
+          upsertedCount++;
+          broadcastedItems.push(item);
+        } else if (targetEntity === 'notices') {
+          const idx = hubState.notices.findIndex((n) => String(n.id || '').toLowerCase().trim() === targetId);
+          if (idx >= 0) hubState.notices[idx] = { ...hubState.notices[idx], ...item };
+          else hubState.notices.unshift(item);
+          upsertedCount++;
+          broadcastedItems.push(item);
+        } else if (targetEntity === 'supportTickets') {
+          const idx = hubState.supportTickets.findIndex((s) => String(s.id || '').toLowerCase().trim() === targetId);
+          if (idx >= 0) hubState.supportTickets[idx] = { ...hubState.supportTickets[idx], ...item };
+          else hubState.supportTickets.unshift(item);
+          upsertedCount++;
+          broadcastedItems.push(item);
         }
       }
-    } else if (entity === 'blankForms') {
-      const idx = hubState.blankForms.findIndex((f) => String(f.id || '').toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.blankForms[idx] = { ...hubState.blankForms[idx], ...data };
-      } else {
-        hubState.blankForms.unshift(data);
-      }
-    } else if (entity === 'invoices') {
-      const idx = hubState.invoices.findIndex((i) => String(i.id || '').toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.invoices[idx] = { ...hubState.invoices[idx], ...data };
-      } else {
-        hubState.invoices.unshift(data);
-      }
-    } else if (entity === 'notices') {
-      const idx = hubState.notices.findIndex((n) => String(n.id || '').toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.notices[idx] = { ...hubState.notices[idx], ...data };
-      } else {
-        hubState.notices.unshift(data);
-      }
-    } else if (entity === 'supportTickets') {
-      const idx = hubState.supportTickets.findIndex((s) => String(s.id || '').toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.supportTickets[idx] = { ...hubState.supportTickets[idx], ...data };
-      } else {
-        hubState.supportTickets.unshift(data);
-      }
-    }
 
-    invalidateGasCache();
-    persistHubState();
-    broadcastHubEvent({ type: 'UPSERT', entity, id: targetId, version: hubState.version, payload: data });
-    return res.json({ success: true, version: hubState.version, item: data });
-  }
+      if (targetEntity === 'isolationRooms' && broadcastedItems.length > 0) {
+        // Cross-room occupant deduplication across all server rooms
+        const seenOccKeys = new Set<string>();
+        broadcastedItems.forEach((updatedR) => {
+          if (Array.isArray(updatedR.occupants)) {
+            updatedR.occupants.forEach((occ: any) => {
+              const k = String(occ.id || occ.patientName || '').toLowerCase().trim();
+              if (k) seenOccKeys.add(k);
+            });
+          }
+        });
+        hubState.isolationRooms.forEach((r) => {
+          const isJustUpdated = broadcastedItems.some((bi) =>
+            String(bi.id || bi.buildingNumber).toLowerCase().trim() === String(r.id || r.buildingNumber).toLowerCase().trim()
+          );
+          if (!isJustUpdated && Array.isArray(r.occupants) && r.occupants.length > 0) {
+            const origLen = r.occupants.length;
+            r.occupants = r.occupants.filter((occ: any) => {
+              const k = String(occ.id || occ.patientName || '').toLowerCase().trim();
+              return !k || !seenOccKeys.has(k);
+            });
+            if (r.occupants.length !== origLen) {
+              r.status = r.occupants.length > 0 ? 'Occupied' : 'VACANT';
+              if (r.occupants.length === 0) {
+                r.patientName = '';
+                r.company = '';
+              }
+            }
+          }
+        });
+      }
+
+      // Broadcast individual item events for multi-record arrays to ensure maximum client compatibility
+      if (Array.isArray(rawPayload)) {
+        for (const item of broadcastedItems) {
+          broadcastHubEvent({
+            type: 'UPSERT',
+            entity: targetEntity,
+            id: String(item.id || ''),
+            version: hubState.version,
+            payload: item,
+          });
+        }
+        // Also broadcast batch upsert event for clients listening to batch notifications
+        broadcastHubEvent({
+          type: 'UPSERT_BATCH',
+          entity: targetEntity,
+          version: hubState.version,
+          payload: broadcastedItems,
+        });
+      } else {
+        broadcastHubEvent({
+          type: 'UPSERT',
+          entity: targetEntity,
+          id: cleanId || (broadcastedItems[0] && broadcastedItems[0].id),
+          version: hubState.version,
+          payload: broadcastedItems[0] || rawPayload,
+        });
+      }
+
+      if (upsertedCount > 0) {
+        invalidateGasCache();
+        await persistHubState();
+      }
+
+      return res.json({
+        success: true,
+        version: hubState.version,
+        upsertedCount,
+        invalidCount: invalidItems.length,
+        invalidItems: invalidItems.length > 0 ? invalidItems : undefined,
+        item: broadcastedItems[0] || rawPayload,
+        items: broadcastedItems,
+      });
+    }
 
   // 4. Batch sync from Google Apps Script or Client
   if (mutationType === 'SYNC_ALL') {
@@ -477,7 +1850,7 @@ app.post('/api/hub/mutate', (req: Request, res: Response) => {
     }
 
     invalidateGasCache();
-    persistHubState();
+    await persistHubState();
     broadcastHubEvent({ type: 'SYNC_ALL', version: hubState.version });
     return res.json({
       success: true,
@@ -486,7 +1859,12 @@ app.post('/api/hub/mutate', (req: Request, res: Response) => {
     });
   }
 
-  return res.json({ success: true, version: hubState.version });
+    return res.json({ success: true, version: hubState.version });
+    } catch (err: any) {
+      console.error('[Hub] Mutation error:', err);
+      return res.status(500).json({ success: false, error: 'Database persistence error: ' + (err?.message || err) });
+    }
+  });
 });
 
 // 4. Health check endpoint
@@ -516,6 +1894,12 @@ function invalidateGasCache() {
 }
 
 app.post('/api/gas/proxy', async (req: Request, res: Response) => {
+  const session = verifyServerSession(req);
+  if (!session) {
+    logServerSecurity('UNAUTHORIZED_ATTEMPT', 'Unauthorized access attempt to /api/gas/proxy', req);
+    return res.status(401).json({ success: false, error: 'Unauthorized: Authentication required to access proxy.' });
+  }
+
   const startTime = Date.now();
   const { targetUrl, action, method = 'GET', body = null } = req.body;
   const effectiveAction = (body && body.action) || action || (method.toUpperCase() === 'GET' ? 'ping' : 'save');
@@ -529,6 +1913,23 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
   }
 
   const cleanUrl = targetUrl.trim();
+
+  // SSRF Protection: Reject private/internal IPs, localhost, AWS/GCP metadata service
+  const lowerUrl = cleanUrl.toLowerCase();
+  if (
+    lowerUrl.includes('localhost') ||
+    lowerUrl.includes('127.0.0.1') ||
+    lowerUrl.includes('169.254.') ||
+    lowerUrl.includes('10.') ||
+    lowerUrl.includes('192.168.') ||
+    lowerUrl.includes('172.16.') ||
+    lowerUrl.includes('0.0.0.0') ||
+    lowerUrl.startsWith('file:') ||
+    lowerUrl.startsWith('ftp:')
+  ) {
+    logServerSecurity('FORBIDDEN_ATTEMPT', `SSRF blocked attempt to access internal URL: ${cleanUrl}`, req, session);
+    return res.status(403).json({ success: false, error: 'Access denied: Target URL is not allowed.' });
+  }
 
   // Validate format
   if (!cleanUrl.startsWith('https://script.google.com/macros/s/')) {
@@ -897,7 +2298,7 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
                 if (Array.isArray(jsonData.isolationRooms)) {
                   hubState.isolationRooms = jsonData.isolationRooms;
                 }
-                persistHubState();
+                await persistHubState();
               } catch (mergeErr) {}
             }
           }
@@ -923,7 +2324,7 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
                     broadcastHubEvent({ type: 'UPSERT', entity: 'bookings', payload: nb, version: hubState.version });
                   }
                 });
-                persistHubState();
+                await persistHubState();
               } else if (reqAction === 'cancelBooking') {
                 const cancelId = String(body?.bookingId || body?.id || jsonData?.bookingId || '').toLowerCase().trim();
                 if (cancelId) {
@@ -934,7 +2335,7 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
                     }
                     return b;
                   });
-                  persistHubState();
+                  await persistHubState();
                   broadcastHubEvent({ type: 'CANCEL', entity: 'bookings', id: cancelId, payload: { reason: body?.reason }, version: hubState.version });
                 }
               } else if (reqAction === 'deleteBooking') {
@@ -942,7 +2343,7 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
                 if (delId) {
                   hubState.deletedIds[delId] = Date.now();
                   hubState.bookings = hubState.bookings.filter((b) => String(b.id || '').toLowerCase().trim() !== delId);
-                  persistHubState();
+                  await persistHubState();
                   broadcastHubEvent({ type: 'DELETE', entity: 'bookings', id: delId, version: hubState.version });
                 }
               }
@@ -2168,4 +3569,6 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.VITEST) {
+  startServer();
+}

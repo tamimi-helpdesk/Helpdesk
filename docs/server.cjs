@@ -4,6 +4,10 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -20,8 +24,35 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // server.ts
+var server_exports = {};
+__export(server_exports, {
+  AsyncMutex: () => AsyncMutex,
+  app: () => app,
+  checkServerBookingConflict: () => checkServerBookingConflict,
+  createTestSession: () => createTestSession,
+  doPersistHubState: () => doPersistHubState,
+  doTimeRangesOverlap: () => doTimeRangesOverlap,
+  hubState: () => hubState,
+  loadServerSessions: () => loadServerSessions,
+  logServerSecurity: () => logServerSecurity,
+  markHubStateDirty: () => markHubStateDirty,
+  mutationMutex: () => mutationMutex,
+  persistHubState: () => persistHubState,
+  persistServerSessions: () => persistServerSessions,
+  reconcileServerIsolationRooms: () => reconcileServerIsolationRooms,
+  requireAuth: () => requireAuth,
+  resolveServerFacilityId: () => resolveServerFacilityId,
+  serverAuditLogs: () => serverAuditLogs,
+  serverIsolationHistory: () => serverIsolationHistory,
+  serverSessions: () => serverSessions,
+  signSessionToken: () => signSessionToken,
+  verifyServerSession: () => verifyServerSession,
+  verifySignedToken: () => verifySignedToken
+});
+module.exports = __toCommonJS(server_exports);
 var import_express = __toESM(require("express"), 1);
 var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
@@ -29,11 +60,832 @@ var import_exceljs = __toESM(require("exceljs"), 1);
 var XLSX = __toESM(require("xlsx"), 1);
 var import_jszip = __toESM(require("jszip"), 1);
 var import_vite = require("vite");
+var import_crypto = __toESM(require("crypto"), 1);
+
+// src/data/facilities.ts
+var FACILITIES = [
+  {
+    id: "barber-booking",
+    name: "Barber Booking",
+    shortName: "Barber",
+    code: "BB",
+    stageName: "Barber Shop",
+    sheetTabName: "Barber Booking",
+    icon: "Scissors",
+    description: "Haircut, beard trimming, and salon services.",
+    stages: ["Barber Shop"],
+    defaultSlotDurationMinutes: 30,
+    openTime: "11:00",
+    closeTime: "22:30",
+    breaks: [
+      { start: "12:00", end: "13:00", label: "Break (12:00 PM \u2013 1:00 PM)" },
+      { start: "18:30", end: "19:30", label: "Break (6:30 PM \u2013 7:30 PM)" }
+    ],
+    capacityPerSlot: 1,
+    amenities: ["Haircut", "Beard Trim", "Shave", "Head Massage"],
+    rules: ["Please arrive on time", "Cancel at least 1 hour in advance if unable to attend"],
+    accentColor: "indigo"
+  },
+  {
+    id: "cricket-ground",
+    name: "Cricket Ground",
+    shortName: "Cricket Ground",
+    code: "CG",
+    stageName: "Stage 1, Stage 2",
+    sheetTabName: "Cricket Ground",
+    icon: "Activity",
+    description: "Natural turf cricket ground with pavilion and lighting.",
+    stages: ["Stage 1 Cricket Ground", "Stage 2 Cricket Ground"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "07:00",
+    closeTime: "23:00",
+    breaks: [],
+    capacityPerSlot: 30,
+    amenities: ["Turf Pitch", "Scoreboard", "Pavilion", "Floodlights"],
+    rules: ["Sports shoes required", "Report any equipment damage to staff"],
+    accentColor: "emerald"
+  },
+  {
+    id: "football-ground",
+    name: "Football Ground",
+    shortName: "Football Ground",
+    code: "FG",
+    stageName: "Stage 3 Football Ground",
+    sheetTabName: "Football Ground",
+    icon: "Shield",
+    description: "Turf football ground for practice and matches.",
+    stages: ["Stage 3 Football Ground"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "09:00",
+    closeTime: "23:00",
+    breaks: [],
+    capacityPerSlot: 24,
+    amenities: ["Turf Field", "Goal Posts", "Dressing Rooms", "Floodlights"],
+    rules: ["Turf shoes or trainers only (no metal studs)", "Respect allocated time limits"],
+    accentColor: "blue"
+  },
+  {
+    id: "multipurpose-room",
+    name: "Multipurpose Room",
+    shortName: "Multipurpose Room",
+    code: "MR",
+    stageName: "Stage 1 Multipurpose Room 5, Room 6",
+    sheetTabName: "Multipurpose Room",
+    icon: "Building2",
+    description: "Hall for meetings, workshops, seminars, and events.",
+    stages: ["Stage 1 Multipurpose Room 5", "Stage 1 Multipurpose Room 6"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "08:00",
+    closeTime: "23:00",
+    breaks: [],
+    capacityPerSlot: 50,
+    amenities: ["Projector", "Microphones", "Seating", "Sound System"],
+    rules: ["Reset seating arrangement after use", "Keep the room clean"],
+    accentColor: "indigo"
+  },
+  {
+    id: "ticket-management",
+    name: "Ticket & Work Order",
+    shortName: "Ticket & Work Order",
+    code: "TKT",
+    stageName: "Amaala Village Work Orders",
+    sheetTabName: "Ticket Management",
+    icon: "Ticket",
+    description: "Stages 1-3 VIP & Workers Cluster defect tracking, technician dispatch & SLA compliance.",
+    stages: ["Amaala Village Ticket & Work Order"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "00:00",
+    closeTime: "23:59",
+    breaks: [],
+    capacityPerSlot: 100,
+    amenities: ["Village Heatmap Matrix", "P1-P4 SLA Targets", "Technician Dispatch", "Printable Work Slips", "Material Requisition"],
+    rules: ["Emergency P1 defects require immediate phone dispatch", "Client digital sign-off mandatory on closure"],
+    accentColor: "blue"
+  },
+  {
+    id: "cinema",
+    name: "Cinema",
+    shortName: "Cinema",
+    code: "CN",
+    stageName: "Cinema Hall",
+    sheetTabName: "Cinema",
+    icon: "Film",
+    description: "Screening room with surround sound and projector.",
+    stages: ["Cinema Hall"],
+    defaultSlotDurationMinutes: 120,
+    openTime: "09:00",
+    closeTime: "23:00",
+    breaks: [],
+    capacityPerSlot: 40,
+    amenities: ["Laser Projection", "Surround Sound", "Seating", "Air Conditioning"],
+    rules: ["Silence mobile phones during screening", "Keep hall clean"],
+    accentColor: "rose"
+  },
+  {
+    id: "tennis-court",
+    name: "Tennis Court",
+    shortName: "Tennis Court",
+    code: "TC",
+    stageName: "Area 7 Tennis Court",
+    sheetTabName: "Tennis Court",
+    icon: "Dumbbell",
+    description: "Hard surface tennis court with floodlights.",
+    stages: ["Area 7 Tennis Court"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "07:00",
+    closeTime: "23:00",
+    breaks: [],
+    capacityPerSlot: 6,
+    amenities: ["Hard Court", "Net", "Floodlights", "Seating"],
+    rules: ["Non-marking tennis shoes required", "Maximum 4 players per court"],
+    accentColor: "teal"
+  },
+  {
+    id: "cricket-net",
+    name: "Cricket Net",
+    shortName: "Cricket Net",
+    code: "CNET",
+    stageName: "Area 7 Cricket Net",
+    sheetTabName: "Cricket Net",
+    icon: "Target",
+    description: "Enclosed batting practice nets with bowling machine.",
+    stages: ["Area 7 Cricket Net"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "07:00",
+    closeTime: "23:00",
+    breaks: [],
+    capacityPerSlot: 6,
+    amenities: ["Batting Net", "Turf Mat", "Bowling Machine", "Protective Gear"],
+    rules: ["Helmets required inside the net", "Follow safety guidelines"],
+    accentColor: "cyan"
+  },
+  {
+    id: "basketball-court",
+    name: "Basket Ball Court",
+    shortName: "Basketball Court",
+    code: "BC",
+    stageName: "Area 8 Basket Ball Court",
+    sheetTabName: "Basket Ball Court",
+    icon: "Trophy",
+    description: "Basketball court with standard hoops and markings.",
+    stages: ["Area 8 Basket Ball Court"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "07:00",
+    closeTime: "23:00",
+    breaks: [],
+    capacityPerSlot: 15,
+    amenities: ["Basketball Hoops", "Hardwood Surface", "Scoreboard", "Lighting"],
+    rules: ["Non-marking sneakers required", "No hanging on rims"],
+    accentColor: "orange"
+  },
+  {
+    id: "sla-management",
+    name: "SLA Management",
+    shortName: "SLA Mgmt",
+    code: "SLA",
+    stageName: "SLA Tracking & Compliance Desk",
+    sheetTabName: "SLA Management",
+    icon: "ClockCheck",
+    description: "Service level agreements, response deadline tracking, and compliance metrics.",
+    stages: ["SLA Compliance Center"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "00:00",
+    closeTime: "23:59",
+    breaks: [],
+    capacityPerSlot: 50,
+    amenities: ["Breach Alerts", "Turnaround Timers", "Response Escalations", "Compliance Reports"],
+    rules: ["Adhere strictly to agreed target hours", "Escalated items notify shift supervisor"],
+    accentColor: "purple"
+  },
+  {
+    id: "isolation-room",
+    name: "Isolation Tracker",
+    shortName: "Isolation Tracker",
+    code: "ROOM",
+    stageName: "Building R & Building B (12 Rooms)",
+    sheetTabName: "Isolation & Room Booking",
+    icon: "Building2",
+    description: "Room and bed tracking for accommodation and isolation (2 beds per room).",
+    stages: ["All Buildings & Rooms", "Building R (Rooms R-01 to R-06)", "Building B (Rooms B-01 to B-06)"],
+    defaultSlotDurationMinutes: 1440,
+    openTime: "00:00",
+    closeTime: "23:59",
+    breaks: [],
+    capacityPerSlot: 2,
+    amenities: ["2 Beds per Room", "Ensuite Bathroom", "Air Conditioning", "Key Card Access"],
+    rules: ["Valid ID required on check-in", "Quiet hours 23:00 \u2013 06:00"],
+    accentColor: "purple"
+  },
+  {
+    id: "handover-takenover",
+    name: "Handover & Takenover",
+    shortName: "Handover & Takenover",
+    code: "HOTO",
+    stageName: "Handover & Takenover Desk",
+    sheetTabName: "Handover & Takenover",
+    icon: "ArrowLeftRight",
+    description: "Asset borrowing, key loans, and duty shift handover registry.",
+    stages: ["Handover & Takenover Desk"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "08:00",
+    closeTime: "22:00",
+    breaks: [],
+    capacityPerSlot: 10,
+    amenities: ["Key Registry", "Item Loan Log", "Custody Locker", "Receipt Record"],
+    rules: ["ID or badge required for asset checkout", "Return items on or before due date"],
+    accentColor: "cyan"
+  },
+  {
+    id: "parcel-monitoring",
+    name: "Parcel Monitoring",
+    shortName: "Parcel Monitoring",
+    code: "PRCL",
+    stageName: "Parcel Desk",
+    sheetTabName: "Parcel Monitoring",
+    icon: "Package",
+    description: "Inbound courier package logging and collection tracking.",
+    stages: ["Parcel Desk"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "08:00",
+    closeTime: "22:00",
+    breaks: [],
+    capacityPerSlot: 20,
+    amenities: ["Package Log", "Storage Shelves", "Collection Sign-off"],
+    rules: ["Provide recipient name or unit number for collection"],
+    accentColor: "amber"
+  },
+  {
+    id: "lost-and-found",
+    name: "Lost & Found",
+    shortName: "Lost & Found",
+    code: "LNFD",
+    stageName: "Lost & Found Desk",
+    sheetTabName: "Lost & Found",
+    icon: "Search",
+    description: "Found article logging and claim retrieval.",
+    stages: ["Lost & Found Desk"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "08:00",
+    closeTime: "20:00",
+    breaks: [],
+    capacityPerSlot: 10,
+    amenities: ["Item Storage", "Verification Register", "Claim Receipt"],
+    rules: ["Provide valid ID and item description to claim property"],
+    accentColor: "emerald"
+  },
+  {
+    id: "automated-workflow",
+    name: "Automated Workflow",
+    shortName: "Workflow",
+    code: "AUTO",
+    stageName: "Workflow & Automation Control",
+    sheetTabName: "Automated Workflow",
+    icon: "GitBranch",
+    description: "Smart triggers, automated dispatch rules, and multi-stage workflow pipeline.",
+    stages: ["Workflow Automation Engine"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "00:00",
+    closeTime: "23:59",
+    breaks: [],
+    capacityPerSlot: 50,
+    amenities: ["Event Triggers", "Condition Filters", "Instant Webhooks", "Execution Logs"],
+    rules: ["Verify flow dependencies before activation", "Audit logs retained for 90 days"],
+    accentColor: "cyan"
+  },
+  {
+    id: "blank-forms",
+    name: "Blank Forms",
+    shortName: "Blank Forms",
+    code: "FORM",
+    stageName: "Facility Forms & Requisition Desk",
+    sheetTabName: "Blank Forms",
+    icon: "FileText",
+    description: "Download, print, and submit facility request & clearance blank forms.",
+    stages: ["Blank Forms Center"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "08:00",
+    closeTime: "22:00",
+    breaks: [],
+    capacityPerSlot: 20,
+    amenities: ["Printable PDF Templates", "Requisition Forms", "Clearance Slips", "Digital Sign-off"],
+    rules: ["Submit completed forms to the duty desk", "Authorized signatures required"],
+    accentColor: "blue"
+  },
+  {
+    id: "invoice-manager",
+    name: "Invoice Manager",
+    shortName: "Invoice Manager",
+    code: "INVC",
+    stageName: "Billing & Invoicing Desk",
+    sheetTabName: "Invoice Manager",
+    icon: "Receipt",
+    description: "Facility billing, receipt generation, and payment transaction manager.",
+    stages: ["Invoice & Billing Desk"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "08:00",
+    closeTime: "22:00",
+    breaks: [],
+    capacityPerSlot: 15,
+    amenities: ["Thermal Receipts", "Official Tax Invoices", "Payment Records", "QR Verification"],
+    rules: ["Always issue official receipt for transactions", "Keep billing records for audit"],
+    accentColor: "emerald"
+  },
+  {
+    id: "announcement-notice",
+    name: "Announcement & Notice",
+    shortName: "Announcement & Notice",
+    code: "NOTC",
+    stageName: "Official Bulletin & Broadcast Board",
+    sheetTabName: "Announcement & Notice",
+    icon: "Megaphone",
+    description: "Broadcast notices, facility maintenance alerts, and official bulletins.",
+    stages: ["Official Notice Board"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "00:00",
+    closeTime: "23:59",
+    breaks: [],
+    capacityPerSlot: 50,
+    amenities: ["Live Bulletins", "Priority Broadcasts", "Printable Notice Posters", "Maintenance Alerts"],
+    rules: ["Only authorized operators can publish notices", "Verify information before broadcast"],
+    accentColor: "amber"
+  },
+  {
+    id: "help-support",
+    name: "Help & Support",
+    shortName: "Help & Support",
+    code: "HELP",
+    stageName: "24/7 Helpdesk & Support Center",
+    sheetTabName: "Help & Support",
+    icon: "LifeBuoy",
+    description: "24/7 Facility helpdesk assistance, emergency hotline, and ticket support.",
+    stages: ["24/7 Helpdesk Desk"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "00:00",
+    closeTime: "23:59",
+    breaks: [],
+    capacityPerSlot: 25,
+    amenities: ["Support Ticket Tracking", "Emergency Hotline", "Help Center FAQ", "Direct WhatsApp Escalation"],
+    rules: ["For emergency incidents, call the direct hotline immediately", "Ticket resolution SLA is 24 hours"],
+    accentColor: "teal"
+  },
+  {
+    id: "email-management",
+    name: "Email Management",
+    shortName: "Email Mgmt",
+    code: "MAIL",
+    stageName: "Enterprise Email & Broadcast Gateway",
+    sheetTabName: "Email Management",
+    icon: "Mail",
+    description: "Automated guest notifications, facility email dispatch, and campaign templates.",
+    stages: ["Email Dispatch Center"],
+    defaultSlotDurationMinutes: 60,
+    openTime: "00:00",
+    closeTime: "23:59",
+    breaks: [],
+    capacityPerSlot: 50,
+    amenities: ["Template Builder", "SMTP Logs", "Delivery Tracking", "Batch Notification"],
+    rules: ["Adhere to official communication guidelines", "Test email templates before batch broadcast"],
+    accentColor: "rose"
+  }
+];
+
+// src/utils/resourceMatching.ts
+function cleanResourceString(val) {
+  if (val === null || val === void 0) return "";
+  return String(val).toLowerCase().trim().replace(/[\s\-_]+/g, " ");
+}
+var FACILITY_RESOURCE_ALIASES = {
+  "barber-booking": {
+    "Barber Shop": ["barber shop", "barber", "salon", "main", "default", "stage 1", "chair 1", "chair a", "seat 1", "station 1"],
+    "Chair 2": ["chair 2", "chair b", "barber chair 2", "stage 2", "seat 2", "station 2"],
+    "Chair 3": ["chair 3", "chair c", "barber chair 3", "stage 3", "seat 3", "station 3"]
+  },
+  "cinema": {
+    "Cinema Hall": ["cinema hall", "cinema", "screening room", "hall 1", "screen 1", "screen a", "main screen", "main", "default", "theater 1"],
+    "Screen 2": ["screen 2", "screen b", "cinema hall 2", "screening room 2", "hall 2", "theater 2"],
+    "Screen 3": ["screen 3", "screen c", "cinema hall 3", "screening room 3", "hall 3", "theater 3"]
+  },
+  "cricket-ground": {
+    "Stage 1 Cricket Ground": [
+      "stage 1 cricket ground",
+      "stage 1",
+      "stg 1",
+      "cg-1",
+      "cg 1",
+      "pitch 1",
+      "ground 1",
+      "turf pitch 1",
+      "main ground"
+    ],
+    "Stage 2 Cricket Ground": [
+      "stage 2 cricket ground",
+      "stage 2",
+      "stg 2",
+      "cg-2",
+      "cg 2",
+      "pitch 2",
+      "ground 2",
+      "turf pitch 2"
+    ],
+    "Stage 3 Cricket Ground": [
+      "stage 3 cricket ground",
+      "stage 3",
+      "stg 3",
+      "cg-3",
+      "cg 3",
+      "pitch 3",
+      "ground 3"
+    ]
+  },
+  "football-ground": {
+    "Stage 3 Football Ground": [
+      "stage 3 football ground",
+      "stage 3",
+      "stg 3",
+      "fg-1",
+      "fg 1",
+      "football field",
+      "turf field",
+      "main football",
+      "football pitch 1",
+      "pitch 1",
+      "main",
+      "default"
+    ],
+    "Football Pitch 2": [
+      "football pitch 2",
+      "pitch 2",
+      "fg-2",
+      "fg 2",
+      "football field 2"
+    ]
+  },
+  "multipurpose-room": {
+    "Stage 1 Multipurpose Room 5": [
+      "stage 1 multipurpose room 5",
+      "multipurpose room 5",
+      "room 5",
+      "rm 5",
+      "rm-5",
+      "mr-5",
+      "mr 5",
+      "hall 5"
+    ],
+    "Stage 1 Multipurpose Room 6": [
+      "stage 1 multipurpose room 6",
+      "multipurpose room 6",
+      "room 6",
+      "rm 6",
+      "rm-6",
+      "mr-6",
+      "mr 6",
+      "hall 6"
+    ],
+    "Stage 1 Multipurpose Room 7": [
+      "stage 1 multipurpose room 7",
+      "multipurpose room 7",
+      "room 7",
+      "rm 7",
+      "rm-7",
+      "mr-7",
+      "mr 7",
+      "hall 7"
+    ]
+  },
+  "tennis-court": {
+    "Area 7 Tennis Court": [
+      "area 7 tennis court",
+      "tennis court",
+      "court 1",
+      "court a",
+      "tennis",
+      "tennis court 1",
+      "main",
+      "default"
+    ],
+    "Tennis Court 2": [
+      "tennis court 2",
+      "court 2",
+      "court b",
+      "tennis 2"
+    ]
+  },
+  "cricket-net": {
+    "Area 7 Cricket Net": [
+      "area 7 cricket net",
+      "cricket net",
+      "net 1",
+      "net a",
+      "batting net",
+      "batting net 1",
+      "net",
+      "main",
+      "default"
+    ],
+    "Cricket Net 2": [
+      "cricket net 2",
+      "net 2",
+      "net b",
+      "batting net 2"
+    ]
+  },
+  "basketball-court": {
+    "Area 8 Basket Ball Court": [
+      "area 8 basket ball court",
+      "area 8 basketball court",
+      "basketball court",
+      "court 1",
+      "court a",
+      "basketball",
+      "main",
+      "default"
+    ],
+    "Basketball Court 2": [
+      "basketball court 2",
+      "court 2",
+      "court b",
+      "basketball 2"
+    ]
+  }
+};
+function getCanonicalResourceName(facilityId, stageInput) {
+  const facId = (facilityId || "").toLowerCase().trim();
+  const raw = cleanResourceString(stageInput);
+  if (!raw || raw === "all" || raw === "all stages" || raw === "all areas" || raw === "all rooms") {
+    return "ALL";
+  }
+  const aliasGroup = FACILITY_RESOURCE_ALIASES[facId];
+  if (aliasGroup) {
+    for (const canonicalName of Object.keys(aliasGroup)) {
+      if (cleanResourceString(canonicalName) === raw) {
+        return canonicalName;
+      }
+    }
+    for (const [canonicalName, aliases] of Object.entries(aliasGroup)) {
+      if (aliases.includes(raw)) {
+        return canonicalName;
+      }
+    }
+    const sortedEntries = Object.entries(aliasGroup).map(([can, aliases]) => ({
+      can,
+      aliases: [...aliases].sort((a, b) => b.length - a.length)
+    }));
+    for (const { can, aliases } of sortedEntries) {
+      for (const alias of aliases) {
+        const regex = new RegExp(`(^|\\b)${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\b|$)`, "i");
+        if (regex.test(raw)) {
+          return can;
+        }
+      }
+    }
+  }
+  if (facId === "isolation-room" || raw.includes("room r-") || raw.includes("room b-") || raw.includes("building r") || raw.includes("building b")) {
+    const alphaMatch = raw.match(/([rb])[\s\-_]*0?([0-9]{1,2})/i);
+    if (alphaMatch) {
+      const bldg = alphaMatch[1].toUpperCase();
+      const num = parseInt(alphaMatch[2], 10).toString().padStart(2, "0");
+      return `Room ${bldg}-${num}`;
+    }
+    if (raw.includes("building r") || raw.includes("rooms r-")) return "Building R";
+    if (raw.includes("building b") || raw.includes("rooms b-")) return "Building B";
+  }
+  const facility = FACILITIES.find((f) => f.id === facId);
+  if (facility && facility.stages && facility.stages.length > 0) {
+    const matched = facility.stages.find((st) => cleanResourceString(st) === raw);
+    if (matched) return matched;
+    if (facility.stages.length === 1 && (!raw || raw === "default" || raw === "main")) {
+      return facility.stages[0];
+    }
+  }
+  return stageInput?.trim() || "Stage 1";
+}
+function getResourceCategory(s) {
+  if (/\b(chair|barber|salon|seat|station)\b/i.test(s)) return "chair";
+  if (/\b(screen|cinema|screening|theater|movie)\b/i.test(s)) return "screen";
+  if (/\b(court|tennis|basketball)\b/i.test(s)) return "court";
+  if (/\b(net|batting)\b/i.test(s)) return "net";
+  if (/\b(pitch|football|ground|turf|stadium)\b/i.test(s)) return "field";
+  if (/\b(room|rm|hall|iso|quarantine|building)\b/i.test(s)) return "room";
+  if (/\bstage\b/i.test(s)) return "stage";
+  return null;
+}
+function isResourceOrStageMatch(bookingStage, selectedStage, facilityOrId) {
+  if (!selectedStage || !bookingStage) return true;
+  const bs = cleanResourceString(bookingStage);
+  const ss = cleanResourceString(selectedStage);
+  if (bs === ss) return true;
+  if (bs === "" || bs === "default" || bs === "main" || bs === "n/a" || bs === "all" || bs === "general" || ss === "" || ss === "default" || ss === "main" || ss === "n/a" || ss === "all" || ss === "general" || ss.includes("all buildings") || ss.includes("all rooms") || ss.includes("all stages") || ss.includes("all areas") || bs.includes("all buildings") || bs.includes("all rooms") || bs.includes("all stages") || bs.includes("all areas")) {
+    return true;
+  }
+  const facilityId = typeof facilityOrId === "string" ? facilityOrId : facilityOrId?.id || "";
+  if (facilityId) {
+    const canBooking = getCanonicalResourceName(facilityId, bookingStage);
+    const canSelected = getCanonicalResourceName(facilityId, selectedStage);
+    if (canBooking && canSelected && canBooking !== "ALL" && canSelected !== "ALL") {
+      const aliasGroup = FACILITY_RESOURCE_ALIASES[facilityId];
+      const isKnownInAliases = Boolean(aliasGroup && (aliasGroup[canBooking] || aliasGroup[canSelected]));
+      const facilityObj = typeof facilityOrId === "object" && facilityOrId ? facilityOrId : FACILITIES.find((f) => f.id === facilityId);
+      const facilityStages = facilityObj?.stages || [];
+      const isKnownInStages = facilityStages.includes(canBooking) || facilityStages.includes(canSelected);
+      if (isKnownInAliases || isKnownInStages) {
+        return canBooking === canSelected;
+      }
+    }
+  }
+  const bCat = getResourceCategory(bs);
+  const sCat = getResourceCategory(ss);
+  if (bCat && sCat && bCat !== sCat) {
+    const isBothCricketOrFootball = (bCat === "stage" || bCat === "field") && (sCat === "stage" || sCat === "field");
+    if (!isBothCricketOrFootball) {
+      return false;
+    }
+  }
+  const isMultipurpose = facilityId === "multipurpose-room" || bs.includes("multipurpose") || ss.includes("multipurpose") || bs.includes("room 5") || bs.includes("room 6") || ss.includes("room 5") || ss.includes("room 6");
+  if (isMultipurpose) {
+    const bRoom5 = bs.includes("room 5") || bs.includes("rm 5") || bs.includes("mr 5") || bs.includes("hall 5");
+    const bRoom6 = bs.includes("room 6") || bs.includes("rm 6") || bs.includes("mr 6") || bs.includes("hall 6");
+    const sRoom5 = ss.includes("room 5") || ss.includes("rm 5") || ss.includes("mr 5") || ss.includes("hall 5");
+    const sRoom6 = ss.includes("room 6") || ss.includes("rm 6") || ss.includes("mr 6") || ss.includes("hall 6");
+    if (bRoom5 && sRoom6 || bRoom6 && sRoom5) {
+      return false;
+    }
+    if (bRoom5 && sRoom5 || bRoom6 && sRoom6) {
+      return true;
+    }
+  }
+  const isCinema = facilityId === "cinema" || bs.includes("cinema") || ss.includes("cinema");
+  if (isCinema) {
+    const bScr1 = bs.includes("screen 1") || bs.includes("screen a") || bs.includes("hall 1");
+    const bScr2 = bs.includes("screen 2") || bs.includes("screen b") || bs.includes("hall 2");
+    const sScr1 = ss.includes("screen 1") || ss.includes("screen a") || ss.includes("hall 1");
+    const sScr2 = ss.includes("screen 2") || ss.includes("screen b") || ss.includes("hall 2");
+    if (bScr1 && sScr2 || bScr2 && sScr1) {
+      return false;
+    }
+    if (bScr1 && sScr1 || bScr2 && sScr2) {
+      return true;
+    }
+  }
+  const isCricketGround = facilityId === "cricket-ground" || bs.includes("cricket ground") || ss.includes("cricket ground");
+  if (isCricketGround && !bs.includes("net") && !ss.includes("net")) {
+    const bStg1 = bs.includes("stage 1") || bs.includes("pitch 1") || bs.includes("ground 1") || bs.includes("cg 1");
+    const bStg2 = bs.includes("stage 2") || bs.includes("pitch 2") || bs.includes("ground 2") || bs.includes("cg 2");
+    const sStg1 = ss.includes("stage 1") || ss.includes("pitch 1") || ss.includes("ground 1") || ss.includes("cg 1");
+    const sStg2 = ss.includes("stage 2") || ss.includes("pitch 2") || ss.includes("ground 2") || ss.includes("cg 2");
+    if (bStg1 && sStg2 || bStg2 && sStg1) {
+      return false;
+    }
+    if (bStg1 && sStg1 || bStg2 && sStg2) {
+      return true;
+    }
+  }
+  const isBarber = facilityId === "barber-booking" || bs.includes("barber") || ss.includes("barber");
+  if (isBarber) {
+    const bCh1 = bs.includes("chair 1") || bs.includes("chair a") || bs === "chair 1";
+    const bCh2 = bs.includes("chair 2") || bs.includes("chair b") || bs === "chair 2";
+    const sCh1 = ss.includes("chair 1") || ss.includes("chair a") || ss === "chair 1";
+    const sCh2 = ss.includes("chair 2") || ss.includes("chair b") || ss === "chair 2";
+    if (bCh1 && sCh2 || bCh2 && sCh1) {
+      return false;
+    }
+    if (bCh1 && sCh1 || bCh2 && sCh2) {
+      return true;
+    }
+    if ((bs === "barber shop" || ss === "barber shop") && !bCh2 && !sCh2) {
+      return true;
+    }
+  }
+  const isTennis = facilityId === "tennis-court" || bs.includes("tennis") || ss.includes("tennis");
+  if (isTennis) {
+    const bCt1 = bs.includes("court 1") || bs.includes("court a") || bs.includes("court 01");
+    const bCt2 = bs.includes("court 2") || bs.includes("court b") || bs.includes("court 02");
+    const sCt1 = ss.includes("court 1") || ss.includes("court a") || ss.includes("court 01");
+    const sCt2 = ss.includes("court 2") || ss.includes("court b") || ss.includes("court 02");
+    if (bCt1 && sCt2 || bCt2 && sCt1) {
+      return false;
+    }
+    if (bCt1 && sCt1 || bCt2 && sCt2) {
+      return true;
+    }
+  }
+  const isNet = facilityId === "cricket-net" || bs.includes("net") || ss.includes("net");
+  if (isNet) {
+    const bNet1 = bs.includes("net 1") || bs.includes("net a");
+    const bNet2 = bs.includes("net 2") || bs.includes("net b");
+    const sNet1 = ss.includes("net 1") || ss.includes("net a");
+    const sNet2 = ss.includes("net 2") || ss.includes("net b");
+    if (bNet1 && sNet2 || bNet2 && sNet1) {
+      return false;
+    }
+    if (bNet1 && sNet1 || bNet2 && sNet2) {
+      return true;
+    }
+  }
+  const isIsolation = facilityId === "isolation-room" || bs.includes("room") || ss.includes("building");
+  if (isIsolation) {
+    const bAlpha = bs.match(/(?:room\s*)?([rb])[\s\-_]*0?([0-9]{1,2})/i);
+    const sAlpha = ss.match(/(?:room\s*)?([rb])[\s\-_]*0?([0-9]{1,2})/i);
+    const sHasBldgR = ss.includes("building r") || ss.includes("rooms r");
+    const sHasBldgB = ss.includes("building b") || ss.includes("rooms b");
+    if (sHasBldgR && !sHasBldgB) {
+      if (bAlpha) return bAlpha[1].toLowerCase() === "r";
+      if (bs.includes("building r") || bs.includes("room r")) return true;
+      if (bs.includes("building b") || bs.includes("room b")) return false;
+    }
+    if (sHasBldgB && !sHasBldgR) {
+      if (bAlpha) return bAlpha[1].toLowerCase() === "b";
+      if (bs.includes("building b") || bs.includes("room b")) return true;
+      if (bs.includes("building r") || bs.includes("room r")) return false;
+    }
+    if (bAlpha && sAlpha) {
+      const bBldg = bAlpha[1].toLowerCase();
+      const sBldg = sAlpha[1].toLowerCase();
+      const bNum = parseInt(bAlpha[2], 10);
+      const sNum = parseInt(sAlpha[2], 10);
+      return bBldg === sBldg && bNum === sNum;
+    }
+  }
+  const bStageNum = bs.match(/stage\s*([0-9]+)/i);
+  const sStageNum = ss.match(/stage\s*([0-9]+)/i);
+  if (bStageNum && sStageNum) {
+    if (bStageNum[1] !== sStageNum[1]) {
+      return false;
+    }
+    return true;
+  }
+  const escapedSs = ss.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escapedBs = bs.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const ssWordRegex = new RegExp(`(?:^|\\b)${escapedSs}(?:\\b|$)`, "i");
+  const bsWordRegex = new RegExp(`(?:^|\\b)${escapedBs}(?:\\b|$)`, "i");
+  if (ssWordRegex.test(bs) || bsWordRegex.test(ss)) {
+    return true;
+  }
+  return false;
+}
+
+// server.ts
 var app = (0, import_express.default)();
 var PORT = 3e3;
-app.use(import_express.default.json({ limit: "100mb" }));
-app.use(import_express.default.urlencoded({ extended: true, limit: "100mb" }));
+app.use(import_express.default.json({ limit: "10mb" }));
+app.use(import_express.default.urlencoded({ extended: true, limit: "10mb" }));
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-session-token");
+  }
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method)) {
+    const cookies = parseCookies(req.headers.cookie);
+    const authHeader = req.headers.authorization;
+    const xSessionToken = req.headers["x-session-token"];
+    if (cookies["tamimi_session"] && !authHeader && !xSessionToken) {
+      const host = req.headers.host;
+      if (origin && host) {
+        try {
+          const originHost = new URL(origin).host;
+          if (originHost !== host) {
+            return res.status(403).json({ success: false, error: "CSRF protection: untrusted origin." });
+          }
+        } catch (_) {
+          return res.status(403).json({ success: false, error: "CSRF protection: invalid origin." });
+        }
+      }
+    }
+  }
+  next();
+});
+function parseCookies(cookieHeader) {
+  const cookies = {};
+  if (!cookieHeader) return cookies;
+  cookieHeader.split(";").forEach((part) => {
+    const [name, ...val] = part.trim().split("=");
+    if (name) cookies[name.trim()] = decodeURIComponent(val.join("="));
+  });
+  return cookies;
+}
 var DB_FILE_PATH = import_path.default.join(process.cwd(), "tamimi_server_db.json");
+var DB_HISTORY_FILE_PATH = import_path.default.join(process.cwd(), "tamimi_historical_isolation_archive.json");
+try {
+  const dirEntries = import_fs.default.readdirSync(process.cwd());
+  for (const entry of dirEntries) {
+    if (entry.startsWith("tamimi_server_db.json.tmp.") || entry.startsWith("tamimi_server_db.json.tmp.exit")) {
+      try {
+        import_fs.default.unlinkSync(import_path.default.join(process.cwd(), entry));
+      } catch (_) {
+      }
+    }
+  }
+} catch (_) {
+}
 var hubState = {
   version: 1,
   lastUpdated: (/* @__PURE__ */ new Date()).toISOString(),
@@ -49,18 +901,88 @@ var hubState = {
   notices: [],
   supportTickets: []
 };
+var serverIsolationHistory = [];
+try {
+  if (import_fs.default.existsSync(DB_HISTORY_FILE_PATH)) {
+    const rawHist = import_fs.default.readFileSync(DB_HISTORY_FILE_PATH, "utf-8");
+    const parsedHist = JSON.parse(rawHist);
+    if (Array.isArray(parsedHist)) {
+      serverIsolationHistory = parsedHist;
+    }
+  }
+} catch (err) {
+  console.warn("[Hub] Notice reading historical isolation archive:", err);
+}
 try {
   if (import_fs.default.existsSync(DB_FILE_PATH)) {
     const raw = import_fs.default.readFileSync(DB_FILE_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed.version === "number") {
+      let loadedIsolationRooms = Array.isArray(parsed.isolationRooms) ? parsed.isolationRooms : [];
+      if (Array.isArray(parsed.isolationHistory) && parsed.isolationHistory.length > 0) {
+        const existingKeys = new Set(serverIsolationHistory.map((r) => r.id || `${r.buildingNumber}_${r.checkIn}`));
+        parsed.isolationHistory.forEach((r) => {
+          const k = r.id || `${r.buildingNumber}_${r.checkIn}`;
+          if (!existingKeys.has(k)) {
+            serverIsolationHistory.push(r);
+            existingKeys.add(k);
+          }
+        });
+      }
+      if (loadedIsolationRooms.length > 50) {
+        console.log(`[Hub] Preserving and migrating ${loadedIsolationRooms.length} isolation room records to separate archive...`);
+        const existingKeys = new Set(serverIsolationHistory.map((r) => r.id || `${r.buildingNumber}_${r.checkIn}`));
+        const activeRoomMap = /* @__PURE__ */ new Map();
+        const isStandardRoom = (code) => /^[RB]-0?[1-9]|1[0-2]$/i.test(code);
+        loadedIsolationRooms.forEach((r) => {
+          if (!r) return;
+          const canonical = getCanonicalServerRoomNumber(r.buildingNumber || r.id);
+          const key = (canonical || r.id || r.buildingNumber || "").toUpperCase().trim();
+          if (key && isStandardRoom(key)) {
+            if (!activeRoomMap.has(key)) {
+              activeRoomMap.set(key, r);
+            } else {
+              const existing = activeRoomMap.get(key);
+              const existingOccCount = (existing.occupants || []).length;
+              const rOccCount = (r.occupants || []).length;
+              if (rOccCount > existingOccCount || !existing.lastUpdated && r.lastUpdated) {
+                const archKey = existing.id || `${existing.buildingNumber}_${existing.checkIn}`;
+                if (!existingKeys.has(archKey)) {
+                  serverIsolationHistory.push(existing);
+                  existingKeys.add(archKey);
+                }
+                activeRoomMap.set(key, r);
+              } else {
+                const archKey = r.id || `${r.buildingNumber}_${r.checkIn}`;
+                if (!existingKeys.has(archKey)) {
+                  serverIsolationHistory.push(r);
+                  existingKeys.add(archKey);
+                }
+              }
+            }
+          } else {
+            const archKey = r.id || `${r.buildingNumber}_${r.checkIn}`;
+            if (!existingKeys.has(archKey)) {
+              serverIsolationHistory.push(r);
+              existingKeys.add(archKey);
+            }
+          }
+        });
+        loadedIsolationRooms = Array.from(activeRoomMap.values());
+        try {
+          import_fs.default.writeFileSync(DB_HISTORY_FILE_PATH, JSON.stringify(serverIsolationHistory), "utf-8");
+          console.log(`[Hub] Successfully persisted ${serverIsolationHistory.length} historical isolation records in archive.`);
+        } catch (histErr) {
+          console.error("[Hub] Failed to write historical archive:", histErr);
+        }
+      }
       hubState = {
-        ...hubState,
-        ...parsed,
+        version: parsed.version || 1,
+        lastUpdated: parsed.lastUpdated || (/* @__PURE__ */ new Date()).toISOString(),
         deletedIds: parsed.deletedIds || {},
         cancelledIds: parsed.cancelledIds || {},
         bookings: Array.isArray(parsed.bookings) ? parsed.bookings : [],
-        isolationRooms: Array.isArray(parsed.isolationRooms) ? parsed.isolationRooms : [],
+        isolationRooms: loadedIsolationRooms,
         handovers: Array.isArray(parsed.handovers) ? parsed.handovers : [],
         parcels: Array.isArray(parsed.parcels) ? parsed.parcels : [],
         lostFound: Array.isArray(parsed.lostFound) ? parsed.lostFound : [],
@@ -69,51 +991,156 @@ try {
         notices: Array.isArray(parsed.notices) ? parsed.notices : [],
         supportTickets: Array.isArray(parsed.supportTickets) ? parsed.supportTickets : []
       };
-      console.log(`[Hub] Loaded persisted server database (v${hubState.version}) with ${hubState.bookings.length} bookings, ${Object.keys(hubState.deletedIds).length} tombstones.`);
+      console.log(`[Hub] Loaded persisted server database (v${hubState.version}) with ${hubState.bookings.length} bookings, ${hubState.isolationRooms.length} active rooms, ${Object.keys(hubState.deletedIds).length} tombstones.`);
     }
   }
 } catch (err) {
   console.warn("[Hub] Could not load database file, starting with fresh state:", err);
 }
-var saveTimeout = null;
 var isWriting = false;
-var pendingWrite = false;
-function doPersistHubState() {
-  if (isWriting) {
-    pendingWrite = true;
-    return;
-  }
-  isWriting = true;
-  pendingWrite = false;
-  try {
-    const serialized = JSON.stringify(hubState, null, 2);
-    const tempPath = `${DB_FILE_PATH}.tmp.${Date.now()}`;
-    import_fs.default.writeFileSync(tempPath, serialized, "utf-8");
-    import_fs.default.renameSync(tempPath, DB_FILE_PATH);
-  } catch (e) {
-    console.error("[Hub] Failed to persist state to disk:", e);
-  } finally {
-    isWriting = false;
-    if (pendingWrite) {
-      pendingWrite = false;
-      setTimeout(doPersistHubState, 100);
+var isDirty = true;
+var lastPersistedVersion = -1;
+var writeWaiters = [];
+var currentDiskWritePromise = null;
+async function executeAtomicDiskWrite(maxRetries = 3) {
+  const targetVersion = hubState.version;
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const tempPath = `${DB_FILE_PATH}.tmp.${process.pid}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    try {
+      const serialized = JSON.stringify(hubState);
+      await import_fs.default.promises.writeFile(tempPath, serialized, "utf-8");
+      await import_fs.default.promises.rename(tempPath, DB_FILE_PATH);
+      lastPersistedVersion = Math.max(lastPersistedVersion, targetVersion);
+      if (hubState.version === targetVersion) {
+        isDirty = false;
+      }
+      return;
+    } catch (e) {
+      lastError = e;
+      console.warn(`[Hub] Disk write attempt ${attempt}/${maxRetries} failed:`, e);
+      try {
+        if (import_fs.default.existsSync(tempPath)) await import_fs.default.promises.unlink(tempPath);
+      } catch (_) {
+      }
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 50));
+      }
     }
   }
+  console.error("[Hub] All atomic disk write attempts failed:", lastError);
+  throw lastError;
 }
-function persistHubState(immediate = false) {
-  if (saveTimeout) {
-    clearTimeout(saveTimeout);
-    saveTimeout = null;
+function processDiskWriteQueue() {
+  if (isWriting) {
+    return;
   }
-  if (immediate) {
-    doPersistHubState();
-  } else {
-    saveTimeout = setTimeout(() => {
-      saveTimeout = null;
-      doPersistHubState();
-    }, 150);
+  if (writeWaiters.length === 0) {
+    if (isDirty && hubState.version !== lastPersistedVersion) {
+      isWriting = true;
+      currentDiskWritePromise = executeAtomicDiskWrite().catch((e) => console.error("[Hub] Background flush error:", e)).finally(() => {
+        isWriting = false;
+        currentDiskWritePromise = null;
+        if (writeWaiters.length > 0 || isDirty && hubState.version !== lastPersistedVersion) {
+          setImmediate(processDiskWriteQueue);
+        }
+      });
+    }
+    return;
+  }
+  const batch = [...writeWaiters];
+  writeWaiters = [];
+  const versionPersisting = hubState.version;
+  isWriting = true;
+  currentDiskWritePromise = (async () => {
+    try {
+      await executeAtomicDiskWrite();
+      batch.forEach((w) => w.resolve());
+    } catch (err) {
+      batch.forEach((w) => w.reject(err));
+    } finally {
+      isWriting = false;
+      currentDiskWritePromise = null;
+      if (writeWaiters.length > 0 || isDirty && hubState.version !== lastPersistedVersion) {
+        setImmediate(processDiskWriteQueue);
+      }
+    }
+  })();
+}
+function markHubStateDirty() {
+  isDirty = true;
+}
+function persistHubState(immediate = true) {
+  markHubStateDirty();
+  const currentVer = hubState.version;
+  if (!isDirty && currentVer <= lastPersistedVersion) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    writeWaiters.push({ version: currentVer, resolve, reject });
+    processDiskWriteQueue();
+  });
+}
+var doPersistHubState = persistHubState;
+function getCanonicalServerRoomNumber(input) {
+  if (!input && input !== 0) return "";
+  const s = String(input).toUpperCase().trim();
+  const rMatch = s.match(/(?:BUILDING\s*R|ROOM\s*R|ISO-?R|^R)[\s\-_#]*0?([0-9]{1,2})(?![0-9])/i);
+  if (rMatch) {
+    const num = rMatch[1].padStart(2, "0");
+    return `R-${num}`;
+  }
+  const bMatch = s.match(/(?:BUILDING\s*B|ROOM\s*B|ISO-?B|^B)[\s\-_#]*0?([0-9]{1,2})(?![0-9])/i);
+  if (bMatch) {
+    const num = bMatch[1].padStart(2, "0");
+    return `B-${num}`;
+  }
+  const numOnlyMatch = s.match(/^0?([1-9]|1[0-2])$/);
+  if (numOnlyMatch) {
+    const n = parseInt(numOnlyMatch[1], 10);
+    if (n <= 6) return `R-0${n}`;
+    return `B-0${n - 6}`;
+  }
+  return s;
+}
+function findServerIsolationRoomIndex(rooms, roomIdOrBldg) {
+  if (!roomIdOrBldg || !Array.isArray(rooms)) return -1;
+  const clean = String(roomIdOrBldg).trim().toLowerCase();
+  const canonical = getCanonicalServerRoomNumber(roomIdOrBldg).trim().toLowerCase();
+  return rooms.findIndex((r) => {
+    if (!r) return false;
+    const rId = String(r.id || "").trim().toLowerCase();
+    const rBldg = String(r.buildingNumber || "").trim().toLowerCase();
+    const rCan = getCanonicalServerRoomNumber(r.buildingNumber || r.id).trim().toLowerCase();
+    return rId === clean || rBldg === clean || canonical !== "" && (rCan === canonical || rBldg === canonical);
+  });
+}
+function flushHubStateSync() {
+  if (!isDirty && hubState.version === lastPersistedVersion) {
+    return;
+  }
+  try {
+    const serialized = JSON.stringify(hubState);
+    const tempPath = `${DB_FILE_PATH}.tmp.exit_${process.pid}_${Date.now()}`;
+    import_fs.default.writeFileSync(tempPath, serialized, "utf-8");
+    import_fs.default.renameSync(tempPath, DB_FILE_PATH);
+    isDirty = false;
+    lastPersistedVersion = hubState.version;
+  } catch (e) {
+    console.error("[Hub] Synchronous flush on shutdown failed:", e);
   }
 }
+process.on("SIGTERM", () => {
+  flushHubStateSync();
+  process.exit(0);
+});
+process.on("SIGINT", () => {
+  flushHubStateSync();
+  process.exit(0);
+});
+process.on("beforeExit", () => {
+  flushHubStateSync();
+});
 var sseClients = /* @__PURE__ */ new Set();
 function broadcastHubEvent(event) {
   const dataString = `data: ${JSON.stringify(event)}
@@ -153,7 +1180,242 @@ app.get("/api/hub/events", (req, res) => {
     sseClients.delete(client);
   });
 });
-app.get("/api/hub/state", (req, res) => {
+app.get("/api/hub/version", (req, res) => {
+  res.json({
+    success: true,
+    version: hubState.version,
+    lastUpdated: hubState.lastUpdated
+  });
+});
+var SESSION_SECRET_FILE = import_path.default.join(process.cwd(), ".server_session_secret");
+var SESSIONS_STORAGE_FILE = import_path.default.join(process.cwd(), "tamimi_server_sessions.json");
+var SESSION_SECRET;
+try {
+  if (import_fs.default.existsSync(SESSION_SECRET_FILE)) {
+    SESSION_SECRET = import_fs.default.readFileSync(SESSION_SECRET_FILE, "utf-8").trim();
+  } else {
+    SESSION_SECRET = import_crypto.default.randomBytes(32).toString("hex");
+    import_fs.default.writeFileSync(SESSION_SECRET_FILE, SESSION_SECRET, "utf-8");
+  }
+} catch (_) {
+  SESSION_SECRET = "tamimi_secure_session_secret_2026_enterprise";
+}
+function signSessionToken(sessionData) {
+  const payload = Buffer.from(JSON.stringify({
+    u: sessionData.username,
+    r: sessionData.role,
+    f: sessionData.fullName,
+    e: sessionData.email || "",
+    iat: Date.now(),
+    nonce: import_crypto.default.randomBytes(8).toString("hex")
+  })).toString("base64url");
+  const hmac = import_crypto.default.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  return `tkn_${payload}.${hmac}`;
+}
+function verifySignedToken(token) {
+  if (!token || !token.startsWith("tkn_")) return null;
+  const parts = token.slice(4).split(".");
+  if (parts.length !== 2) return null;
+  const [payloadStr, signature] = parts;
+  const expectedHmac = import_crypto.default.createHmac("sha256", SESSION_SECRET).update(payloadStr).digest("base64url");
+  if (signature.length !== expectedHmac.length) return null;
+  const isMatch = import_crypto.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedHmac));
+  if (!isMatch) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payloadStr, "base64url").toString("utf-8"));
+    const now = Date.now();
+    const MAX_LIFESPAN = 12 * 60 * 60 * 1e3;
+    if (now - data.iat > MAX_LIFESPAN) return null;
+    return {
+      token,
+      username: data.u,
+      role: data.r,
+      fullName: data.f,
+      email: data.e || void 0,
+      createdAt: data.iat,
+      lastActiveAt: now
+    };
+  } catch (_) {
+    return null;
+  }
+}
+var serverSessions = /* @__PURE__ */ new Map();
+var serverAuditLogs = [];
+function persistServerSessions() {
+  try {
+    const sessionsObj = {};
+    for (const [k, v] of serverSessions.entries()) {
+      sessionsObj[k] = v;
+    }
+    import_fs.default.writeFileSync(SESSIONS_STORAGE_FILE, JSON.stringify(sessionsObj, null, 2), "utf-8");
+  } catch (e) {
+    console.warn("[Security] Notice persisting server sessions:", e);
+  }
+}
+function loadServerSessions() {
+  try {
+    if (import_fs.default.existsSync(SESSIONS_STORAGE_FILE)) {
+      const raw = import_fs.default.readFileSync(SESSIONS_STORAGE_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        const now = Date.now();
+        const IDLE_LIMIT = 30 * 60 * 1e3;
+        const MAX_LIFESPAN = 12 * 60 * 60 * 1e3;
+        for (const [k, v] of Object.entries(parsed)) {
+          const s = v;
+          if (s && s.token && now - s.lastActiveAt <= IDLE_LIMIT && now - s.createdAt <= MAX_LIFESPAN) {
+            serverSessions.set(k, s);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[Security] Notice loading server sessions:", e);
+  }
+}
+loadServerSessions();
+function logServerSecurity(eventType, details, req, user) {
+  const clientIp = req ? String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown") : "internal";
+  const entry = {
+    id: `SEC-${Date.now()}-${Math.floor(Math.random() * 1e3)}`,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    eventType,
+    details,
+    ip: clientIp,
+    username: user?.username,
+    role: user?.role
+  };
+  serverAuditLogs.unshift(entry);
+  if (serverAuditLogs.length > 200) serverAuditLogs.pop();
+  if (eventType === "FORBIDDEN_ATTEMPT" || eventType === "UNAUTHORIZED_ATTEMPT" || eventType === "LOGIN_FAILED") {
+    console.warn(`[Security Alert] ${eventType}: ${details} (IP: ${clientIp})`);
+  }
+}
+function createTestSession(role = "FACILITY_OPERATOR", username = "Helpdesk") {
+  const token = signSessionToken({
+    username,
+    role,
+    fullName: username === "Helpdesk" ? "Tamimi Helpdesk Operator" : "Super Administrator",
+    email: username === "Helpdesk" ? "helpdesk@tamimi.com" : "limon.voice@gmail.com"
+  });
+  const session = {
+    token,
+    username,
+    role,
+    fullName: username === "Helpdesk" ? "Tamimi Helpdesk Operator" : "Super Administrator",
+    email: username === "Helpdesk" ? "helpdesk@tamimi.com" : "limon.voice@gmail.com",
+    createdAt: Date.now(),
+    lastActiveAt: Date.now()
+  };
+  serverSessions.set(token, session);
+  persistServerSessions();
+  return token;
+}
+var defaultInitialToken = signSessionToken({
+  username: "Helpdesk",
+  role: "FACILITY_OPERATOR",
+  fullName: "Tamimi Helpdesk Operator",
+  email: "helpdesk@tamimi.com"
+});
+serverSessions.set(defaultInitialToken, {
+  token: defaultInitialToken,
+  username: "Helpdesk",
+  role: "FACILITY_OPERATOR",
+  fullName: "Tamimi Helpdesk Operator",
+  email: "helpdesk@tamimi.com",
+  createdAt: Date.now(),
+  lastActiveAt: Date.now()
+});
+function getClientToken(req) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.slice(7).trim();
+  }
+  const xToken = req.headers["x-session-token"];
+  if (typeof xToken === "string" && xToken.trim()) {
+    return xToken.trim();
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  if (cookies["tamimi_session"]) {
+    return cookies["tamimi_session"].trim();
+  }
+  return null;
+}
+function verifyServerSession(req) {
+  const token = getClientToken(req);
+  if (!token) return null;
+  let session = serverSessions.get(token);
+  if (!session) {
+    const verified = verifySignedToken(token);
+    if (verified) {
+      serverSessions.set(token, verified);
+      session = verified;
+    } else {
+      return null;
+    }
+  }
+  const now = Date.now();
+  const IDLE_LIMIT = 30 * 60 * 1e3;
+  const MAX_LIFESPAN = 12 * 60 * 60 * 1e3;
+  if (now - session.lastActiveAt > IDLE_LIMIT || now - session.createdAt > MAX_LIFESPAN) {
+    serverSessions.delete(token);
+    persistServerSessions();
+    return null;
+  }
+  session.lastActiveAt = now;
+  return session;
+}
+function requireAuth(allowedRoles) {
+  return (req, res, next) => {
+    const session = verifyServerSession(req);
+    if (!session) {
+      logServerSecurity("UNAUTHORIZED_ATTEMPT", `Unauthorized access to ${req.method} ${req.path}`, req);
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized: A valid authenticated session is required to perform this action."
+      });
+    }
+    if (allowedRoles && allowedRoles.length > 0) {
+      const userRoleClean = session.role.toLowerCase().trim();
+      const hasPermission = allowedRoles.some((r) => r.toLowerCase().trim() === userRoleClean);
+      if (!hasPermission) {
+        logServerSecurity("FORBIDDEN_ATTEMPT", `User "${session.username}" with role "${session.role}" attempted restricted action on ${req.method} ${req.path}`, req, session);
+        return res.status(403).json({
+          success: false,
+          error: `Forbidden: Insufficient role privileges for this operation. Required: ${allowedRoles.join(" or ")}.`
+        });
+      }
+    }
+    req.user = session;
+    next();
+  };
+}
+var AsyncMutex = class {
+  constructor() {
+    this.queue = Promise.resolve();
+  }
+  async runExclusive(fn) {
+    let release = () => {
+    };
+    const waitPromise = new Promise((resolve) => {
+      release = resolve;
+    });
+    const currentQueue = this.queue;
+    this.queue = this.queue.then(() => waitPromise);
+    await currentQueue;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+};
+var mutationMutex = new AsyncMutex();
+app.all("/api/execute-code", (req, res) => {
+  logServerSecurity("FORBIDDEN_ATTEMPT", `Blocked attempt to invoke arbitrary code execution via ${req.method} /api/execute-code`, req);
+  return res.status(403).json({ success: false, error: "Arbitrary code execution endpoint is permanently disabled for production security." });
+});
+app.get("/api/hub/state", requireAuth(), (req, res) => {
   res.json({
     success: true,
     version: hubState.version,
@@ -162,6 +1424,7 @@ app.get("/api/hub/state", (req, res) => {
     cancelledIds: hubState.cancelledIds,
     bookings: hubState.bookings,
     isolationRooms: hubState.isolationRooms,
+    isolationHistoryCount: (serverIsolationHistory.length > 0 ? serverIsolationHistory : hubState.isolationHistory || []).length,
     handovers: hubState.handovers,
     parcels: hubState.parcels,
     lostFound: hubState.lostFound,
@@ -171,263 +1434,906 @@ app.get("/api/hub/state", (req, res) => {
     supportTickets: hubState.supportTickets
   });
 });
-app.post("/api/hub/mutate", (req, res) => {
-  const { mutationType, entity, id, data, reason } = req.body;
-  const now = Date.now();
-  const cleanId = id ? String(id).toLowerCase().trim() : "";
-  if (!mutationType) {
-    return res.status(400).json({ success: false, error: "Missing mutationType" });
-  }
-  hubState.version += 1;
-  hubState.lastUpdated = (/* @__PURE__ */ new Date()).toISOString();
-  if (mutationType === "DELETE" && cleanId) {
-    hubState.deletedIds[cleanId] = now;
-    hubState.bookings = hubState.bookings.filter((b) => String(b.id || "").toLowerCase().trim() !== cleanId);
-    hubState.handovers = hubState.handovers.filter((h) => String(h.id || "").toLowerCase().trim() !== cleanId);
-    hubState.parcels = hubState.parcels.filter((p) => String(p.id || "").toLowerCase().trim() !== cleanId);
-    hubState.lostFound = hubState.lostFound.filter((l) => String(l.id || "").toLowerCase().trim() !== cleanId);
-    hubState.blankForms = hubState.blankForms.filter((f) => String(f.id || "").toLowerCase().trim() !== cleanId);
-    hubState.invoices = hubState.invoices.filter((i) => String(i.id || "").toLowerCase().trim() !== cleanId);
-    hubState.notices = hubState.notices.filter((n) => String(n.id || "").toLowerCase().trim() !== cleanId);
-    hubState.supportTickets = hubState.supportTickets.filter((s) => String(s.id || "").toLowerCase().trim() !== cleanId);
-    hubState.isolationRooms = hubState.isolationRooms.map((room) => {
-      if (!room.occupants) return room;
-      const filtered = room.occupants.filter((occ) => {
-        const occId = String(occ.id || occ.bookingId || "").toLowerCase().trim();
-        return occId !== cleanId;
-      });
-      return { ...room, occupants: filtered };
-    });
-    persistHubState();
-    broadcastHubEvent({ type: "DELETE", entity, id: cleanId, version: hubState.version });
-    return res.json({ success: true, version: hubState.version, deleted: cleanId });
-  }
-  if (mutationType === "CANCEL" && cleanId) {
-    hubState.cancelledIds[cleanId] = now;
-    let found = false;
-    hubState.bookings = hubState.bookings.map((b) => {
-      if (String(b.id || "").toLowerCase().trim() === cleanId) {
-        found = true;
-        return {
-          ...b,
-          status: "CANCELLED",
-          cancellationReason: reason || "Cancelled via Portal",
-          cancelledAt: (/* @__PURE__ */ new Date()).toISOString()
-        };
-      }
-      return b;
-    });
-    invalidateGasCache();
-    persistHubState();
-    broadcastHubEvent({ type: "CANCEL", entity: "bookings", id: cleanId, version: hubState.version, payload: { reason } });
-    return res.json({ success: true, version: hubState.version, cancelled: cleanId, found });
-  }
-  if (mutationType === "UPSERT" && entity && data) {
-    const targetId = String(data.id || id || "").toLowerCase().trim();
-    if (targetId && hubState.deletedIds[targetId] && !req.body.forceRevive) {
-      return res.json({ success: false, rejectedTombstone: true, error: `Item ${targetId} was permanently deleted.` });
-    }
-    if (entity === "bookings") {
-      const idx = hubState.bookings.findIndex((b) => String(b.id || "").toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.bookings[idx] = { ...hubState.bookings[idx], ...data };
-      } else {
-        hubState.bookings.unshift(data);
-      }
-    } else if (entity === "handovers") {
-      const idx = hubState.handovers.findIndex((h) => String(h.id || "").toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.handovers[idx] = { ...hubState.handovers[idx], ...data };
-      } else {
-        hubState.handovers.unshift(data);
-      }
-    } else if (entity === "parcels") {
-      const idx = hubState.parcels.findIndex((p) => String(p.id || "").toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.parcels[idx] = { ...hubState.parcels[idx], ...data };
-      } else {
-        hubState.parcels.unshift(data);
-      }
-    } else if (entity === "lostFound") {
-      const idx = hubState.lostFound.findIndex((l) => String(l.id || "").toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.lostFound[idx] = { ...hubState.lostFound[idx], ...data };
-      } else {
-        hubState.lostFound.unshift(data);
-      }
-    } else if (entity === "isolationRooms") {
-      if (Array.isArray(data)) {
-        hubState.isolationRooms = data;
-      } else {
-        const roomId = String(data.id || data.buildingNumber || "").toLowerCase().trim();
-        const idx = hubState.isolationRooms.findIndex((r) => String(r.id || r.buildingNumber || "").toLowerCase().trim() === roomId);
-        if (idx >= 0) {
-          hubState.isolationRooms[idx] = { ...hubState.isolationRooms[idx], ...data };
-        } else {
-          hubState.isolationRooms.push(data);
-        }
-      }
-    } else if (entity === "blankForms") {
-      const idx = hubState.blankForms.findIndex((f) => String(f.id || "").toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.blankForms[idx] = { ...hubState.blankForms[idx], ...data };
-      } else {
-        hubState.blankForms.unshift(data);
-      }
-    } else if (entity === "invoices") {
-      const idx = hubState.invoices.findIndex((i) => String(i.id || "").toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.invoices[idx] = { ...hubState.invoices[idx], ...data };
-      } else {
-        hubState.invoices.unshift(data);
-      }
-    } else if (entity === "notices") {
-      const idx = hubState.notices.findIndex((n) => String(n.id || "").toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.notices[idx] = { ...hubState.notices[idx], ...data };
-      } else {
-        hubState.notices.unshift(data);
-      }
-    } else if (entity === "supportTickets") {
-      const idx = hubState.supportTickets.findIndex((s) => String(s.id || "").toLowerCase().trim() === targetId);
-      if (idx >= 0) {
-        hubState.supportTickets[idx] = { ...hubState.supportTickets[idx], ...data };
-      } else {
-        hubState.supportTickets.unshift(data);
-      }
-    }
-    invalidateGasCache();
-    persistHubState();
-    broadcastHubEvent({ type: "UPSERT", entity, id: targetId, version: hubState.version, payload: data });
-    return res.json({ success: true, version: hubState.version, item: data });
-  }
-  if (mutationType === "SYNC_ALL") {
-    const {
-      bookings,
-      handovers,
-      parcels,
-      lostFound,
-      isolationRooms,
-      blankForms,
-      invoices,
-      notices,
-      supportTickets,
-      deletedIds,
-      cancelledIds
-    } = req.body;
-    if (deletedIds && typeof deletedIds === "object") {
-      Object.keys(deletedIds).forEach((k) => {
-        hubState.deletedIds[k.toLowerCase().trim()] = Math.max(hubState.deletedIds[k.toLowerCase().trim()] || 0, deletedIds[k] || now);
-      });
-    }
-    if (cancelledIds && typeof cancelledIds === "object") {
-      Object.keys(cancelledIds).forEach((k) => {
-        hubState.cancelledIds[k.toLowerCase().trim()] = Math.max(hubState.cancelledIds[k.toLowerCase().trim()] || 0, cancelledIds[k] || now);
-      });
-    }
-    const isDeleted = (rawId) => {
-      if (!rawId) return false;
-      return Boolean(hubState.deletedIds[String(rawId).toLowerCase().trim()]);
+app.get("/api/hub/isolation-history", requireAuth(["Super Administrator", "Admin", "SUPER_ADMIN", "CLINIC_OFFICER", "FACILITY_OPERATOR"]), (req, res) => {
+  const historyList = serverIsolationHistory.length > 0 ? serverIsolationHistory : hubState.isolationHistory || [];
+  res.json({
+    success: true,
+    count: historyList.length,
+    history: historyList
+  });
+});
+app.post("/api/auth/login", (req, res) => {
+  const { username, password, sessionToken } = req.body || {};
+  const cleanUser = String(username || "").trim();
+  const cleanPass = String(password || "").trim();
+  let matchedUser = null;
+  if (cleanUser.toLowerCase() === "limon.voice@gmail.com" && (cleanPass === "Limon@2026" || cleanPass === "202688")) {
+    matchedUser = {
+      username: "limon.voice@gmail.com",
+      role: "Super Administrator",
+      fullName: "Supreme Administrator (Limon)",
+      email: "limon.voice@gmail.com"
     };
-    if (Array.isArray(bookings)) {
-      const bMap = /* @__PURE__ */ new Map();
-      hubState.bookings.forEach((b) => {
-        if (b && b.id && !isDeleted(b.id)) bMap.set(String(b.id).toLowerCase().trim(), b);
+  } else if (cleanUser.toLowerCase() === "limon" && (cleanPass === "Limon@2026" || cleanPass === "202688")) {
+    matchedUser = {
+      username: "limon",
+      role: "Super Administrator",
+      fullName: "Supreme Administrator (Limon)",
+      email: "limon.voice@gmail.com"
+    };
+  } else if ((cleanPass === "Amaala@188" || cleanPass === "188188") && (cleanUser.toLowerCase() === "helpdesk" || cleanUser === "")) {
+    matchedUser = {
+      username: "Helpdesk",
+      role: "FACILITY_OPERATOR",
+      fullName: "Tamimi Helpdesk Operator",
+      email: "helpdesk@tamimi.com"
+    };
+  } else if (cleanPass === "Amaala@188" || cleanPass === "188188") {
+    matchedUser = {
+      username: cleanUser,
+      role: "FACILITY_OPERATOR",
+      fullName: cleanUser
+    };
+  }
+  if (!matchedUser) {
+    logServerSecurity("LOGIN_FAILED", `Failed login attempt for username "${cleanUser}"`, req);
+    return res.status(401).json({ success: false, error: "Invalid username or password." });
+  }
+  const token = signSessionToken({
+    username: matchedUser.username,
+    role: matchedUser.role,
+    fullName: matchedUser.fullName,
+    email: matchedUser.email
+  });
+  const session = {
+    token,
+    username: matchedUser.username,
+    role: matchedUser.role,
+    fullName: matchedUser.fullName,
+    email: matchedUser.email,
+    createdAt: Date.now(),
+    lastActiveAt: Date.now(),
+    ip: String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown")
+  };
+  serverSessions.set(token, session);
+  persistServerSessions();
+  res.setHeader("Set-Cookie", `tamimi_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200`);
+  logServerSecurity("LOGIN_SUCCESS", `User "${session.username}" logged in with role "${session.role}"`, req, session);
+  return res.json({
+    success: true,
+    sessionToken: token,
+    role: session.role,
+    username: session.username,
+    fullName: session.fullName,
+    email: session.email
+  });
+});
+app.post("/api/auth/verify", (req, res) => {
+  const session = verifyServerSession(req);
+  if (!session) {
+    return res.json({ success: false, valid: false });
+  }
+  return res.json({
+    success: true,
+    valid: true,
+    user: {
+      username: session.username,
+      role: session.role,
+      fullName: session.fullName,
+      email: session.email
+    }
+  });
+});
+app.post("/api/auth/logout", (req, res) => {
+  const token = getClientToken(req);
+  if (token) {
+    serverSessions.delete(token);
+    persistServerSessions();
+  }
+  res.setHeader("Set-Cookie", "tamimi_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+  return res.json({ success: true });
+});
+app.get("/api/security/audit-logs", requireAuth(["Super Administrator", "Admin"]), (req, res) => {
+  return res.json({ success: true, count: serverAuditLogs.length, logs: serverAuditLogs });
+});
+function parseTimeToMinutes(timeStr, isEndTime = false) {
+  if (!timeStr && timeStr !== 0) return 0;
+  const s = String(timeStr).trim();
+  const ampmMatch = s.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)/i);
+  if (ampmMatch) {
+    let hours = parseInt(ampmMatch[1], 10);
+    const minutes = parseInt(ampmMatch[2], 10);
+    const meridian = ampmMatch[3].toUpperCase();
+    if (meridian === "PM" && hours < 12) hours += 12;
+    if (meridian === "AM" && hours === 12) hours = 0;
+    const total = hours * 60 + minutes;
+    if (isEndTime && total === 0) return 1440;
+    return total;
+  }
+  const match24 = s.match(/(?:[T\s]|^)(\d{1,2}):(\d{2})/);
+  if (match24) {
+    const hours = parseInt(match24[1], 10);
+    const minutes = parseInt(match24[2], 10);
+    const total = hours % 24 * 60 + minutes % 60;
+    if (isEndTime && (total === 0 || hours === 24)) return 1440;
+    return total;
+  }
+  return 0;
+}
+function doTimeRangesOverlap(startA, endA, startB, endB) {
+  const sA = parseTimeToMinutes(startA, false);
+  const eA = parseTimeToMinutes(endA, true);
+  const sB = parseTimeToMinutes(startB, false);
+  const eB = parseTimeToMinutes(endB, true);
+  return sA < eB && eA > sB;
+}
+function resolveServerFacilityId(nameOrTab) {
+  if (!nameOrTab) return "barber-booking";
+  const s = String(nameOrTab).toLowerCase().trim();
+  if (s.includes("barber") || s === "bb") return "barber-booking";
+  if (s.includes("football") || s === "fg") return "football-ground";
+  if (s.includes("cricket") && s.includes("net")) return "cricket-net";
+  if (s.includes("cricket") || s === "cg") return "cricket-ground";
+  if (s.includes("multipurpose") || s.includes("multi-purpose") || s.includes("multi") || s === "mr") return "multipurpose-room";
+  if (s.includes("cinema") || s.includes("movie") || s === "cn") return "cinema";
+  if (s.includes("tennis") || s === "tc") return "tennis-court";
+  if (s.includes("basket") || s === "bc") return "basketball-court";
+  if (s.includes("isolation") || s.includes("iso") || s.includes("quarantine") || s.includes("hospital")) return "isolation-room";
+  return nameOrTab;
+}
+function checkServerBookingConflict(newB, existingBookings = hubState.bookings || [], cancelledIds = hubState.cancelledIds || {}, deletedIds = hubState.deletedIds || {}) {
+  if (!newB || typeof newB !== "object") return { conflict: false, hasConflict: false };
+  const newStatus = String(newB.status || "").toUpperCase().trim();
+  if (newStatus === "CANCELLED" || newStatus === "CANCELED" || newStatus === "REJECTED" || newStatus === "VOID") {
+    return { conflict: false, hasConflict: false };
+  }
+  const newId = String(newB.id || "").toLowerCase().trim();
+  const newDate = String(newB.date || "").trim();
+  const newFacId = resolveServerFacilityId(newB.facilityId || newB.sheetTabName || newB.facilityName);
+  const newStage = String(newB.stage || "").trim();
+  const newStart = String(newB.startTime || "").trim();
+  const newEnd = String(newB.endTime || "").trim();
+  if (!newDate || !newStart || !newEnd) return { conflict: false, hasConflict: false };
+  const bookingsList = Array.isArray(existingBookings) ? existingBookings : hubState.bookings || [];
+  for (const existB of bookingsList) {
+    if (!existB || typeof existB !== "object") continue;
+    const existId = String(existB.id || "").toLowerCase().trim();
+    if (newId && existId && newId === existId) continue;
+    if (deletedIds[existId] || cancelledIds[existId]) continue;
+    const existStatus = String(existB.status || "").toUpperCase().trim();
+    if (existStatus === "CANCELLED" || existStatus === "CANCELED" || existStatus === "REJECTED" || existStatus === "VOID") {
+      continue;
+    }
+    if (String(existB.date || "").trim() !== newDate) continue;
+    const existFacId = resolveServerFacilityId(existB.facilityId || existB.sheetTabName || existB.facilityName);
+    if (newFacId !== existFacId) continue;
+    if (!isResourceOrStageMatch(newStage, existB.stage, newFacId)) {
+      continue;
+    }
+    if (doTimeRangesOverlap(newStart, newEnd, existB.startTime, existB.endTime)) {
+      return { conflict: true, hasConflict: true, conflictingBooking: existB };
+    }
+  }
+  return { conflict: false, hasConflict: false };
+}
+function reconcileServerIsolationRooms(incomingRooms) {
+  if (!Array.isArray(incomingRooms) || incomingRooms.length === 0) {
+    return hubState.isolationRooms;
+  }
+  const roomMap = /* @__PURE__ */ new Map();
+  (hubState.isolationRooms || []).forEach((r) => {
+    if (!r) return;
+    const can = getCanonicalServerRoomNumber(r.buildingNumber || r.id);
+    if (can) {
+      roomMap.set(can.toUpperCase(), {
+        ...r,
+        id: can,
+        buildingNumber: can,
+        occupants: Array.isArray(r.occupants) ? [...r.occupants] : []
       });
-      bookings.forEach((b) => {
-        if (b && b.id && !isDeleted(b.id)) {
-          const idKey = String(b.id).toLowerCase().trim();
-          if (hubState.cancelledIds[idKey] && b.status !== "CANCELLED") {
-            b.status = "CANCELLED";
-          }
-          bMap.set(idKey, b);
+    }
+  });
+  incomingRooms.forEach((inR) => {
+    if (!inR) return;
+    const can = getCanonicalServerRoomNumber(inR.buildingNumber || inR.id);
+    if (!can) return;
+    const canKey = can.toUpperCase();
+    const existing = roomMap.get(canKey);
+    const inOccs = Array.isArray(inR.occupants) ? inR.occupants : [];
+    const isDeletedOccupant = (occ) => {
+      if (!occ) return true;
+      const occId = String(occ.id || occ.bookingId || "").toLowerCase().trim();
+      const bedKey = `${canKey}-B${occ.bedNumber}`.toLowerCase();
+      return Boolean(occId && hubState.deletedIds[occId] || hubState.deletedIds[bedKey]);
+    };
+    const validInOccs = inOccs.filter((o) => !isDeletedOccupant(o));
+    if (!existing) {
+      roomMap.set(canKey, {
+        id: can,
+        buildingNumber: can,
+        occupants: validInOccs,
+        status: validInOccs.length > 0 ? "Occupied" : inR.status || "VACANT",
+        lastUpdated: inR.lastUpdated || (/* @__PURE__ */ new Date()).toISOString()
+      });
+      return;
+    }
+    const exOccs = Array.isArray(existing.occupants) ? existing.occupants : [];
+    const validExOccs = exOccs.filter((o) => !isDeletedOccupant(o));
+    const inTime = inR.lastUpdated ? new Date(inR.lastUpdated).getTime() : 0;
+    const exTime = existing.lastUpdated ? new Date(existing.lastUpdated).getTime() : 0;
+    const hasExplicitDischargeOrTransfer = Boolean(
+      inR.transferHistory && inR.transferHistory.length > 0 || inR.dischargeDate || inR.status === "VACANT" && validInOccs.length === 0 && (inTime >= exTime || inR.transferHistory || inR.dischargeDate) || inR.status === "VACANT" && (!existing.status || existing.status === "VACANT")
+    );
+    let mergedOccs = [];
+    if (hasExplicitDischargeOrTransfer) {
+      mergedOccs = validInOccs;
+    } else if (inTime > exTime) {
+      mergedOccs = validInOccs.map((inOcc) => {
+        const matchingEx = validExOccs.find((e) => e.bedNumber === inOcc.bedNumber);
+        if (!matchingEx) return inOcc;
+        return {
+          ...matchingEx,
+          ...inOcc,
+          staffNotes: inOcc.staffNotes || matchingEx.staffNotes,
+          hospitalReferral: inOcc.hospitalReferral || matchingEx.hospitalReferral,
+          purposeOfStay: inOcc.purposeOfStay || matchingEx.purposeOfStay,
+          nationalId: inOcc.nationalId || matchingEx.nationalId,
+          company: inOcc.company && inOcc.company !== "General Resident" ? inOcc.company : matchingEx.company || inOcc.company
+        };
+      });
+    } else {
+      mergedOccs = [...validExOccs];
+      validInOccs.forEach((inOcc) => {
+        if (!mergedOccs.some((e) => e.bedNumber === inOcc.bedNumber)) {
+          mergedOccs.push(inOcc);
         }
       });
-      hubState.bookings = Array.from(bMap.values());
     }
-    if (Array.isArray(handovers)) {
-      const hMap = /* @__PURE__ */ new Map();
-      hubState.handovers.forEach((h) => {
-        if (h && h.id && !isDeleted(h.id)) hMap.set(String(h.id).toLowerCase().trim(), h);
-      });
-      handovers.forEach((h) => {
-        if (h && h.id && !isDeleted(h.id)) hMap.set(String(h.id).toLowerCase().trim(), h);
-      });
-      hubState.handovers = Array.from(hMap.values());
-    }
-    if (Array.isArray(parcels)) {
-      const pMap = /* @__PURE__ */ new Map();
-      hubState.parcels.forEach((p) => {
-        if (p && p.id && !isDeleted(p.id)) pMap.set(String(p.id).toLowerCase().trim(), p);
-      });
-      parcels.forEach((p) => {
-        if (p && p.id && !isDeleted(p.id)) pMap.set(String(p.id).toLowerCase().trim(), p);
-      });
-      hubState.parcels = Array.from(pMap.values());
-    }
-    if (Array.isArray(lostFound)) {
-      const lMap = /* @__PURE__ */ new Map();
-      hubState.lostFound.forEach((l) => {
-        if (l && l.id && !isDeleted(l.id)) lMap.set(String(l.id).toLowerCase().trim(), l);
-      });
-      lostFound.forEach((l) => {
-        if (l && l.id && !isDeleted(l.id)) lMap.set(String(l.id).toLowerCase().trim(), l);
-      });
-      hubState.lostFound = Array.from(lMap.values());
-    }
-    if (Array.isArray(isolationRooms) && isolationRooms.length > 0) {
-      hubState.isolationRooms = isolationRooms;
-    }
-    if (Array.isArray(blankForms)) {
-      const fMap = /* @__PURE__ */ new Map();
-      hubState.blankForms.forEach((f) => {
-        if (f && f.id && !isDeleted(f.id)) fMap.set(String(f.id).toLowerCase().trim(), f);
-      });
-      blankForms.forEach((f) => {
-        if (f && f.id && !isDeleted(f.id)) fMap.set(String(f.id).toLowerCase().trim(), f);
-      });
-      hubState.blankForms = Array.from(fMap.values());
-    }
-    if (Array.isArray(invoices)) {
-      const iMap = /* @__PURE__ */ new Map();
-      hubState.invoices.forEach((i) => {
-        if (i && i.id && !isDeleted(i.id)) iMap.set(String(i.id).toLowerCase().trim(), i);
-      });
-      invoices.forEach((i) => {
-        if (i && i.id && !isDeleted(i.id)) iMap.set(String(i.id).toLowerCase().trim(), i);
-      });
-      hubState.invoices = Array.from(iMap.values());
-    }
-    if (Array.isArray(notices)) {
-      const nMap = /* @__PURE__ */ new Map();
-      hubState.notices.forEach((n) => {
-        if (n && n.id && !isDeleted(n.id)) nMap.set(String(n.id).toLowerCase().trim(), n);
-      });
-      notices.forEach((n) => {
-        if (n && n.id && !isDeleted(n.id)) nMap.set(String(n.id).toLowerCase().trim(), n);
-      });
-      hubState.notices = Array.from(nMap.values());
-    }
-    if (Array.isArray(supportTickets)) {
-      const sMap = /* @__PURE__ */ new Map();
-      hubState.supportTickets.forEach((s) => {
-        if (s && s.id && !isDeleted(s.id)) sMap.set(String(s.id).toLowerCase().trim(), s);
-      });
-      supportTickets.forEach((s) => {
-        if (s && s.id && !isDeleted(s.id)) sMap.set(String(s.id).toLowerCase().trim(), s);
-      });
-      hubState.supportTickets = Array.from(sMap.values());
-    }
-    invalidateGasCache();
-    persistHubState();
-    broadcastHubEvent({ type: "SYNC_ALL", version: hubState.version });
-    return res.json({
-      success: true,
-      version: hubState.version,
-      state: hubState
+    mergedOccs.sort((a, b) => (a.bedNumber || 1) - (b.bedNumber || 1));
+    const finalStatus = inR.status === "Maintenance" ? "Maintenance" : mergedOccs.length > 0 ? "Occupied" : hasExplicitDischargeOrTransfer ? "VACANT" : existing.status || "VACANT";
+    roomMap.set(canKey, {
+      ...existing,
+      ...inR,
+      id: can,
+      buildingNumber: can,
+      occupants: mergedOccs,
+      status: finalStatus,
+      transferHistory: inR.transferHistory || existing.transferHistory,
+      dischargeDate: inR.dischargeDate || existing.dischargeDate,
+      lastUpdated: new Date(Math.max(inTime, exTime, Date.now())).toISOString()
     });
-  }
-  return res.json({ success: true, version: hubState.version });
+  });
+  const seenOccNames = /* @__PURE__ */ new Set();
+  const finalRooms = Array.from(roomMap.values());
+  finalRooms.forEach((r) => {
+    if (Array.isArray(r.occupants) && r.occupants.length > 0) {
+      r.occupants = r.occupants.filter((occ) => {
+        const nameKey = String(occ.id || occ.patientName || "").toLowerCase().trim();
+        if (!nameKey) return true;
+        if (seenOccNames.has(nameKey)) return false;
+        seenOccNames.add(nameKey);
+        return true;
+      });
+      r.status = r.occupants.length > 0 ? "Occupied" : r.status === "Maintenance" ? "Maintenance" : "VACANT";
+      if (r.occupants.length === 0) {
+        r.patientName = "";
+        r.company = "";
+      }
+    }
+  });
+  hubState.isolationRooms = finalRooms;
+  return hubState.isolationRooms;
+}
+var ALLOWED_MUTATION_TYPES = /* @__PURE__ */ new Set(["UPSERT", "UPSERT_BATCH", "BATCH_UPSERT", "DELETE", "CANCEL", "CANCEL_BATCH", "SYNC_ALL", "TRANSFER"]);
+var ALLOWED_ENTITIES = /* @__PURE__ */ new Set([
+  "bookings",
+  "isolationRooms",
+  "handovers",
+  "parcels",
+  "lostFound",
+  "blankForms",
+  "invoices",
+  "notices",
+  "supportTickets"
+]);
+app.post("/api/hub/mutate", (req, res) => {
+  return mutationMutex.runExclusive(async () => {
+    const session = verifyServerSession(req);
+    if (!session) {
+      logServerSecurity("UNAUTHORIZED_ATTEMPT", `Unauthorized attempt to call /api/hub/mutate (${req.body?.mutationType} ${req.body?.entity})`, req);
+      return res.status(401).json({
+        success: false,
+        error: "Unauthorized: A valid authenticated session is required to perform mutations."
+      });
+    }
+    const { mutationType, entity, id, data, reason } = req.body;
+    const now = Date.now();
+    const cleanId = id ? String(id).toLowerCase().trim() : "";
+    if (cleanId && (cleanId.includes("..") || cleanId.includes("/") || cleanId.includes("\\") || cleanId.length > 200)) {
+      return res.status(400).json({ success: false, error: "Invalid record ID format." });
+    }
+    if (!mutationType || !ALLOWED_MUTATION_TYPES.has(mutationType)) {
+      return res.status(400).json({ success: false, error: `Invalid or unsupported mutationType: "${mutationType}"` });
+    }
+    const effectiveMutationType = mutationType === "UPSERT_BATCH" || mutationType === "BATCH_UPSERT" ? "UPSERT" : mutationType;
+    const targetEntity = entity || (req.body.bookings ? "bookings" : void 0);
+    if (targetEntity && !ALLOWED_ENTITIES.has(targetEntity)) {
+      return res.status(400).json({ success: false, error: `Invalid entity target: "${targetEntity}"` });
+    }
+    hubState.version += 1;
+    hubState.lastUpdated = (/* @__PURE__ */ new Date()).toISOString();
+    try {
+      if (effectiveMutationType === "DELETE") {
+        const isPrivileged = session.role === "Super Administrator" || session.role === "Admin" || session.role === "SUPER_ADMIN";
+        if (!isPrivileged) {
+          logServerSecurity("FORBIDDEN_ATTEMPT", `User "${session.username}" lacking admin privileges attempted DELETE on ${cleanId}`, req, session);
+          return res.status(403).json({
+            success: false,
+            error: "Forbidden: Deleting records requires Administrative or Super Administrator privileges."
+          });
+        }
+        if (!cleanId) {
+          return res.status(400).json({ success: false, error: "Target ID is required for DELETE operation." });
+        }
+        hubState.deletedIds[cleanId] = now;
+        hubState.bookings = hubState.bookings.filter((b) => String(b.id || "").toLowerCase().trim() !== cleanId);
+        hubState.handovers = hubState.handovers.filter((h) => String(h.id || "").toLowerCase().trim() !== cleanId);
+        hubState.parcels = hubState.parcels.filter((p) => String(p.id || "").toLowerCase().trim() !== cleanId);
+        hubState.lostFound = hubState.lostFound.filter((l) => String(l.id || "").toLowerCase().trim() !== cleanId);
+        hubState.blankForms = hubState.blankForms.filter((f) => String(f.id || "").toLowerCase().trim() !== cleanId);
+        hubState.invoices = hubState.invoices.filter((i) => String(i.id || "").toLowerCase().trim() !== cleanId);
+        hubState.notices = hubState.notices.filter((n) => String(n.id || "").toLowerCase().trim() !== cleanId);
+        hubState.supportTickets = hubState.supportTickets.filter((s) => String(s.id || "").toLowerCase().trim() !== cleanId);
+        hubState.isolationRooms = hubState.isolationRooms.map((room) => {
+          if (!room.occupants) return room;
+          const filtered = room.occupants.filter((occ) => {
+            const occId = String(occ.id || occ.bookingId || "").toLowerCase().trim();
+            return occId !== cleanId;
+          });
+          return { ...room, occupants: filtered };
+        });
+        await persistHubState();
+        broadcastHubEvent({ type: "DELETE", entity: targetEntity, id: cleanId, version: hubState.version });
+        return res.json({ success: true, version: hubState.version, deleted: cleanId });
+      }
+      if (effectiveMutationType === "CANCEL") {
+        if (!cleanId) {
+          return res.status(400).json({ success: false, error: "Target ID is required for CANCEL operation." });
+        }
+        hubState.cancelledIds[cleanId] = now;
+        let found = false;
+        hubState.bookings = hubState.bookings.map((b) => {
+          if (String(b.id || "").toLowerCase().trim() === cleanId) {
+            found = true;
+            return {
+              ...b,
+              status: "CANCELLED",
+              cancellationReason: reason || "Cancelled via Portal",
+              cancelledAt: (/* @__PURE__ */ new Date()).toISOString()
+            };
+          }
+          return b;
+        });
+        invalidateGasCache();
+        await persistHubState();
+        broadcastHubEvent({ type: "CANCEL", entity: "bookings", id: cleanId, version: hubState.version, payload: { reason } });
+        return res.json({ success: true, version: hubState.version, cancelled: cleanId, found });
+      }
+      if (effectiveMutationType === "CANCEL_BATCH") {
+        const rawIds = Array.isArray(req.body.ids) ? req.body.ids : Array.isArray(data) ? data : req.body.id ? [req.body.id] : [];
+        const cleanIds = rawIds.map((x) => String(x || "").toLowerCase().trim()).filter(Boolean);
+        const targetGroupId = String(req.body.recurringGroupId || req.body.groupId || "").trim().toLowerCase();
+        const cleanGroupNoDashes = targetGroupId.replace(/[^a-z0-9]/g, "");
+        if (targetGroupId) {
+          hubState.bookings.forEach((b) => {
+            if (!b) return;
+            const bGrp = String(b.recurringGroupId || "").toLowerCase().trim();
+            const bGrpClean = bGrp.replace(/[^a-z0-9]/g, "");
+            if (bGrp === targetGroupId || cleanGroupNoDashes && bGrpClean === cleanGroupNoDashes) {
+              if (b.id) {
+                const bIdClean = String(b.id).toLowerCase().trim();
+                if (!cleanIds.includes(bIdClean)) {
+                  cleanIds.push(bIdClean);
+                }
+              }
+            }
+          });
+        }
+        if (cleanIds.length === 0) {
+          return res.status(400).json({ success: false, error: "Missing or empty ids/groupId for CANCEL_BATCH" });
+        }
+        cleanIds.forEach((cId) => {
+          hubState.cancelledIds[cId] = now;
+        });
+        let cancelCount = 0;
+        const cancelledTimestamp = (/* @__PURE__ */ new Date()).toISOString();
+        const effectiveReason = reason || "Cancelled via Batch Operation";
+        hubState.bookings = hubState.bookings.map((b) => {
+          const bId = String(b.id || "").toLowerCase().trim();
+          if (cleanIds.includes(bId)) {
+            cancelCount++;
+            return {
+              ...b,
+              status: "CANCELLED",
+              cancellationReason: effectiveReason,
+              cancelledAt: cancelledTimestamp
+            };
+          }
+          return b;
+        });
+        invalidateGasCache();
+        await persistHubState();
+        broadcastHubEvent({
+          type: "CANCEL_BATCH",
+          entity: "bookings",
+          version: hubState.version,
+          payload: { ids: cleanIds, recurringGroupId: targetGroupId || void 0, reason: effectiveReason }
+        });
+        for (const cId of cleanIds) {
+          broadcastHubEvent({ type: "CANCEL", entity: "bookings", id: cId, version: hubState.version, payload: { reason: effectiveReason } });
+        }
+        return res.json({ success: true, version: hubState.version, cancelledCount: cancelCount, cancelledIds: cleanIds });
+      }
+      if (mutationType === "TRANSFER") {
+        const { sourceRoomId, sourceBedNumber, targetRoomId, targetBedNumber } = req.body;
+        const transferTimestamp = (/* @__PURE__ */ new Date()).toISOString();
+        let updatedSrcRoom = null;
+        let updatedTgtRoom = null;
+        if (Array.isArray(data) && data.length > 0) {
+          for (const r of data) {
+            const roomTarget = String(r.id || r.buildingNumber || "").trim();
+            const idx = findServerIsolationRoomIndex(hubState.isolationRooms, roomTarget);
+            if (idx >= 0) {
+              hubState.isolationRooms[idx] = { ...hubState.isolationRooms[idx], ...r, lastUpdated: transferTimestamp };
+            } else {
+              hubState.isolationRooms.push({ ...r, lastUpdated: transferTimestamp });
+            }
+          }
+          updatedSrcRoom = data[0];
+          updatedTgtRoom = data.length > 1 ? data[1] : data[0];
+        } else if (sourceRoomId && targetRoomId && sourceBedNumber && targetBedNumber) {
+          const srcIdx = findServerIsolationRoomIndex(hubState.isolationRooms, sourceRoomId);
+          const tgtIdx = findServerIsolationRoomIndex(hubState.isolationRooms, targetRoomId);
+          if (srcIdx === -1 || tgtIdx === -1) {
+            return res.status(404).json({ success: false, error: "Source or target isolation room not found." });
+          }
+          const srcRoom = hubState.isolationRooms[srcIdx];
+          const tgtRoom = hubState.isolationRooms[tgtIdx];
+          const occToMove = (srcRoom.occupants || []).find((o) => o.bedNumber === sourceBedNumber);
+          if (!occToMove) {
+            return res.status(400).json({ success: false, error: `No occupant found on Bed ${sourceBedNumber} in Room ${srcRoom.buildingNumber || srcRoom.id}.` });
+          }
+          const targetOccupant = (tgtRoom.occupants || []).find((o) => o.bedNumber === targetBedNumber);
+          if (targetOccupant && targetOccupant.patientName && targetOccupant.patientName.trim()) {
+            if (!(srcIdx === tgtIdx && sourceBedNumber === targetBedNumber)) {
+              return res.status(409).json({ success: false, error: `Bed ${targetBedNumber} in ${tgtRoom.buildingNumber || tgtRoom.id} is already occupied.` });
+            }
+          }
+          const transferredOccupant = {
+            ...occToMove,
+            bedNumber: targetBedNumber,
+            staffNotes: `${occToMove.staffNotes ? occToMove.staffNotes + " | " : ""}Transferred from Room ${srcRoom.buildingNumber || srcRoom.id} Bed ${sourceBedNumber} on ${transferTimestamp.slice(0, 10)}`
+          };
+          if (srcIdx === tgtIdx) {
+            const remaining = (srcRoom.occupants || []).filter((o) => o.bedNumber !== sourceBedNumber && o.bedNumber !== targetBedNumber);
+            remaining.push(transferredOccupant);
+            remaining.sort((a, b) => a.bedNumber - b.bedNumber);
+            hubState.isolationRooms[srcIdx] = {
+              ...srcRoom,
+              occupants: remaining,
+              lastUpdated: transferTimestamp,
+              status: remaining.length > 0 ? "Occupied" : "VACANT"
+            };
+            updatedSrcRoom = hubState.isolationRooms[srcIdx];
+            updatedTgtRoom = updatedSrcRoom;
+          } else {
+            const remainingSrc = (srcRoom.occupants || []).filter((o) => o.bedNumber !== sourceBedNumber);
+            hubState.isolationRooms[srcIdx] = {
+              ...srcRoom,
+              occupants: remainingSrc,
+              lastUpdated: transferTimestamp,
+              status: remainingSrc.length > 0 ? "Occupied" : "VACANT"
+            };
+            const remainingTgt = (tgtRoom.occupants || []).filter((o) => o.bedNumber !== targetBedNumber);
+            remainingTgt.push(transferredOccupant);
+            remainingTgt.sort((a, b) => a.bedNumber - b.bedNumber);
+            hubState.isolationRooms[tgtIdx] = {
+              ...tgtRoom,
+              occupants: remainingTgt,
+              lastUpdated: transferTimestamp,
+              status: remainingTgt.length > 0 ? "Occupied" : "VACANT"
+            };
+            updatedSrcRoom = hubState.isolationRooms[srcIdx];
+            updatedTgtRoom = hubState.isolationRooms[tgtIdx];
+          }
+        } else {
+          return res.status(400).json({ success: false, error: "Invalid TRANSFER payload: missing rooms or beds." });
+        }
+        const targetOccs = updatedTgtRoom.occupants || [];
+        const occKeys = targetOccs.map((o) => String(o.id || o.patientName || "").toLowerCase().trim()).filter(Boolean);
+        if (occKeys.length > 0) {
+          hubState.isolationRooms.forEach((r, idx) => {
+            const isTarget = String(r.id || r.buildingNumber).toLowerCase().trim() === String(updatedTgtRoom.id || updatedTgtRoom.buildingNumber).toLowerCase().trim();
+            if (!isTarget && Array.isArray(r.occupants) && r.occupants.length > 0) {
+              r.occupants = r.occupants.filter((occ) => {
+                const k = String(occ.id || occ.patientName || "").toLowerCase().trim();
+                return !k || !occKeys.includes(k);
+              });
+              r.status = r.occupants.length > 0 ? "Occupied" : "VACANT";
+            }
+          });
+        }
+        const historyAudit = {
+          id: `HIST-XFER-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          action: "TRANSFER",
+          timestamp: transferTimestamp,
+          sourceRoom: sourceRoomId || updatedSrcRoom.buildingNumber,
+          sourceBed: sourceBedNumber,
+          targetRoom: targetRoomId || updatedTgtRoom.buildingNumber,
+          targetBed: targetBedNumber
+        };
+        serverIsolationHistory.unshift(historyAudit);
+        const multiRecordPayload = [updatedSrcRoom, updatedTgtRoom].filter(Boolean);
+        broadcastHubEvent({
+          type: "UPSERT_BATCH",
+          entity: "isolationRooms",
+          version: hubState.version,
+          payload: multiRecordPayload
+        });
+        for (const r of multiRecordPayload) {
+          broadcastHubEvent({
+            type: "UPSERT",
+            entity: "isolationRooms",
+            id: String(r.id || ""),
+            version: hubState.version,
+            payload: r
+          });
+        }
+        await persistHubState();
+        return res.json({
+          success: true,
+          version: hubState.version,
+          sourceRoom: updatedSrcRoom,
+          targetRoom: updatedTgtRoom
+        });
+      }
+      if (effectiveMutationType === "UPSERT") {
+        const rawPayload = data !== void 0 && data !== null ? data : req.body.bookings !== void 0 ? req.body.bookings : req.body.items;
+        if (rawPayload === void 0 || rawPayload === null) {
+          return res.status(400).json({ success: false, error: "Missing data payload for UPSERT mutation." });
+        }
+        if (!targetEntity) {
+          return res.status(400).json({ success: false, error: "Target entity is required for UPSERT mutation." });
+        }
+        const rawList = Array.isArray(rawPayload) ? rawPayload : [rawPayload];
+        const flatList = rawList.flat();
+        const validItems = [];
+        const invalidItems = [];
+        for (let i = 0; i < flatList.length; i++) {
+          const raw = flatList[i];
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+            invalidItems.push({ index: i, error: "Record must be a non-null object" });
+            continue;
+          }
+          const cleanItem = {};
+          for (const [k, v] of Object.entries(raw)) {
+            if (k === "__proto__" || k === "constructor" || k === "prototype") continue;
+            cleanItem[k] = v;
+          }
+          if (targetEntity === "bookings") {
+            if (!cleanItem.id || String(cleanItem.id).trim() === "") {
+              cleanItem.id = !Array.isArray(rawPayload) && id ? String(id).trim() : `BK-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 7)}`;
+            } else {
+              cleanItem.id = String(cleanItem.id).trim();
+            }
+            if (cleanItem.status) {
+              const rawStat = String(cleanItem.status).toUpperCase().trim();
+              if (rawStat === "CANCELLED" || rawStat === "CANCELED" || rawStat === "VOID") {
+                cleanItem.status = "CANCELLED";
+              } else {
+                cleanItem.status = "CONFIRMED";
+              }
+            } else {
+              cleanItem.status = "CONFIRMED";
+            }
+          }
+          validItems.push(cleanItem);
+        }
+        let upsertedCount = 0;
+        const broadcastedItems = [];
+        for (const item of validItems) {
+          const targetId = String(item.id || id || "").toLowerCase().trim();
+          if (targetId && hubState.deletedIds[targetId] && !req.body.forceRevive) {
+            continue;
+          }
+          if (targetEntity === "bookings") {
+            const conflictCheck = checkServerBookingConflict(item, hubState.bookings, hubState.cancelledIds, hubState.deletedIds);
+            if (conflictCheck.conflict) {
+              const c = conflictCheck.conflictingBooking;
+              logServerSecurity(
+                "CONFLICT_DETECTED",
+                `Prevented conflicting simultaneous booking on ${item.stage} (${item.date} ${item.startTime}-${item.endTime}) by ${item.customerName || "Resident"}. Collides with existing booking ${c?.id}.`,
+                req,
+                session
+              );
+              return res.status(409).json({
+                success: false,
+                conflict: true,
+                error: `Booking Conflict: Resource "${item.stage}" is already reserved on ${item.date} from ${c?.startTime} to ${c?.endTime} by ${c?.customerName}.`,
+                conflictingBooking: c
+              });
+            }
+            const existingIdx = hubState.bookings.findIndex((b) => String(b.id || "").toLowerCase().trim() === targetId);
+            const wasCancelled = targetId && hubState.cancelledIds[targetId] || existingIdx >= 0 && hubState.bookings[existingIdx].status === "CANCELLED";
+            if (wasCancelled && item.status !== "CANCELLED" && !req.body.forceRevive) {
+              item.status = "CANCELLED";
+              if (existingIdx >= 0) {
+                item.cancellationReason = hubState.bookings[existingIdx].cancellationReason || item.cancellationReason || "Cancelled";
+                item.cancelledAt = hubState.bookings[existingIdx].cancelledAt || item.cancelledAt || (/* @__PURE__ */ new Date()).toISOString();
+              }
+            }
+            if (existingIdx >= 0) {
+              hubState.bookings[existingIdx] = { ...hubState.bookings[existingIdx], ...item };
+            } else {
+              hubState.bookings.unshift(item);
+            }
+            upsertedCount++;
+            broadcastedItems.push(item);
+          } else if (targetEntity === "isolationRooms") {
+            const roomTarget = String(item.id || item.buildingNumber || "").trim();
+            const idx = findServerIsolationRoomIndex(hubState.isolationRooms, roomTarget);
+            if (idx >= 0) {
+              hubState.isolationRooms[idx] = { ...hubState.isolationRooms[idx], ...item };
+            } else {
+              hubState.isolationRooms.push(item);
+            }
+            upsertedCount++;
+            broadcastedItems.push(item);
+          } else if (targetEntity === "handovers") {
+            const idx = hubState.handovers.findIndex((h) => String(h.id || "").toLowerCase().trim() === targetId);
+            if (idx >= 0) hubState.handovers[idx] = { ...hubState.handovers[idx], ...item };
+            else hubState.handovers.unshift(item);
+            upsertedCount++;
+            broadcastedItems.push(item);
+          } else if (targetEntity === "parcels") {
+            const idx = hubState.parcels.findIndex((p) => String(p.id || "").toLowerCase().trim() === targetId);
+            if (idx >= 0) hubState.parcels[idx] = { ...hubState.parcels[idx], ...item };
+            else hubState.parcels.unshift(item);
+            upsertedCount++;
+            broadcastedItems.push(item);
+          } else if (targetEntity === "lostFound") {
+            const idx = hubState.lostFound.findIndex((l) => String(l.id || "").toLowerCase().trim() === targetId);
+            if (idx >= 0) hubState.lostFound[idx] = { ...hubState.lostFound[idx], ...item };
+            else hubState.lostFound.unshift(item);
+            upsertedCount++;
+            broadcastedItems.push(item);
+          } else if (targetEntity === "blankForms") {
+            const idx = hubState.blankForms.findIndex((f) => String(f.id || "").toLowerCase().trim() === targetId);
+            if (idx >= 0) hubState.blankForms[idx] = { ...hubState.blankForms[idx], ...item };
+            else hubState.blankForms.unshift(item);
+            upsertedCount++;
+            broadcastedItems.push(item);
+          } else if (targetEntity === "invoices") {
+            const idx = hubState.invoices.findIndex((i) => String(i.id || "").toLowerCase().trim() === targetId);
+            if (idx >= 0) hubState.invoices[idx] = { ...hubState.invoices[idx], ...item };
+            else hubState.invoices.unshift(item);
+            upsertedCount++;
+            broadcastedItems.push(item);
+          } else if (targetEntity === "notices") {
+            const idx = hubState.notices.findIndex((n) => String(n.id || "").toLowerCase().trim() === targetId);
+            if (idx >= 0) hubState.notices[idx] = { ...hubState.notices[idx], ...item };
+            else hubState.notices.unshift(item);
+            upsertedCount++;
+            broadcastedItems.push(item);
+          } else if (targetEntity === "supportTickets") {
+            const idx = hubState.supportTickets.findIndex((s) => String(s.id || "").toLowerCase().trim() === targetId);
+            if (idx >= 0) hubState.supportTickets[idx] = { ...hubState.supportTickets[idx], ...item };
+            else hubState.supportTickets.unshift(item);
+            upsertedCount++;
+            broadcastedItems.push(item);
+          }
+        }
+        if (targetEntity === "isolationRooms" && broadcastedItems.length > 0) {
+          const seenOccKeys = /* @__PURE__ */ new Set();
+          broadcastedItems.forEach((updatedR) => {
+            if (Array.isArray(updatedR.occupants)) {
+              updatedR.occupants.forEach((occ) => {
+                const k = String(occ.id || occ.patientName || "").toLowerCase().trim();
+                if (k) seenOccKeys.add(k);
+              });
+            }
+          });
+          hubState.isolationRooms.forEach((r) => {
+            const isJustUpdated = broadcastedItems.some(
+              (bi) => String(bi.id || bi.buildingNumber).toLowerCase().trim() === String(r.id || r.buildingNumber).toLowerCase().trim()
+            );
+            if (!isJustUpdated && Array.isArray(r.occupants) && r.occupants.length > 0) {
+              const origLen = r.occupants.length;
+              r.occupants = r.occupants.filter((occ) => {
+                const k = String(occ.id || occ.patientName || "").toLowerCase().trim();
+                return !k || !seenOccKeys.has(k);
+              });
+              if (r.occupants.length !== origLen) {
+                r.status = r.occupants.length > 0 ? "Occupied" : "VACANT";
+                if (r.occupants.length === 0) {
+                  r.patientName = "";
+                  r.company = "";
+                }
+              }
+            }
+          });
+        }
+        if (Array.isArray(rawPayload)) {
+          for (const item of broadcastedItems) {
+            broadcastHubEvent({
+              type: "UPSERT",
+              entity: targetEntity,
+              id: String(item.id || ""),
+              version: hubState.version,
+              payload: item
+            });
+          }
+          broadcastHubEvent({
+            type: "UPSERT_BATCH",
+            entity: targetEntity,
+            version: hubState.version,
+            payload: broadcastedItems
+          });
+        } else {
+          broadcastHubEvent({
+            type: "UPSERT",
+            entity: targetEntity,
+            id: cleanId || broadcastedItems[0] && broadcastedItems[0].id,
+            version: hubState.version,
+            payload: broadcastedItems[0] || rawPayload
+          });
+        }
+        if (upsertedCount > 0) {
+          invalidateGasCache();
+          await persistHubState();
+        }
+        return res.json({
+          success: true,
+          version: hubState.version,
+          upsertedCount,
+          invalidCount: invalidItems.length,
+          invalidItems: invalidItems.length > 0 ? invalidItems : void 0,
+          item: broadcastedItems[0] || rawPayload,
+          items: broadcastedItems
+        });
+      }
+      if (mutationType === "SYNC_ALL") {
+        const {
+          bookings,
+          handovers,
+          parcels,
+          lostFound,
+          isolationRooms,
+          blankForms,
+          invoices,
+          notices,
+          supportTickets,
+          deletedIds,
+          cancelledIds
+        } = req.body;
+        if (deletedIds && typeof deletedIds === "object") {
+          Object.keys(deletedIds).forEach((k) => {
+            hubState.deletedIds[k.toLowerCase().trim()] = Math.max(hubState.deletedIds[k.toLowerCase().trim()] || 0, deletedIds[k] || now);
+          });
+        }
+        if (cancelledIds && typeof cancelledIds === "object") {
+          Object.keys(cancelledIds).forEach((k) => {
+            hubState.cancelledIds[k.toLowerCase().trim()] = Math.max(hubState.cancelledIds[k.toLowerCase().trim()] || 0, cancelledIds[k] || now);
+          });
+        }
+        const isDeleted = (rawId) => {
+          if (!rawId) return false;
+          return Boolean(hubState.deletedIds[String(rawId).toLowerCase().trim()]);
+        };
+        if (Array.isArray(bookings)) {
+          const bMap = /* @__PURE__ */ new Map();
+          hubState.bookings.forEach((b) => {
+            if (b && b.id && !isDeleted(b.id)) bMap.set(String(b.id).toLowerCase().trim(), b);
+          });
+          bookings.forEach((b) => {
+            if (b && b.id && !isDeleted(b.id)) {
+              const idKey = String(b.id).toLowerCase().trim();
+              if (hubState.cancelledIds[idKey] && b.status !== "CANCELLED") {
+                b.status = "CANCELLED";
+              }
+              bMap.set(idKey, b);
+            }
+          });
+          hubState.bookings = Array.from(bMap.values());
+        }
+        if (Array.isArray(handovers)) {
+          const hMap = /* @__PURE__ */ new Map();
+          hubState.handovers.forEach((h) => {
+            if (h && h.id && !isDeleted(h.id)) hMap.set(String(h.id).toLowerCase().trim(), h);
+          });
+          handovers.forEach((h) => {
+            if (h && h.id && !isDeleted(h.id)) hMap.set(String(h.id).toLowerCase().trim(), h);
+          });
+          hubState.handovers = Array.from(hMap.values());
+        }
+        if (Array.isArray(parcels)) {
+          const pMap = /* @__PURE__ */ new Map();
+          hubState.parcels.forEach((p) => {
+            if (p && p.id && !isDeleted(p.id)) pMap.set(String(p.id).toLowerCase().trim(), p);
+          });
+          parcels.forEach((p) => {
+            if (p && p.id && !isDeleted(p.id)) pMap.set(String(p.id).toLowerCase().trim(), p);
+          });
+          hubState.parcels = Array.from(pMap.values());
+        }
+        if (Array.isArray(lostFound)) {
+          const lMap = /* @__PURE__ */ new Map();
+          hubState.lostFound.forEach((l) => {
+            if (l && l.id && !isDeleted(l.id)) lMap.set(String(l.id).toLowerCase().trim(), l);
+          });
+          lostFound.forEach((l) => {
+            if (l && l.id && !isDeleted(l.id)) lMap.set(String(l.id).toLowerCase().trim(), l);
+          });
+          hubState.lostFound = Array.from(lMap.values());
+        }
+        if (Array.isArray(isolationRooms) && isolationRooms.length > 0) {
+          hubState.isolationRooms = isolationRooms;
+        }
+        if (Array.isArray(blankForms)) {
+          const fMap = /* @__PURE__ */ new Map();
+          hubState.blankForms.forEach((f) => {
+            if (f && f.id && !isDeleted(f.id)) fMap.set(String(f.id).toLowerCase().trim(), f);
+          });
+          blankForms.forEach((f) => {
+            if (f && f.id && !isDeleted(f.id)) fMap.set(String(f.id).toLowerCase().trim(), f);
+          });
+          hubState.blankForms = Array.from(fMap.values());
+        }
+        if (Array.isArray(invoices)) {
+          const iMap = /* @__PURE__ */ new Map();
+          hubState.invoices.forEach((i) => {
+            if (i && i.id && !isDeleted(i.id)) iMap.set(String(i.id).toLowerCase().trim(), i);
+          });
+          invoices.forEach((i) => {
+            if (i && i.id && !isDeleted(i.id)) iMap.set(String(i.id).toLowerCase().trim(), i);
+          });
+          hubState.invoices = Array.from(iMap.values());
+        }
+        if (Array.isArray(notices)) {
+          const nMap = /* @__PURE__ */ new Map();
+          hubState.notices.forEach((n) => {
+            if (n && n.id && !isDeleted(n.id)) nMap.set(String(n.id).toLowerCase().trim(), n);
+          });
+          notices.forEach((n) => {
+            if (n && n.id && !isDeleted(n.id)) nMap.set(String(n.id).toLowerCase().trim(), n);
+          });
+          hubState.notices = Array.from(nMap.values());
+        }
+        if (Array.isArray(supportTickets)) {
+          const sMap = /* @__PURE__ */ new Map();
+          hubState.supportTickets.forEach((s) => {
+            if (s && s.id && !isDeleted(s.id)) sMap.set(String(s.id).toLowerCase().trim(), s);
+          });
+          supportTickets.forEach((s) => {
+            if (s && s.id && !isDeleted(s.id)) sMap.set(String(s.id).toLowerCase().trim(), s);
+          });
+          hubState.supportTickets = Array.from(sMap.values());
+        }
+        invalidateGasCache();
+        await persistHubState();
+        broadcastHubEvent({ type: "SYNC_ALL", version: hubState.version });
+        return res.json({
+          success: true,
+          version: hubState.version,
+          state: hubState
+        });
+      }
+      return res.json({ success: true, version: hubState.version });
+    } catch (err) {
+      console.error("[Hub] Mutation error:", err);
+      return res.status(500).json({ success: false, error: "Database persistence error: " + (err?.message || err) });
+    }
+  });
 });
 app.get("/api/health", (req, res) => {
   res.json({
@@ -446,6 +2352,11 @@ function invalidateGasCache() {
   gasCache.clear();
 }
 app.post("/api/gas/proxy", async (req, res) => {
+  const session = verifyServerSession(req);
+  if (!session) {
+    logServerSecurity("UNAUTHORIZED_ATTEMPT", "Unauthorized access attempt to /api/gas/proxy", req);
+    return res.status(401).json({ success: false, error: "Unauthorized: Authentication required to access proxy." });
+  }
   const startTime = Date.now();
   const { targetUrl, action, method = "GET", body = null } = req.body;
   const effectiveAction = body && body.action || action || (method.toUpperCase() === "GET" ? "ping" : "save");
@@ -457,6 +2368,11 @@ app.post("/api/gas/proxy", async (req, res) => {
     });
   }
   const cleanUrl = targetUrl.trim();
+  const lowerUrl = cleanUrl.toLowerCase();
+  if (lowerUrl.includes("localhost") || lowerUrl.includes("127.0.0.1") || lowerUrl.includes("169.254.") || lowerUrl.includes("10.") || lowerUrl.includes("192.168.") || lowerUrl.includes("172.16.") || lowerUrl.includes("0.0.0.0") || lowerUrl.startsWith("file:") || lowerUrl.startsWith("ftp:")) {
+    logServerSecurity("FORBIDDEN_ATTEMPT", `SSRF blocked attempt to access internal URL: ${cleanUrl}`, req, session);
+    return res.status(403).json({ success: false, error: "Access denied: Target URL is not allowed." });
+  }
   if (!cleanUrl.startsWith("https://script.google.com/macros/s/")) {
     if (cleanUrl.includes("docs.google.com/spreadsheets/d/")) {
       const match = cleanUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
@@ -737,7 +2653,7 @@ app.post("/api/gas/proxy", async (req, res) => {
                 if (Array.isArray(jsonData.isolationRooms)) {
                   hubState.isolationRooms = jsonData.isolationRooms;
                 }
-                persistHubState();
+                await persistHubState();
               } catch (mergeErr) {
               }
             }
@@ -759,7 +2675,7 @@ app.post("/api/gas/proxy", async (req, res) => {
                     broadcastHubEvent({ type: "UPSERT", entity: "bookings", payload: nb, version: hubState.version });
                   }
                 });
-                persistHubState();
+                await persistHubState();
               } else if (reqAction === "cancelBooking") {
                 const cancelId = String(body?.bookingId || body?.id || jsonData?.bookingId || "").toLowerCase().trim();
                 if (cancelId) {
@@ -770,7 +2686,7 @@ app.post("/api/gas/proxy", async (req, res) => {
                     }
                     return b;
                   });
-                  persistHubState();
+                  await persistHubState();
                   broadcastHubEvent({ type: "CANCEL", entity: "bookings", id: cancelId, payload: { reason: body?.reason }, version: hubState.version });
                 }
               } else if (reqAction === "deleteBooking") {
@@ -778,7 +2694,7 @@ app.post("/api/gas/proxy", async (req, res) => {
                 if (delId) {
                   hubState.deletedIds[delId] = Date.now();
                   hubState.bookings = hubState.bookings.filter((b) => String(b.id || "").toLowerCase().trim() !== delId);
-                  persistHubState();
+                  await persistHubState();
                   broadcastHubEvent({ type: "DELETE", entity: "bookings", id: delId, version: hubState.version });
                 }
               }
@@ -2067,5 +3983,32 @@ async function startServer() {
     console.log(`Executive Facility Booking Server running on http://0.0.0.0:${PORT}`);
   });
 }
-startServer();
+if (!process.env.VITEST) {
+  startServer();
+}
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  AsyncMutex,
+  app,
+  checkServerBookingConflict,
+  createTestSession,
+  doPersistHubState,
+  doTimeRangesOverlap,
+  hubState,
+  loadServerSessions,
+  logServerSecurity,
+  markHubStateDirty,
+  mutationMutex,
+  persistHubState,
+  persistServerSessions,
+  reconcileServerIsolationRooms,
+  requireAuth,
+  resolveServerFacilityId,
+  serverAuditLogs,
+  serverIsolationHistory,
+  serverSessions,
+  signSessionToken,
+  verifyServerSession,
+  verifySignedToken
+});
 //# sourceMappingURL=server.cjs.map
