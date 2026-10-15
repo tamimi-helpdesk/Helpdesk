@@ -8,6 +8,7 @@
  */
 
 import { GreenApiService } from './greenApiService';
+import { PERMANENT_GREEN_API_CONFIG } from '../config/defaultGreenApiConfig';
 
 export type WhatsAppProviderType = 'green_api' | 'meta_cloud' | 'custom_gateway' | 'direct_webhook';
 
@@ -59,13 +60,13 @@ const BACKUP_STORAGE_KEY = 'tamimi_universal_whatsapp_cfg_backup_v1';
 
 const DEFAULT_CONFIG: UniversalWhatsAppConfig = {
   activeProvider: 'green_api',
-  isConfigured: false,
+  isConfigured: true,
   greenApi: {
-    instanceId: '',
-    apiToken: '',
-    apiUrl: '',
-    targetGroupChatId: '',
-    targetGroupName: '',
+    instanceId: PERMANENT_GREEN_API_CONFIG.instanceId,
+    apiToken: PERMANENT_GREEN_API_CONFIG.apiToken,
+    apiUrl: PERMANENT_GREEN_API_CONFIG.apiUrl,
+    targetGroupChatId: PERMANENT_GREEN_API_CONFIG.targetGroupChatId,
+    targetGroupName: PERMANENT_GREEN_API_CONFIG.targetGroupName,
   },
   metaCloud: {
     phoneNumberId: '',
@@ -117,10 +118,20 @@ export const WhatsAppUniversalService = {
             targetGroupName: legacyGreen.targetGroupName,
           };
         }
+        const effectiveGreen = {
+          ...DEFAULT_CONFIG.greenApi,
+          ...(parsed.greenApi || {}),
+        };
+        if (!effectiveGreen.instanceId) effectiveGreen.instanceId = PERMANENT_GREEN_API_CONFIG.instanceId;
+        if (!effectiveGreen.apiToken) effectiveGreen.apiToken = PERMANENT_GREEN_API_CONFIG.apiToken;
+        if (!effectiveGreen.apiUrl) effectiveGreen.apiUrl = PERMANENT_GREEN_API_CONFIG.apiUrl;
+        if (!effectiveGreen.targetGroupChatId) effectiveGreen.targetGroupChatId = PERMANENT_GREEN_API_CONFIG.targetGroupChatId;
+        if (!effectiveGreen.targetGroupName) effectiveGreen.targetGroupName = PERMANENT_GREEN_API_CONFIG.targetGroupName;
+
         return {
           ...DEFAULT_CONFIG,
           ...parsed,
-          greenApi: { ...DEFAULT_CONFIG.greenApi, ...(parsed.greenApi || {}) },
+          greenApi: effectiveGreen,
           metaCloud: { ...DEFAULT_CONFIG.metaCloud, ...(parsed.metaCloud || {}) },
           customGateway: { ...DEFAULT_CONFIG.customGateway, ...(parsed.customGateway || {}) },
           directWebhook: { ...DEFAULT_CONFIG.directWebhook, ...(parsed.directWebhook || {}) },
@@ -129,12 +140,13 @@ export const WhatsAppUniversalService = {
         return {
           ...DEFAULT_CONFIG,
           activeProvider: 'green_api',
-          isConfigured: legacyGreen.isConfigured,
+          isConfigured: true,
           greenApi: {
             instanceId: legacyGreen.instanceId,
             apiToken: legacyGreen.apiToken,
-            targetGroupChatId: legacyGreen.targetGroupChatId,
-            targetGroupName: legacyGreen.targetGroupName,
+            apiUrl: legacyGreen.apiUrl || PERMANENT_GREEN_API_CONFIG.apiUrl,
+            targetGroupChatId: legacyGreen.targetGroupChatId || PERMANENT_GREEN_API_CONFIG.targetGroupChatId,
+            targetGroupName: legacyGreen.targetGroupName || PERMANENT_GREEN_API_CONFIG.targetGroupName,
           },
         };
       }

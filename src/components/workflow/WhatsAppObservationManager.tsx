@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   FileSpreadsheet,
   Download,
@@ -179,7 +179,17 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
     providerName: 'Green API',
   });
 
-  const checkApiHealth = useCallback(async () => {
+  const lastHealthCheckRef = useRef<number>(0);
+  const isCheckingRef = useRef<boolean>(false);
+
+  const checkApiHealth = useCallback(async (forceFresh = false) => {
+    const now = Date.now();
+    if (!forceFresh && (isCheckingRef.current || now - lastHealthCheckRef.current < 25000)) {
+      return;
+    }
+    isCheckingRef.current = true;
+    lastHealthCheckRef.current = now;
+
     const uCfg = WhatsAppUniversalService.getConfig();
     const gCfg = GreenApiService.getConfig();
 
@@ -204,6 +214,7 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
           providerName: providerTitle,
           lastChecked: new Date(),
         });
+        isCheckingRef.current = false;
         return;
       }
 
@@ -215,11 +226,12 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
       }));
 
       try {
-        const result = await GreenApiService.testConnection(instanceId, apiToken, apiUrl);
+        const result = await GreenApiService.testConnection(instanceId, apiToken, apiUrl, forceFresh);
         if (result.success) {
+          const isSleep = result.state === 'sleepMode';
           setApiHealth({
             status: 'connected',
-            message: `Connected (${result.state || 'Authorized'})`,
+            message: isSleep ? 'Connected (Phone Standby - Ready)' : `Connected (${result.state || 'Authorized'})`,
             providerName: providerTitle,
             lastChecked: new Date(),
           });
@@ -227,13 +239,6 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
           setApiHealth({
             status: 'error',
             message: 'Scan QR Code in green-api.com console',
-            providerName: providerTitle,
-            lastChecked: new Date(),
-          });
-        } else if (result.state === 'sleepMode') {
-          setApiHealth({
-            status: 'error',
-            message: 'WhatsApp Sleeping (Unlock phone screen)',
             providerName: providerTitle,
             lastChecked: new Date(),
           });
@@ -252,6 +257,8 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
           providerName: providerTitle,
           lastChecked: new Date(),
         });
+      } finally {
+        isCheckingRef.current = false;
       }
     } else if (uCfg.activeProvider === 'meta_cloud') {
       if (!uCfg.metaCloud.phoneNumberId || !uCfg.metaCloud.accessToken) {
@@ -301,7 +308,7 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
     setObservations(WhatsAppObservationService.getAll());
     setGreenApiConfig(GreenApiService.getConfig());
     setUniversalConfig(WhatsAppUniversalService.getConfig());
-    checkApiHealth();
+    checkApiHealth(false);
   };
 
   // Auto clean invalid data and ensure accurate category classifications upon mount
@@ -309,11 +316,9 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
     WhatsAppObservationService.cleanupInvalidObservations();
     WhatsAppObservationService.reclassifyAll();
     refreshList();
-    checkApiHealth();
 
     const handleConfigChange = () => {
       refreshList();
-      checkApiHealth();
     };
     window.addEventListener('tamimi_whatsapp_config_changed', handleConfigChange);
     return () => {

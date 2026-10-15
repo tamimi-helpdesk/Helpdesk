@@ -1,6 +1,6 @@
 {
   "name": "Helpdesk Booking System",
-  "description": "Imported from GitHub",
+  "description": "Executive Facility Booking & Operations Portal for Tamimi Global with real-time multi-computer sync, work orders, and Google Sheets integration",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
