@@ -2799,10 +2799,14 @@ function getGreenApiCandidateHosts(cleanId, customApiUrl) {
     list.push("https://api.green-api.com");
   }
   if (cleanId.length >= 4) {
-    const subHost = `https://${cleanId.slice(0, 4)}.api.green-api.com`;
-    if (!list.includes(subHost)) {
-      list.push(subHost);
-    }
+    const cluster = cleanId.slice(0, 4);
+    const subNoHyphen = `https://${cluster}.api.greenapi.com`;
+    const subHyphen = `https://${cluster}.api.green-api.com`;
+    if (!list.includes(subNoHyphen)) list.push(subNoHyphen);
+    if (!list.includes(subHyphen)) list.push(subHyphen);
+  }
+  if (!list.includes("https://api.greenapi.com")) {
+    list.push("https://api.greenapi.com");
   }
   if (!list.includes("https://media.green-api.com")) {
     list.push("https://media.green-api.com");

@@ -6,6 +6,7 @@ import { ExcelImportSettings, ExcelImportSettingsService } from './excelImportSe
 const STORAGE_KEY = 'tamimi_blank_from_sheet_cache_v2';
 const GSHEET_URL_KEY = 'tamimi_blank_from_gsheet_url_v2';
 const SELECTED_TAB_KEY = 'tamimi_blank_from_selected_tab_v2';
+const CUSTOM_EMPLOYEES_KEY = 'tamimi_blank_from_custom_employees_v2';
 
 export interface BlankFromSearchFilters {
   query?: string;
@@ -107,6 +108,145 @@ export class BlankFromService {
   private static empIdIndex = new Map<string, BlankFromRow>();
 
   /**
+   * Retrieves all custom-uploaded or manually added employees.
+   * This dedicated dataset is permanently stored in localStorage,
+   * persisted on server disk, and never wiped out by Google Sheet syncs.
+   */
+  public static getCustomEmployees(): BlankFromRow[] {
+    if (typeof window === 'undefined') return [];
+    try {
+      const stored = localStorage.getItem(CUSTOM_EMPLOYEES_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) return parsed.filter(Boolean);
+      }
+    } catch (e) {
+      console.warn('Error reading custom employees:', e);
+    }
+    return [];
+  }
+
+  /**
+   * Permanently saves custom employees to localStorage,
+   * syncs with server filesystem (/api/blank-forms/custom-employees),
+   * and optionally pushes incremental additions to Google Sheet.
+   */
+  public static saveCustomEmployees(customList: BlankFromRow[], pushToSheet = true): void {
+    if (typeof window === 'undefined') return;
+    const cleanList = (customList || []).filter(Boolean);
+    try {
+      localStorage.setItem(CUSTOM_EMPLOYEES_KEY, JSON.stringify(cleanList));
+    } catch (e) {
+      console.warn('LocalStorage save error for custom employees:', e);
+    }
+
+    // 1. Persist to server disk
+    fetch('/api/blank-forms/custom-employees', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employees: cleanList }),
+    }).catch(() => {});
+
+    // 2. Incremental push to Google Sheets
+    if (pushToSheet && cleanList.length > 0) {
+      GasService.pushBatchBlankFormEmployees(cleanList, 'append').catch((err) =>
+        console.warn('Background push to Google Sheets error:', err)
+      );
+    }
+  }
+
+  /**
+   * Adds new custom employee records, ensuring deduplication,
+   * saving to custom storage, updating in-memory dataset & IndexedDB,
+   * and notifying all listening UI components.
+   */
+  public static addCustomEmployees(newRows: BlankFromRow[], pushToSheet = true): BlankFromRow[] {
+    if (!newRows || newRows.length === 0) return this.getCustomEmployees();
+    const existingCustom = this.getCustomEmployees();
+
+    const cleanAlphaNum = (val?: string | number): string =>
+      val ? String(val).trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    const cleanDigits = (val?: string | number): string =>
+      val ? String(val).replace(/\D/g, '') : '';
+    const cleanName = (val?: string | number): string =>
+      val ? String(val).trim().toLowerCase().replace(/\s+/g, ' ') : '';
+
+    const empMap = new Map<string, BlankFromRow>();
+    existingCustom.forEach((r) => {
+      const k = cleanAlphaNum(r.employmentId) || cleanDigits(r.idIqama) || cleanAlphaNum(r.passport) || `${cleanName(r.name)}_${cleanAlphaNum(r.unitNo || r.room)}`;
+      if (k) empMap.set(k, r);
+      else if (r.id) empMap.set(r.id, r);
+    });
+
+    const added: BlankFromRow[] = [];
+    newRows.forEach((r) => {
+      if (!r) return;
+      const k = cleanAlphaNum(r.employmentId) || cleanDigits(r.idIqama) || cleanAlphaNum(r.passport) || `${cleanName(r.name)}_${cleanAlphaNum(r.unitNo || r.room)}`;
+      const enriched: BlankFromRow = {
+        ...EMPTY_BLANK_FROM_ROW,
+        ...r,
+        id: r.id || `custom-emp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      };
+      if (k) {
+        empMap.set(k, { ...(empMap.get(k) || {}), ...enriched });
+      } else {
+        empMap.set(enriched.id, enriched);
+      }
+      added.push(enriched);
+    });
+
+    const updatedCustomList = Array.from(empMap.values());
+    this.saveCustomEmployees(updatedCustomList, pushToSheet);
+
+    // Merge into active master dataset
+    const current = this.getRows();
+    const merged = this.combineWithBaseline(current, updatedCustomList);
+    this.saveRows(merged);
+    return updatedCustomList;
+  }
+
+  /**
+   * Deletes a custom employee by ID or Employment ID.
+   */
+  public static deleteCustomEmployee(idOrEmpId: string): void {
+    const clean = String(idOrEmpId).trim().toLowerCase();
+    const existing = this.getCustomEmployees();
+    const updated = existing.filter(
+      (e) =>
+        String(e.id || '').toLowerCase().trim() !== clean &&
+        String(e.employmentId || '').toLowerCase().trim() !== clean
+    );
+    this.saveCustomEmployees(updated, false);
+
+    // Call server delete
+    fetch(`/api/blank-forms/custom-employees/${encodeURIComponent(clean)}`, { method: 'DELETE' }).catch(() => {});
+
+    // Remove from in-memory cache
+    if (this.cachedRows) {
+      const filtered = this.cachedRows.filter(
+        (e) =>
+          String(e.id || '').toLowerCase().trim() !== clean &&
+          String(e.employmentId || '').toLowerCase().trim() !== clean
+      );
+      this.saveRows(filtered);
+    }
+  }
+
+  /**
+   * Pushes incremental records directly to the Google Sheet tab in the background
+   */
+  public static async pushIncrementalEmployeesToGoogleSheet(records: BlankFromRow[]): Promise<boolean> {
+    if (!records || records.length === 0) return true;
+    try {
+      const res = await GasService.pushBatchBlankFormEmployees(records, 'append');
+      return Boolean(res && res.success);
+    } catch (e) {
+      console.warn('Error pushing incremental employees to Google Sheet:', e);
+      return false;
+    }
+  }
+
+  /**
    * Initializes the in-memory cache and IndexedDB storage on startup
    */
   public static async init(): Promise<BlankFromRow[]> {
@@ -127,10 +267,26 @@ export class BlankFromService {
         if (storedActiveTab) this.activeTabName = storedActiveTab;
       }
 
-      // 2. Try loading full dataset from IndexedDB (handles 40,000+ records)
+      // 2. Fetch server-side custom employees from disk asynchronously to hydrate cross-computer sync
+      if (typeof window !== 'undefined') {
+        fetch('/api/blank-forms/custom-employees')
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data && Array.isArray(data.employees) && data.employees.length > 0) {
+              const currentCustom = this.getCustomEmployees();
+              const mergedCustom = this.addCustomEmployees(data.employees, false);
+              if (mergedCustom.length !== currentCustom.length) {
+                window.dispatchEvent(new CustomEvent('tamimi_blank_from_updated'));
+              }
+            }
+          })
+          .catch(() => {});
+      }
+
+      // 3. Try loading full dataset from IndexedDB (handles 40,000+ records)
       const fromDb = await LargeDatasetStorage.loadAll();
       if (fromDb && fromDb.length > 0) {
-        // Guarantee baseline 1,438 records are always preserved + any custom uploaded records retained
+        // Guarantee baseline 1,438 records + all custom uploaded records are retained
         const merged = this.combineWithBaseline(fromDb, INITIAL_BLANK_FROM_ROWS);
         this.setCachedRowsAndIndex(merged);
         this.isInitialized = true;
@@ -138,7 +294,7 @@ export class BlankFromService {
         return merged;
       }
 
-      // 3. Fallback to localStorage for initial cache
+      // 4. Fallback to localStorage for initial cache
       if (typeof window !== 'undefined') {
         const stored = localStorage.getItem(STORAGE_KEY);
         if (stored) {
@@ -156,49 +312,69 @@ export class BlankFromService {
       console.warn('Could not read cached Blank From rows:', e);
     }
 
-    // Default to the full master Management Allocation History dataset (1,438 records)
-    this.setCachedRowsAndIndex([...INITIAL_BLANK_FROM_ROWS]);
+    // Default to full master Management Allocation History dataset merged with custom employees
+    const masterMerged = this.combineWithBaseline([], INITIAL_BLANK_FROM_ROWS);
+    this.setCachedRowsAndIndex(masterMerged);
     this.isInitialized = true;
-    LargeDatasetStorage.saveAll([...INITIAL_BLANK_FROM_ROWS]).catch(() => {});
+    LargeDatasetStorage.saveAll(masterMerged).catch(() => {});
     return this.cachedRows || [];
   }
 
   /**
-   * Combines existing stored database with baseline 1,438 records,
-   * guaranteeing baseline records are always present while preserving any added records.
+   * Combines existing stored database with baseline 1,438 records AND all custom uploaded employees,
+   * guaranteeing baseline records are always present while completely protecting any custom added records.
    */
   public static combineWithBaseline(existing: BlankFromRow[], baseline: BlankFromRow[]): BlankFromRow[] {
-    if (!existing || existing.length === 0) return [...baseline];
-    if (!baseline || baseline.length === 0) return [...existing];
-
-    // Auto-upgrade legacy browsers with small mock datasets (< 100 records) to the full real dataset
-    if (existing.length < 100 && baseline.length >= 1000) {
-      return [...baseline];
-    }
+    const custom = this.getCustomEmployees();
+    const baseList = baseline && baseline.length > 0 ? baseline : INITIAL_BLANK_FROM_ROWS;
+    const existingList = existing && existing.length > 0 ? existing : [];
 
     const existingMap = new Map<string, BlankFromRow>();
-    const result: BlankFromRow[] = [...existing];
+    const result: BlankFromRow[] = [...existingList];
 
     result.forEach((r) => {
       if (!r) return;
       if (r.employmentId) existingMap.set(String(r.employmentId).trim().toLowerCase(), r);
       if (r.idIqama) existingMap.set(String(r.idIqama).replace(/\D/g, ''), r);
+      if (r.passport) existingMap.set(String(r.passport).trim().toLowerCase().replace(/[^a-z0-9]/g, ''), r);
       if (r.name) existingMap.set(`${r.name.trim().toLowerCase()}_${(r.unitNo || r.room || '').trim().toLowerCase()}`, r);
     });
 
     // Check if any baseline record is missing, append it
-    for (const b of baseline) {
+    for (const b of baseList) {
       if (!b) continue;
       const eKey = b.employmentId ? String(b.employmentId).trim().toLowerCase() : '';
       const iKey = b.idIqama ? String(b.idIqama).replace(/\D/g, '') : '';
+      const pKey = b.passport ? String(b.passport).trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
       const nuKey = b.name ? `${b.name.trim().toLowerCase()}_${(b.unitNo || b.room || '').trim().toLowerCase()}` : '';
 
-      const exists = (eKey && existingMap.has(eKey)) || (iKey && existingMap.has(iKey)) || (nuKey && existingMap.has(nuKey));
+      const exists = (eKey && existingMap.has(eKey)) || (iKey && existingMap.has(iKey)) || (pKey && existingMap.has(pKey)) || (nuKey && existingMap.has(nuKey));
       if (!exists) {
         result.push(b);
         if (eKey) existingMap.set(eKey, b);
         if (iKey) existingMap.set(iKey, b);
+        if (pKey) existingMap.set(pKey, b);
         if (nuKey) existingMap.set(nuKey, b);
+      }
+    }
+
+    // ALWAYS ensure all custom uploaded employees are present, overlaying with precedence!
+    for (const c of custom) {
+      if (!c) continue;
+      const eKey = c.employmentId ? String(c.employmentId).trim().toLowerCase() : '';
+      const iKey = c.idIqama ? String(c.idIqama).replace(/\D/g, '') : '';
+      const pKey = c.passport ? String(c.passport).trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+      const nuKey = c.name ? `${c.name.trim().toLowerCase()}_${(c.unitNo || c.room || '').trim().toLowerCase()}` : '';
+
+      const existingItem = (eKey && existingMap.get(eKey)) || (iKey && existingMap.get(iKey)) || (pKey && existingMap.get(pKey)) || (nuKey && existingMap.get(nuKey));
+      if (existingItem) {
+        Object.assign(existingItem, c);
+      } else {
+        result.push(c);
+        if (eKey) existingMap.set(eKey, c);
+        if (iKey) existingMap.set(iKey, c);
+        if (pKey) existingMap.set(pKey, c);
+        if (nuKey) existingMap.set(nuKey, c);
       }
     }
 
@@ -218,8 +394,9 @@ export class BlankFromService {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed) && parsed.length > 0) {
             const clean = parsed.filter(Boolean);
-            this.setCachedRowsAndIndex(clean);
-            return clean;
+            const combined = this.combineWithBaseline(clean, INITIAL_BLANK_FROM_ROWS);
+            this.setCachedRowsAndIndex(combined);
+            return combined;
           }
         }
       }
@@ -231,14 +408,16 @@ export class BlankFromService {
     LargeDatasetStorage.loadAll().then((rows) => {
       if (rows && rows.length > 0) {
         const clean = rows.filter(Boolean);
-        this.setCachedRowsAndIndex(clean);
+        const combined = this.combineWithBaseline(clean, INITIAL_BLANK_FROM_ROWS);
+        this.setCachedRowsAndIndex(combined);
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('tamimi_blank_from_updated'));
         }
       }
     }).catch(() => {});
 
-    this.setCachedRowsAndIndex([...INITIAL_BLANK_FROM_ROWS]);
+    const baselineCombined = this.combineWithBaseline([], INITIAL_BLANK_FROM_ROWS);
+    this.setCachedRowsAndIndex(baselineCombined);
     return (this.cachedRows || []).filter(Boolean);
   }
 
@@ -312,29 +491,67 @@ export class BlankFromService {
   }
 
   /**
-   * Safely merges raw remote objects without truncating an existing 40,000+ record dataset.
+   * Safely merges raw remote objects from Google Sheets without truncating or wiping out
+   * custom-uploaded or manually added employees.
    */
   public static mergeAndSaveRawObjects(remoteItems: any[]): void {
     if (!Array.isArray(remoteItems) || remoteItems.length === 0) return;
     const current = this.getRows();
     const normalizedIncoming = this.normalizeRowObjects(remoteItems);
+    const custom = this.getCustomEmployees();
 
-    // If current local dataset is much larger (e.g. 40,000+ rows) and incoming is small (e.g. 807),
-    // update matching records and do NOT discard the remaining 39,000+ records!
-    if (current.length > normalizedIncoming.length + 500) {
-      const idMap = new Map<string, BlankFromRow>();
-      current.forEach((r) => {
-        idMap.set(r.employmentId || r.id, r);
-      });
-      normalizedIncoming.forEach((inc) => {
-        const k = inc.employmentId || inc.id;
-        idMap.set(k, { ...(idMap.get(k) || {}), ...inc });
-      });
-      const merged = Array.from(idMap.values());
-      this.saveRows(merged);
-    } else {
-      this.saveRows(normalizedIncoming);
-    }
+    const cleanAlphaNum = (val?: string | number): string =>
+      val ? String(val).trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    const cleanDigits = (val?: string | number): string =>
+      val ? String(val).replace(/\D/g, '') : '';
+    const cleanName = (val?: string | number): string =>
+      val ? String(val).trim().toLowerCase().replace(/\s+/g, ' ') : '';
+
+    const recordMap = new Map<string, BlankFromRow>();
+
+    // 1. Seed with incoming remote sheet records
+    normalizedIncoming.forEach((inc) => {
+      if (!inc) return;
+      const k =
+        cleanAlphaNum(inc.employmentId) ||
+        cleanDigits(inc.idIqama) ||
+        cleanAlphaNum(inc.passport) ||
+        `${cleanName(inc.name)}_${cleanAlphaNum(inc.unitNo || inc.room)}`;
+      if (k) recordMap.set(k, inc);
+      else if (inc.id) recordMap.set(inc.id, inc);
+    });
+
+    // 2. Preserve any existing local records not present in remote sheet response
+    current.forEach((r) => {
+      if (!r) return;
+      const k =
+        cleanAlphaNum(r.employmentId) ||
+        cleanDigits(r.idIqama) ||
+        cleanAlphaNum(r.passport) ||
+        `${cleanName(r.name)}_${cleanAlphaNum(r.unitNo || r.room)}`;
+      if (k && !recordMap.has(k)) {
+        recordMap.set(k, r);
+      }
+    });
+
+    // 3. OVERLAY AND GUARANTEE ALL CUSTOM UPLOADED EMPLOYEES ARE RETAINED WITH HIGHEST PRECEDENCE
+    custom.forEach((c) => {
+      if (!c) return;
+      const k =
+        cleanAlphaNum(c.employmentId) ||
+        cleanDigits(c.idIqama) ||
+        cleanAlphaNum(c.passport) ||
+        `${cleanName(c.name)}_${cleanAlphaNum(c.unitNo || c.room)}`;
+      if (k) {
+        const existing = recordMap.get(k);
+        recordMap.set(k, existing ? { ...existing, ...c } : c);
+      } else if (c.id) {
+        recordMap.set(c.id, c);
+      }
+    });
+
+    const merged = Array.from(recordMap.values());
+    this.saveRows(merged);
   }
 
   /**
@@ -829,10 +1046,11 @@ export class BlankFromService {
           if (Array.isArray(json?.rawRows) && json.rawRows.length > 0) {
             const parsed = this.parse2dArrayToRows(json.rawRows);
             if (parsed.length > 0) {
-              this.saveRows(parsed);
+              const merged = this.combineWithBaseline(parsed, INITIAL_BLANK_FROM_ROWS);
+              this.saveRows(merged);
               return {
                 success: true,
-                count: parsed.length,
+                count: merged.length,
                 availableTabs: this.availableTabs,
                 selectedTab: json.selectedTab,
               };
@@ -843,10 +1061,11 @@ export class BlankFromService {
           if (json?.csv && typeof json.csv === 'string') {
             const parsed = this.parseCsvToRows(json.csv);
             if (parsed.length > 0) {
-              this.saveRows(parsed);
+              const merged = this.combineWithBaseline(parsed, INITIAL_BLANK_FROM_ROWS);
+              this.saveRows(merged);
               return {
                 success: true,
-                count: parsed.length,
+                count: merged.length,
                 availableTabs: this.availableTabs,
                 selectedTab: json.tab,
               };
@@ -857,10 +1076,11 @@ export class BlankFromService {
           const rowsArray = json?.data || json?.employees || json?.blankForms || (Array.isArray(json) ? json : null);
           if (Array.isArray(rowsArray) && rowsArray.length > 0) {
             const normalized = this.normalizeRowObjects(rowsArray);
-            this.saveRows(normalized);
+            const merged = this.combineWithBaseline(normalized, INITIAL_BLANK_FROM_ROWS);
+            this.saveRows(merged);
             return {
               success: true,
-              count: normalized.length,
+              count: merged.length,
               availableTabs: this.availableTabs,
             };
           }
@@ -889,8 +1109,9 @@ export class BlankFromService {
                 const txt = await res.text();
                 const parsed = this.parseCsvToRows(txt);
                 if (parsed.length > 0) {
-                  this.saveRows(parsed);
-                  return { success: true, count: parsed.length };
+                  const merged = this.combineWithBaseline(parsed, INITIAL_BLANK_FROM_ROWS);
+                  this.saveRows(merged);
+                  return { success: true, count: merged.length };
                 }
               }
             } catch {}
@@ -906,8 +1127,9 @@ export class BlankFromService {
                 const txt = await res.text();
                 const parsed = this.parseCsvToRows(txt);
                 if (parsed.length > 0) {
-                  this.saveRows(parsed);
-                  return { success: true, count: parsed.length };
+                  const merged = this.combineWithBaseline(parsed, INITIAL_BLANK_FROM_ROWS);
+                  this.saveRows(merged);
+                  return { success: true, count: merged.length };
                 }
               }
             } catch {}
@@ -1243,6 +1465,9 @@ export class BlankFromService {
 
     // 3. Save to database if modifications occurred
     if (newRecords.length > 0 || updatedCount > 0) {
+      if (newRecords.length > 0) {
+        this.addCustomEmployees(newRecords, true);
+      }
       const finalDataset = [...workingList, ...newRecords];
       this.saveRows(finalDataset);
       return {

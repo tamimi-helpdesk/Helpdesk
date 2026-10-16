@@ -2448,6 +2448,91 @@ app.get('/api/gas/sheet-data', async (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
+// BLANK FORMS CUSTOM EMPLOYEES PERSISTENCE ENDPOINTS
+// ---------------------------------------------------------------------------
+const CUSTOM_EMPLOYEES_FILE_PATH = path.join(process.cwd(), 'tamimi_custom_employees.json');
+
+app.get('/api/blank-forms/custom-employees', (req: Request, res: Response) => {
+  try {
+    if (fs.existsSync(CUSTOM_EMPLOYEES_FILE_PATH)) {
+      const raw = fs.readFileSync(CUSTOM_EMPLOYEES_FILE_PATH, 'utf-8');
+      const employees = JSON.parse(raw);
+      return res.json({ success: true, employees: Array.isArray(employees) ? employees : [] });
+    }
+    return res.json({ success: true, employees: [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message, employees: [] });
+  }
+});
+
+app.post('/api/blank-forms/custom-employees', (req: Request, res: Response) => {
+  try {
+    const { employees = [] } = req.body || {};
+    if (!Array.isArray(employees)) {
+      return res.status(400).json({ success: false, error: 'Invalid employees array' });
+    }
+
+    let existing: any[] = [];
+    if (fs.existsSync(CUSTOM_EMPLOYEES_FILE_PATH)) {
+      try {
+        existing = JSON.parse(fs.readFileSync(CUSTOM_EMPLOYEES_FILE_PATH, 'utf-8'));
+        if (!Array.isArray(existing)) existing = [];
+      } catch (_) {
+        existing = [];
+      }
+    }
+
+    // Map-based merge by employmentId or id or name+unit
+    const empMap = new Map<string, any>();
+    existing.forEach((e) => {
+      if (e) {
+        const key = e.employmentId || e.id || `${e.name}_${e.unitNo}`;
+        empMap.set(key, e);
+      }
+    });
+
+    employees.forEach((e) => {
+      if (e) {
+        const key = e.employmentId || e.id || `${e.name}_${e.unitNo}`;
+        empMap.set(key, { ...(empMap.get(key) || {}), ...e });
+      }
+    });
+
+    const merged = Array.from(empMap.values());
+    fs.writeFileSync(CUSTOM_EMPLOYEES_FILE_PATH, JSON.stringify(merged, null, 2), 'utf-8');
+    return res.json({ success: true, count: merged.length, employees: merged });
+  } catch (err: any) {
+    console.error('[Server] Error saving custom employees:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/blank-forms/custom-employees/:id', (req: Request, res: Response) => {
+  try {
+    const rawId = String(req.params.id || '').toLowerCase().trim();
+    if (!rawId) return res.status(400).json({ success: false, error: 'ID required' });
+
+    if (fs.existsSync(CUSTOM_EMPLOYEES_FILE_PATH)) {
+      try {
+        const existing: any[] = JSON.parse(fs.readFileSync(CUSTOM_EMPLOYEES_FILE_PATH, 'utf-8'));
+        if (Array.isArray(existing)) {
+          const filtered = existing.filter(
+            (e) =>
+              String(e.id || '').toLowerCase().trim() !== rawId &&
+              String(e.employmentId || '').toLowerCase().trim() !== rawId
+          );
+          fs.writeFileSync(CUSTOM_EMPLOYEES_FILE_PATH, JSON.stringify(filtered, null, 2), 'utf-8');
+          return res.json({ success: true, count: filtered.length, employees: filtered });
+        }
+      } catch (_) {}
+    }
+    return res.json({ success: true, count: 0, employees: [] });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GREEN API PROXY ENDPOINTS (Direct WhatsApp Group & Message Fetching)
 // ---------------------------------------------------------------------------
 // GREEN API PROXY ENDPOINTS (Direct WhatsApp Group & Message Fetching)

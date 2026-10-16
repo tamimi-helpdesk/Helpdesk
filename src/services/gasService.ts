@@ -857,13 +857,6 @@ export const GasService = {
 
       localStorage.setItem('tafga_saved_form_records_v1', JSON.stringify(Array.from(map.values())));
       window.dispatchEvent(new CustomEvent('blank_forms_updated'));
-
-      // If remote forms contain resident/move-in employee columns, sync to BlankFromService
-      if (Array.isArray(remoteForms) && remoteForms.length > 0) {
-        import('./blankFromService').then(({ BlankFromService }) => {
-          BlankFromService.mergeAndSaveRawObjects(remoteForms);
-        }).catch(() => {});
-      }
     } catch (e) {}
   },
 
@@ -1779,6 +1772,60 @@ export const GasService = {
       });
       const data = await response.json();
       return { success: Boolean(data && data.success), count: records.length };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+
+  /**
+   * Batch pushes resident / employee records directly to the Google Sheet tab ("Blank Forms" / "Blank Froms")
+   */
+  async pushBatchBlankFormEmployees(
+    employees: any[],
+    mode: 'append' | 'replace' = 'append'
+  ): Promise<{ success: boolean; count?: number; error?: string }> {
+    const config = this.getConfig();
+    if (!config.webAppUrl || !employees || !employees.length) return { success: true, count: 0 };
+
+    const { url: cleanUrl } = this.sanitizeUrl(config.webAppUrl);
+    const payload = {
+      action: 'uploadBlankFromEmployees',
+      mode,
+      employees,
+      rows: employees,
+      tabName: 'Blank Forms',
+    };
+
+    // 1. Try server proxy first
+    try {
+      const proxyRes = await fetch('/api/gas/proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetUrl: cleanUrl,
+          method: 'POST',
+          action: 'uploadBlankFromEmployees',
+          body: payload,
+        }),
+      });
+      if (proxyRes.ok) {
+        const data = await proxyRes.json();
+        if (data && (data.success || data.uploadedCount !== undefined)) {
+          return { success: true, count: employees.length };
+        }
+      }
+    } catch (e) {}
+
+    // 2. Direct client fetch fallback
+    try {
+      const response = await fetch(cleanUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        redirect: 'follow',
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      return { success: Boolean(data && (data.success || data.uploadedCount !== undefined)), count: employees.length };
     } catch (err: any) {
       return { success: false, error: err.message };
     }

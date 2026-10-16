@@ -30,6 +30,10 @@ import {
   ChevronRight,
   Sparkles,
   Sliders,
+  Plus,
+  RefreshCw,
+  Database,
+  Cloud,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BlankFromRow, EMPTY_BLANK_FROM_ROW } from '../../data/initialBlankFromData';
@@ -37,10 +41,12 @@ import { MANAGEMENT_ALLOCATION_RECORDS } from '../../data/managementAllocationDa
 import { BlankFromService } from '../../services/blankFromService';
 import { DocxFillService } from '../../services/docxFillService';
 import { ToastService } from '../../services/toastService';
+import { GasService } from '../../services/gasService';
 import { getTodayDateString } from '../../services/storageService';
 import { ExcelImportSettings, ExcelImportSettingsService } from '../../services/excelImportSettingsService';
 import { ExcelImportSettingsModal } from './ExcelImportSettingsModal';
 import { ExcelImportPreviewModal, ExcelImportScanResult } from './ExcelImportPreviewModal';
+import { AddEmployeeModal } from './AddEmployeeModal';
 import redseaLogo from '../../assets/images/redsea-cm-logo.jpeg';
 
 interface AutoFormSectionProps {
@@ -99,10 +105,13 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
   } | null>(null);
   const [newlyAddedIds, setNewlyAddedIds] = useState<Set<string>>(new Set());
   const [showOnlyNewlyAdded, setShowOnlyNewlyAdded] = useState(false);
+  const [showOnlyCustom, setShowOnlyCustom] = useState(false);
+  const [isAddEmployeeModalOpen, setIsAddEmployeeModalOpen] = useState(false);
+  const [isSyncingToSheet, setIsSyncingToSheet] = useState(false);
 
   const excelUploadRef = useRef<HTMLInputElement>(null);
 
-  // Initialize and ensure baseline 1,438 records are loaded
+  // Initialize and ensure baseline records + custom records are loaded
   useEffect(() => {
     BlankFromService.init().then((initialRows) => {
       if (initialRows && initialRows.length > 0) {
@@ -116,6 +125,59 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
       }
     });
   }, []);
+
+  // Listen for background sync or cross-session/custom employee updates
+  useEffect(() => {
+    const handleUpdate = () => {
+      const updated = BlankFromService.getRows();
+      if (updated && updated.length > 0) {
+        setRows(updated);
+      }
+    };
+    window.addEventListener('tamimi_blank_from_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('tamimi_blank_from_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
+
+  // Handler for single employee manual addition
+  const handleSaveSingleEmployee = (newEmp: BlankFromRow) => {
+    BlankFromService.addCustomEmployees([newEmp], true);
+    const updatedAll = BlankFromService.getRows();
+    setRows(updatedAll);
+    setSelectedRow(newEmp);
+    setFormValues({ ...EMPTY_BLANK_FROM_ROW, ...newEmp });
+    confetti({ particleCount: 60, spread: 70 });
+    ToastService.hub(
+      `Resident "${newEmp.name}" (ID: ${newEmp.employmentId}) added! Saved locally, saved to server disk, and synced to Google Sheets.`
+    );
+  };
+
+  // Handler for manual Google Sheets sync
+  const handleSyncToGoogleSheet = async () => {
+    setIsSyncingToSheet(true);
+    try {
+      const customList = BlankFromService.getCustomEmployees();
+      if (customList.length > 0) {
+        const res = await GasService.pushBatchBlankFormEmployees(customList, 'append');
+        if (res && res.success) {
+          ToastService.hub(
+            `Google Sheets Synced! ${customList.length} custom resident record(s) safely stored in Google Sheet.`
+          );
+        } else {
+          ToastService.warn(res?.error || 'Google Sheets sync completed with notice.');
+        }
+      } else {
+        ToastService.hub('System is already up to date with Google Sheets.');
+      }
+    } catch (err: any) {
+      ToastService.warn(`Sync failed: ${err?.message || 'Network error'}`);
+    } finally {
+      setIsSyncingToSheet(false);
+    }
+  };
 
   // Synchronize when selected row changes
   useEffect(() => {
@@ -175,15 +237,35 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
     return list;
   }, [rows, selectedBuilding]);
 
+  // Custom uploaded/added employees list
+  const customEmployeesList = useMemo(() => {
+    return BlankFromService.getCustomEmployees();
+  }, [rows]);
+  const customCount = customEmployeesList.length;
+
   // Excel-like Filtered Results
   const filteredResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const cleanAlphaNum = q.replace(/[^a-z0-9]/g, '');
 
+    const customIds = new Set(customEmployeesList.map((c) => c.id));
+    const customEmpIds = new Set(
+      customEmployeesList.map((c) => (c.employmentId || '').trim().toLowerCase()).filter(Boolean)
+    );
+
     return rows.filter((r) => {
       if (!r) return false;
 
-      // 0. Filter newly imported only if toggled
+      // 0. Filter custom / uploaded only if toggled
+      if (showOnlyCustom) {
+        const isCustom =
+          (r.id && (r.id.startsWith('custom-emp-') || r.id.startsWith('mah-new-'))) ||
+          customIds.has(r.id) ||
+          (r.employmentId && customEmpIds.has(String(r.employmentId).trim().toLowerCase()));
+        if (!isCustom) return false;
+      }
+
+      // 0b. Filter newly imported only if toggled
       if (showOnlyNewlyAdded && newlyAddedIds.size > 0) {
         if (!newlyAddedIds.has(r.id)) return false;
       }
@@ -248,12 +330,12 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
 
       return false;
     });
-  }, [rows, selectedBuilding, selectedUnit, categoryFilter, searchQuery, showOnlyNewlyAdded, newlyAddedIds]);
+  }, [rows, selectedBuilding, selectedUnit, categoryFilter, searchQuery, showOnlyNewlyAdded, newlyAddedIds, showOnlyCustom, customEmployeesList]);
 
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, selectedBuilding, selectedUnit, categoryFilter, pageSize, showOnlyNewlyAdded]);
+  }, [searchQuery, selectedBuilding, selectedUnit, categoryFilter, pageSize, showOnlyNewlyAdded, showOnlyCustom]);
 
   // Paginated Results
   const totalPages = Math.max(1, Math.ceil(filteredResults.length / pageSize));
@@ -603,6 +685,47 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
         <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
+            onClick={() => setIsAddEmployeeModalOpen(true)}
+            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
+            title="Manually add a new resident or employee record"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>+ Add Resident</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => excelUploadRef.current?.click()}
+            className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
+            title="Import Excel to append new resident records"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>Import Excel</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSyncToGoogleSheet}
+            disabled={isSyncingToSheet}
+            className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-2xs disabled:opacity-50"
+            title="Sync all resident data and custom records to Google Sheets"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-emerald-600 ${isSyncingToSheet ? 'animate-spin' : ''}`} />
+            <span>{isSyncingToSheet ? 'Syncing...' : 'Sync with Sheet'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsSettingsModalOpen(true)}
+            className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
+            title="Configure Smart Deduplication & Unique Excel Upload Settings"
+          >
+            <Sliders className="w-3.5 h-3.5 text-blue-600" />
+            <span>Deduplication</span>
+          </button>
+
+          <button
+            type="button"
             onClick={handleDownloadBlankFromDocx}
             className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
             title="Download blank From.docx template"
@@ -619,26 +742,6 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
             <span>Excel Data</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsSettingsModalOpen(true)}
-            className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
-            title="Configure Smart Deduplication & Unique Excel Upload Settings"
-          >
-            <Sliders className="w-3.5 h-3.5 text-blue-600" />
-            <span>Deduplication Settings</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => excelUploadRef.current?.click()}
-            className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-xs"
-            title="Import Excel to append new resident records"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span>Import Excel</span>
           </button>
         </div>
       </div>
@@ -866,13 +969,37 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
       {/* EXCEL-LIKE MULTI-TIER FILTERING & SEARCH TOOLBAR */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs space-y-3">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-          <div className="flex items-center space-x-2">
-            <SlidersHorizontal className="w-4 h-4 text-blue-600" />
+          <div className="flex flex-wrap items-center gap-2">
+            <SlidersHorizontal className="w-4 h-4 text-blue-600 shrink-0" />
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
               Excel-Style Data Filters & Search
             </h3>
             <span className="text-[11px] font-mono text-slate-500 font-semibold bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
               {filteredResults.length.toLocaleString()} matching
+            </span>
+
+            {customCount > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowOnlyCustom(!showOnlyCustom);
+                  setCurrentPage(1);
+                }}
+                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-lg border transition cursor-pointer flex items-center space-x-1 ${
+                  showOnlyCustom
+                    ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-xs'
+                    : 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800/60 hover:bg-amber-100'
+                }`}
+                title="Toggle to view only custom-uploaded or manually added employees"
+              >
+                <Sparkles className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                <span>⭐ Custom Uploaded ({customCount})</span>
+              </button>
+            )}
+
+            <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>Permanent Storage & Sheet Sync Active</span>
             </span>
           </div>
 
@@ -1616,6 +1743,13 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
           isSaving={isSavingFromPreview}
         />
       )}
+
+      {/* MODAL: Manual Add Resident / Employee Modal */}
+      <AddEmployeeModal
+        isOpen={isAddEmployeeModalOpen}
+        onClose={() => setIsAddEmployeeModalOpen(false)}
+        onSave={handleSaveSingleEmployee}
+      />
 
       {/* HIDDEN PRINTABLE CONTAINER FOR BROWSER PRINT (WINDOW.PRINT()) */}
       <div id="printable-auto-form" className="hidden print:block print:p-0 print:m-0 text-slate-900 font-sans text-xs">

@@ -119,7 +119,7 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
     isBlank: boolean;
   } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'TEMPLATES' | 'SAVED_DRAFTS' | 'AUTO_FORM'>('AUTO_FORM');
+  const [activeTab, setActiveTab] = useState<'TEMPLATES' | 'SAVED_DRAFTS' | 'AUTO_FORM'>('TEMPLATES');
 
   // Reload custom templates if updated
   const refreshCustomTemplates = () => {
@@ -282,6 +282,19 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
         <div className="flex items-center space-x-2 overflow-x-auto">
           <button
             type="button"
+            onClick={() => setActiveTab('TEMPLATES')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-2 shrink-0 ${
+              activeTab === 'TEMPLATES'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            <span>Form Catalog ({allTemplates.length})</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('AUTO_FORM')}
             className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-2 shrink-0 ${
               activeTab === 'AUTO_FORM'
@@ -298,19 +311,6 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
             }`}>
               {residentCount.toLocaleString()}
             </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('TEMPLATES')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-2 shrink-0 ${
-              activeTab === 'TEMPLATES'
-                ? 'bg-blue-600 text-white shadow-xs'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>Form Catalog ({allTemplates.length})</span>
           </button>
 
           <button
