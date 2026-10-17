@@ -2482,18 +2482,25 @@ app.post('/api/blank-forms/custom-employees', (req: Request, res: Response) => {
       }
     }
 
-    // Map-based merge by employmentId or id or name+unit
+    // Map-based merge with normalized keys (employmentId, idIqama, passport, name+unit, id)
+    const getNormalizedKey = (e: any): string => {
+      if (!e) return '';
+      const emp = e.employmentId ? String(e.employmentId).trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+      const iq = e.idIqama ? String(e.idIqama).replace(/\D/g, '') : '';
+      const pass = e.passport ? String(e.passport).trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+      const nameUnit = e.name ? `${String(e.name).trim().toLowerCase()}_${String(e.unitNo || e.room || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')}` : '';
+      return emp || iq || pass || nameUnit || String(e.id || '').trim().toLowerCase();
+    };
+
     const empMap = new Map<string, any>();
     existing.forEach((e) => {
-      if (e) {
-        const key = e.employmentId || e.id || `${e.name}_${e.unitNo}`;
-        empMap.set(key, e);
-      }
+      const key = getNormalizedKey(e);
+      if (key) empMap.set(key, e);
     });
 
     employees.forEach((e) => {
-      if (e) {
-        const key = e.employmentId || e.id || `${e.name}_${e.unitNo}`;
+      const key = getNormalizedKey(e);
+      if (key) {
         empMap.set(key, { ...(empMap.get(key) || {}), ...e });
       }
     });

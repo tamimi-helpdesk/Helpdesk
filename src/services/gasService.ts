@@ -836,7 +836,17 @@ export const GasService = {
   },
 
   mergeRemoteBlankForms(remoteForms: any[]) {
+    if (!Array.isArray(remoteForms) || remoteForms.length === 0) return;
     try {
+      const first = remoteForms[0];
+      // If the remote records are resident / employee data from Blank Forms tab
+      if (first && (first.employmentId || first.idIqama || first.passport || first.room || first.house || first.unitNo || first.contractType)) {
+        import('./blankFromService').then(({ BlankFromService }) => {
+          BlankFromService.mergeAndSaveRawObjects(remoteForms);
+        }).catch(() => {});
+        return;
+      }
+
       const raw = localStorage.getItem('tafga_saved_form_records_v1');
       const local = raw ? JSON.parse(raw) : [];
       const map = new Map();

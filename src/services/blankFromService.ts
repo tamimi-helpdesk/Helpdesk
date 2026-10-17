@@ -267,20 +267,20 @@ export class BlankFromService {
         if (storedActiveTab) this.activeTabName = storedActiveTab;
       }
 
-      // 2. Fetch server-side custom employees from disk asynchronously to hydrate cross-computer sync
+      // 2. Fetch server-side custom employees from disk to hydrate cross-computer sync
       if (typeof window !== 'undefined') {
-        fetch('/api/blank-forms/custom-employees')
-          .then((res) => (res.ok ? res.json() : null))
-          .then((data) => {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2000);
+          const srvRes = await fetch('/api/blank-forms/custom-employees', { signal: controller.signal });
+          clearTimeout(timer);
+          if (srvRes.ok) {
+            const data = await srvRes.json();
             if (data && Array.isArray(data.employees) && data.employees.length > 0) {
-              const currentCustom = this.getCustomEmployees();
-              const mergedCustom = this.addCustomEmployees(data.employees, false);
-              if (mergedCustom.length !== currentCustom.length) {
-                window.dispatchEvent(new CustomEvent('tamimi_blank_from_updated'));
-              }
+              this.addCustomEmployees(data.employees, false);
             }
-          })
-          .catch(() => {});
+          }
+        } catch (_) {}
       }
 
       // 3. Try loading full dataset from IndexedDB (handles 40,000+ records)
@@ -368,9 +368,9 @@ export class BlankFromService {
 
       const existingItem = (eKey && existingMap.get(eKey)) || (iKey && existingMap.get(iKey)) || (pKey && existingMap.get(pKey)) || (nuKey && existingMap.get(nuKey));
       if (existingItem) {
-        Object.assign(existingItem, c);
+        Object.assign(existingItem, c, { isCustom: true });
       } else {
-        result.push(c);
+        result.push({ ...c, isCustom: true });
         if (eKey) existingMap.set(eKey, c);
         if (iKey) existingMap.set(iKey, c);
         if (pKey) existingMap.set(pKey, c);
@@ -382,7 +382,20 @@ export class BlankFromService {
   }
 
   public static getRows(): BlankFromRow[] {
+    const custom = this.getCustomEmployees();
+
     if (this.cachedRows && this.cachedRows.length > 0) {
+      // Ensure any newly added custom employees are safely included in cachedRows
+      if (custom.length > 0) {
+        const hasAllCustom = custom.every((c) =>
+          this.cachedRows!.some((r) => r.id === c.id || (c.employmentId && r.employmentId === c.employmentId))
+        );
+        if (!hasAllCustom) {
+          const combined = this.combineWithBaseline(this.cachedRows, INITIAL_BLANK_FROM_ROWS);
+          this.setCachedRowsAndIndex(combined);
+          return combined;
+        }
+      }
       return this.cachedRows.filter(Boolean);
     }
 
@@ -446,7 +459,8 @@ export class BlankFromService {
   }
 
   public static saveRows(rows: BlankFromRow[], tabName?: string): void {
-    this.setCachedRowsAndIndex(rows);
+    const cleanRows = (rows || []).filter(Boolean);
+    this.setCachedRowsAndIndex(cleanRows);
     if (tabName) {
       this.activeTabName = tabName;
       try {
@@ -456,20 +470,36 @@ export class BlankFromService {
       } catch {}
     }
 
-    // Save to IndexedDB (no 5MB size limit; safely stores 40,000+ items)
-    LargeDatasetStorage.saveAll(rows).catch((err) => {
+    // Save full dataset to IndexedDB (no 5MB limit; safely stores 40,000+ items)
+    LargeDatasetStorage.saveAll(cleanRows).catch((err) => {
       console.error('Failed to save to IndexedDB:', err);
     });
 
-    // If dataset is small (< 800 items), also sync to localStorage as instant fallback
+    // Extract all custom employees present in rows to sync to custom storage
+    const customList = this.getCustomEmployees();
+    const customMap = new Map<string, BlankFromRow>();
+    customList.forEach((c) => {
+      if (c && c.id) customMap.set(c.id, c);
+    });
+
+    cleanRows.forEach((r) => {
+      if (!r) return;
+      if (r.isCustom || (r.id && (r.id.startsWith('custom-') || r.id.startsWith('mah-new-')))) {
+        customMap.set(r.id, { ...r, isCustom: true });
+      }
+    });
+
+    if (customMap.size > customList.length) {
+      this.saveCustomEmployees(Array.from(customMap.values()), false);
+    }
+
+    // In localStorage, store ALL custom employees PLUS a slice of baseline items so custom employees are NEVER omitted!
     try {
       if (typeof window !== 'undefined') {
-        if (rows.length <= 800) {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
-        } else {
-          // Store first 100 rows in localStorage as lightweight teaser
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(rows.slice(0, 100)));
-        }
+        const allCustom = Array.from(customMap.values());
+        const otherRows = cleanRows.filter((r) => !customMap.has(r.id));
+        const safeLocalSlice = [...allCustom, ...otherRows.slice(0, 300)];
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(safeLocalSlice));
         window.dispatchEvent(new CustomEvent('tamimi_blank_from_updated'));
       }
     } catch {
@@ -1450,6 +1480,8 @@ export class BlankFromService {
         ...EMPTY_BLANK_FROM_ROW,
         ...inc,
         id: inc.id && !inc.id.startsWith('bfr-') ? inc.id : `mah-new-${Date.now()}-${newRecords.length + 1}`,
+        isCustom: true,
+        uploadedAt: new Date().toISOString(),
       };
 
       newRecords.push(newRecord);

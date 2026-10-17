@@ -35,6 +35,8 @@ export interface BlankFromRow {
   vehicleRegNo?: string;
   vehicleModel?: string;
   carParkSpace?: string;
+  isCustom?: boolean;
+  uploadedAt?: string;
 }
 
 import { MANAGEMENT_ALLOCATION_RECORDS } from './managementAllocationData';

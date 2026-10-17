@@ -160,11 +160,12 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
     setIsSyncingToSheet(true);
     try {
       const customList = BlankFromService.getCustomEmployees();
-      if (customList.length > 0) {
-        const res = await GasService.pushBatchBlankFormEmployees(customList, 'append');
+      const recordsToPush = customList.length > 0 ? customList : rows;
+      if (recordsToPush.length > 0) {
+        const res = await GasService.pushBatchBlankFormEmployees(recordsToPush, 'append');
         if (res && res.success) {
           ToastService.hub(
-            `Google Sheets Synced! ${customList.length} custom resident record(s) safely stored in Google Sheet.`
+            `Google Sheets Synced! ${recordsToPush.length.toLocaleString()} resident record(s) safely stored in Google Sheet ("Blank Forms" tab).`
           );
         } else {
           ToastService.warn(res?.error || 'Google Sheets sync completed with notice.');
