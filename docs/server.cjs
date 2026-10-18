@@ -2787,17 +2787,85 @@ app.get("/api/gas/sheet-data", async (req, res) => {
     });
   }
 });
+var CUSTOM_EMPLOYEES_FILE_PATH = import_path.default.join(process.cwd(), "tamimi_custom_employees.json");
+app.get("/api/blank-forms/custom-employees", (req, res) => {
+  try {
+    if (import_fs.default.existsSync(CUSTOM_EMPLOYEES_FILE_PATH)) {
+      const raw = import_fs.default.readFileSync(CUSTOM_EMPLOYEES_FILE_PATH, "utf-8");
+      const employees = JSON.parse(raw);
+      return res.json({ success: true, employees: Array.isArray(employees) ? employees : [] });
+    }
+    return res.json({ success: true, employees: [] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message, employees: [] });
+  }
+});
+app.post("/api/blank-forms/custom-employees", (req, res) => {
+  try {
+    const { employees = [] } = req.body || {};
+    if (!Array.isArray(employees)) {
+      return res.status(400).json({ success: false, error: "Invalid employees array" });
+    }
+    let existing = [];
+    if (import_fs.default.existsSync(CUSTOM_EMPLOYEES_FILE_PATH)) {
+      try {
+        existing = JSON.parse(import_fs.default.readFileSync(CUSTOM_EMPLOYEES_FILE_PATH, "utf-8"));
+        if (!Array.isArray(existing)) existing = [];
+      } catch (_) {
+        existing = [];
+      }
+    }
+    const getNormalizedKey = (e) => {
+      if (!e) return "";
+      const emp = e.employmentId ? String(e.employmentId).trim().toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+      const iq = e.idIqama ? String(e.idIqama).replace(/\D/g, "") : "";
+      const pass = e.passport ? String(e.passport).trim().toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+      const nameUnit = e.name ? `${String(e.name).trim().toLowerCase()}_${String(e.unitNo || e.room || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "")}` : "";
+      return emp || iq || pass || nameUnit || String(e.id || "").trim().toLowerCase();
+    };
+    const empMap = /* @__PURE__ */ new Map();
+    existing.forEach((e) => {
+      const key = getNormalizedKey(e);
+      if (key) empMap.set(key, e);
+    });
+    employees.forEach((e) => {
+      const key = getNormalizedKey(e);
+      if (key) {
+        empMap.set(key, { ...empMap.get(key) || {}, ...e });
+      }
+    });
+    const merged = Array.from(empMap.values());
+    import_fs.default.writeFileSync(CUSTOM_EMPLOYEES_FILE_PATH, JSON.stringify(merged, null, 2), "utf-8");
+    return res.json({ success: true, count: merged.length, employees: merged });
+  } catch (err) {
+    console.error("[Server] Error saving custom employees:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+app.delete("/api/blank-forms/custom-employees/:id", (req, res) => {
+  try {
+    const rawId = String(req.params.id || "").toLowerCase().trim();
+    if (!rawId) return res.status(400).json({ success: false, error: "ID required" });
+    if (import_fs.default.existsSync(CUSTOM_EMPLOYEES_FILE_PATH)) {
+      try {
+        const existing = JSON.parse(import_fs.default.readFileSync(CUSTOM_EMPLOYEES_FILE_PATH, "utf-8"));
+        if (Array.isArray(existing)) {
+          const filtered = existing.filter(
+            (e) => String(e.id || "").toLowerCase().trim() !== rawId && String(e.employmentId || "").toLowerCase().trim() !== rawId
+          );
+          import_fs.default.writeFileSync(CUSTOM_EMPLOYEES_FILE_PATH, JSON.stringify(filtered, null, 2), "utf-8");
+          return res.json({ success: true, count: filtered.length, employees: filtered });
+        }
+      } catch (_) {
+      }
+    }
+    return res.json({ success: true, count: 0, employees: [] });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 function getGreenApiCandidateHosts(cleanId, customApiUrl) {
   const list = [];
-  if (customApiUrl) {
-    const cleanUrl = String(customApiUrl).trim().replace(/\/+$/, "");
-    if (cleanUrl.startsWith("http")) {
-      list.push(cleanUrl);
-    }
-  }
-  if (!list.includes("https://api.green-api.com")) {
-    list.push("https://api.green-api.com");
-  }
   if (cleanId.length >= 4) {
     const cluster = cleanId.slice(0, 4);
     const subNoHyphen = `https://${cluster}.api.greenapi.com`;
@@ -2805,11 +2873,17 @@ function getGreenApiCandidateHosts(cleanId, customApiUrl) {
     if (!list.includes(subNoHyphen)) list.push(subNoHyphen);
     if (!list.includes(subHyphen)) list.push(subHyphen);
   }
+  if (customApiUrl) {
+    const cleanUrl = String(customApiUrl).trim().replace(/\/+$/, "");
+    if (cleanUrl.startsWith("http") && !list.includes(cleanUrl)) {
+      list.push(cleanUrl);
+    }
+  }
+  if (!list.includes("https://api.green-api.com")) {
+    list.push("https://api.green-api.com");
+  }
   if (!list.includes("https://api.greenapi.com")) {
     list.push("https://api.greenapi.com");
-  }
-  if (!list.includes("https://media.green-api.com")) {
-    list.push("https://media.green-api.com");
   }
   return list;
 }

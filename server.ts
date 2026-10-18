@@ -2546,17 +2546,8 @@ app.delete('/api/blank-forms/custom-employees/:id', (req: Request, res: Response
 // ---------------------------------------------------------------------------
 function getGreenApiCandidateHosts(cleanId: string, customApiUrl?: string): string[] {
   const list: string[] = [];
-  if (customApiUrl) {
-    const cleanUrl = String(customApiUrl).trim().replace(/\/+$/, '');
-    if (cleanUrl.startsWith('http')) {
-      list.push(cleanUrl);
-    }
-  }
-  // Try universal api.green-api.com
-  if (!list.includes('https://api.green-api.com')) {
-    list.push('https://api.green-api.com');
-  }
-  // Try cluster subdomain if id length >= 4 (both greenapi.com and green-api.com)
+
+  // 1. Cluster subdomain (e.g. 7105.api.greenapi.com) - fastest direct cluster host
   if (cleanId.length >= 4) {
     const cluster = cleanId.slice(0, 4);
     const subNoHyphen = `https://${cluster}.api.greenapi.com`;
@@ -2564,14 +2555,23 @@ function getGreenApiCandidateHosts(cleanId: string, customApiUrl?: string): stri
     if (!list.includes(subNoHyphen)) list.push(subNoHyphen);
     if (!list.includes(subHyphen)) list.push(subHyphen);
   }
-  // Try api.greenapi.com
+
+  // 2. Custom API URL if configured
+  if (customApiUrl) {
+    const cleanUrl = String(customApiUrl).trim().replace(/\/+$/, '');
+    if (cleanUrl.startsWith('http') && !list.includes(cleanUrl)) {
+      list.push(cleanUrl);
+    }
+  }
+
+  // 3. Universal api.green-api.com and api.greenapi.com
+  if (!list.includes('https://api.green-api.com')) {
+    list.push('https://api.green-api.com');
+  }
   if (!list.includes('https://api.greenapi.com')) {
     list.push('https://api.greenapi.com');
   }
-  // Media host fallback
-  if (!list.includes('https://media.green-api.com')) {
-    list.push('https://media.green-api.com');
-  }
+
   return list;
 }
 

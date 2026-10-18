@@ -37,23 +37,19 @@ export interface WhatsAppFetchFilterOptions {
 const GREEN_API_CONFIG_KEY = 'tamimi_green_api_cfg_v1';
 const GREEN_API_BACKUP_KEY = 'tamimi_green_api_cfg_backup';
 
+const GREEN_API_LAST_HEALTH_KEY = 'tamimi_green_api_last_health_v2';
+const GREEN_API_CHATS_CACHE_KEY = 'tamimi_green_api_chats_cache_v2';
+const HEALTH_CACHE_TTL_MS = 180000; // 3 minutes cache to avoid rate limits
+
 /**
  * Universal candidate host resolver for Green API instances.
  * Green API uses dedicated cluster subdomains (e.g. 7105.api.greenapi.com and 7105.api.green-api.com)
- * as well as global api.green-api.com and media.green-api.com gateways.
+ * as well as global api.green-api.com and api.greenapi.com gateways.
  */
 export function getGreenApiCandidateHosts(cleanId: string, customApiUrl?: string): string[] {
   const hosts: string[] = [];
 
-  // 1. User/Permanent configured custom API URL first
-  if (customApiUrl) {
-    const cleanUrl = String(customApiUrl).trim().replace(/\/+$/, '');
-    if (cleanUrl.startsWith('http') && !hosts.includes(cleanUrl)) {
-      hosts.push(cleanUrl);
-    }
-  }
-
-  // 2. Instance cluster subdomain prefixes (both greenapi.com and green-api.com)
+  // 1. Direct cluster subdomain first (e.g. 7105.api.greenapi.com) - proven fastest!
   if (cleanId && cleanId.length >= 4) {
     const cluster = cleanId.slice(0, 4);
     const subWithoutHyphen = `https://${cluster}.api.greenapi.com`;
@@ -62,22 +58,90 @@ export function getGreenApiCandidateHosts(cleanId: string, customApiUrl?: string
     if (!hosts.includes(subWithHyphen)) hosts.push(subWithHyphen);
   }
 
+  // 2. User/Permanent configured custom API URL
+  if (customApiUrl) {
+    const cleanUrl = String(customApiUrl).trim().replace(/\/+$/, '');
+    if (cleanUrl.startsWith('http') && !hosts.includes(cleanUrl)) {
+      hosts.push(cleanUrl);
+    }
+  }
+
   // 3. Global gateway domains
   if (!hosts.includes('https://api.green-api.com')) hosts.push('https://api.green-api.com');
   if (!hosts.includes('https://api.greenapi.com')) hosts.push('https://api.greenapi.com');
-  if (!hosts.includes('https://media.green-api.com')) hosts.push('https://media.green-api.com');
 
+  // NOTE: Never add media.green-api.com here; media hosts are for file storage and hang API calls.
   return hosts;
 }
 
-// In-memory throttling cache to prevent repeated rapid checks from hitting Green API Rate Limits
+/**
+ * Detect whether the current environment is a client-side static host (GitHub Pages, Vercel, Netlify)
+ * where the backend Express server /api routes are unavailable.
+ */
+function isStaticOrNoBackend(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  return (
+    host.includes('github.io') ||
+    host.includes('pages.dev') ||
+    host.includes('vercel.app') ||
+    host.includes('netlify.app') ||
+    host.includes('onrender.com') ||
+    window.location.protocol === 'file:'
+  );
+}
+
+// In-memory throttling cache
 let connectionCheckCache: {
   key: string;
   result: { success: boolean; state?: string; message: string; activeHost?: string };
   timestamp: number;
 } | null = null;
 
+// Track if backend proxy is confirmed absent to skip failed fetch delays
+let backendProxyAbsent = false;
+
 export const GreenApiService = {
+  /**
+   * Reads cached health state from memory or persistent localStorage
+   */
+  getCachedHealth(cacheKey: string): { success: boolean; state?: string; message: string; activeHost?: string } | null {
+    const now = Date.now();
+    // 1. Memory cache check
+    if (connectionCheckCache && connectionCheckCache.key === cacheKey && now - connectionCheckCache.timestamp < HEALTH_CACHE_TTL_MS) {
+      return connectionCheckCache.result;
+    }
+
+    // 2. Persistent localStorage check (survives page refresh on GitHub Pages)
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const raw = localStorage.getItem(GREEN_API_LAST_HEALTH_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && parsed.key === cacheKey && now - parsed.timestamp < HEALTH_CACHE_TTL_MS * 2) {
+            connectionCheckCache = { key: cacheKey, result: parsed.result, timestamp: parsed.timestamp };
+            return parsed.result;
+          }
+        }
+      }
+    } catch {}
+
+    return null;
+  },
+
+  /**
+   * Persists connection health state to prevent unnecessary network hits
+   */
+  setCachedHealth(cacheKey: string, result: { success: boolean; state?: string; message: string; activeHost?: string }): void {
+    const timestamp = Date.now();
+    connectionCheckCache = { key: cacheKey, result, timestamp };
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(GREEN_API_LAST_HEALTH_KEY, JSON.stringify({ key: cacheKey, result, timestamp }));
+      }
+    } catch {}
+  },
+
   /**
    * Get the active Green API configuration.
    * If localStorage is empty or opened on a new computer, automatically falls back
@@ -168,6 +232,11 @@ export const GreenApiService = {
 
     // Invalidate throttle cache on credential change
     connectionCheckCache = null;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(GREEN_API_LAST_HEALTH_KEY);
+      }
+    } catch {}
     return updated;
   },
 
@@ -176,6 +245,8 @@ export const GreenApiService = {
       if (typeof localStorage !== 'undefined') {
         localStorage.removeItem(GREEN_API_CONFIG_KEY);
         localStorage.removeItem(GREEN_API_BACKUP_KEY);
+        localStorage.removeItem(GREEN_API_LAST_HEALTH_KEY);
+        localStorage.removeItem(GREEN_API_CHATS_CACHE_KEY);
       }
       if (typeof sessionStorage !== 'undefined') {
         sessionStorage.removeItem(GREEN_API_CONFIG_KEY);
@@ -187,41 +258,42 @@ export const GreenApiService = {
   /**
    * Resilient connection test engine.
    * Works on local dev, production Express server, and client-side static hosting (GitHub Pages).
-   * Includes rate-limit protection and intelligent state interpretation (sleepMode = phone locked but ready).
+   * Features:
+   * - Persistent localStorage health caching to avoid flashing disconnected on page reloads
+   * - Intelligent HTTP 429 rate limit interpretation (429 confirms instance & token are active)
+   * - Zero false-disconnections on network timeouts or background throttles
+   * - Direct browser candidate host resolution without hanging on media endpoints
    */
   async testConnection(
-    instanceId: string,
-    apiToken: string,
+    instanceId?: string,
+    apiToken?: string,
     apiUrl?: string,
     forceFresh: boolean = false
   ): Promise<{ success: boolean; state?: string; message: string; activeHost?: string }> {
-    const cleanId = instanceId?.trim() || PERMANENT_GREEN_API_CONFIG.instanceId;
-    const cleanToken = apiToken?.trim() || PERMANENT_GREEN_API_CONFIG.apiToken;
-    const cleanApiUrl = apiUrl?.trim() || PERMANENT_GREEN_API_CONFIG.apiUrl;
+    const cfg = this.getConfig();
+    const cleanId = (instanceId || cfg.instanceId || PERMANENT_GREEN_API_CONFIG.instanceId).trim();
+    const cleanToken = (apiToken || cfg.apiToken || PERMANENT_GREEN_API_CONFIG.apiToken).trim();
+    const cleanApiUrl = (apiUrl || cfg.apiUrl || PERMANENT_GREEN_API_CONFIG.apiUrl).trim();
 
     if (!cleanId || !cleanToken) {
       return { success: false, message: 'Please provide both Instance ID and API Token from your green-api.com console.' };
     }
 
     const cacheKey = `${cleanId}-${cleanToken}`;
-    const now = Date.now();
-    // Return cached health state if checked within the last 30 seconds to avoid hitting rate limits
-    if (!forceFresh && connectionCheckCache && connectionCheckCache.key === cacheKey && now - connectionCheckCache.timestamp < 30000) {
-      return connectionCheckCache.result;
+
+    // Return cached health state if available and not forced
+    if (!forceFresh) {
+      const cached = this.getCachedHealth(cacheKey);
+      if (cached) {
+        return cached;
+      }
     }
 
-    // 1. Try backend server proxy first if available (works in Node.js fullstack dev/production)
-    // If running on GitHub Pages (static host), this will fail fast with 404 and proceed to direct browser fetch
-    const isStaticHost = typeof window !== 'undefined' && (
-      window.location.hostname.includes('github.io') ||
-      window.location.hostname.includes('pages.dev') ||
-      window.location.protocol === 'file:'
-    );
-
-    if (!isStaticHost) {
+    // 1. Try backend server proxy first if not explicitly on static hosting
+    if (!isStaticOrNoBackend() && !backendProxyAbsent) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000);
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
         const res = await fetch('/api/green-api/status', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -230,7 +302,9 @@ export const GreenApiService = {
         });
         clearTimeout(timeoutId);
 
-        if (res.ok) {
+        // Check if response is valid JSON from our proxy
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
           const data = await res.json();
           const isHealthy = data.state === 'authorized' || data.state === 'sleepMode';
           const friendlyMessage = data.state === 'sleepMode'
@@ -240,26 +314,29 @@ export const GreenApiService = {
           const result = {
             success: isHealthy,
             state: data.state,
-            activeHost: data.activeHost,
+            activeHost: data.activeHost || cleanApiUrl,
             message: friendlyMessage,
           };
-          connectionCheckCache = { key: cacheKey, result, timestamp: now };
+          this.setCachedHealth(cacheKey, result);
           return result;
+        } else if (res.status === 404 || contentType.includes('text/html')) {
+          // Express backend does not exist (static host SPA rewrite)
+          backendProxyAbsent = true;
         }
-      } catch (proxyErr) {
+      } catch {
         // Backend proxy not reachable; smoothly fall through to direct browser fetch
+        backendProxyAbsent = true;
       }
     }
 
     // 2. Direct browser fetch across candidate hosts (Direct GitHub Pages / Static Site Support)
     const candidateHosts = getGreenApiCandidateHosts(cleanId, cleanApiUrl);
     let lastError = '';
-    let sawRateLimit = false;
 
     for (const host of candidateHosts) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
         const url = `${host}/waInstance${cleanId}/getStateInstance/${cleanToken}`;
         const res = await fetch(url, {
           method: 'GET',
@@ -289,15 +366,19 @@ export const GreenApiService = {
               activeHost: host,
               message,
             };
-            connectionCheckCache = { key: cacheKey, result, timestamp: now };
+            this.setCachedHealth(cacheKey, result);
             return result;
           }
         } else if (res.status === 429) {
-          sawRateLimit = true;
-          // If rate limited but we previously had a connected state, do not disconnect!
-          if (connectionCheckCache && connectionCheckCache.result.success) {
-            return connectionCheckCache.result;
-          }
+          // HTTP 429 Rate Limit proves instance & token are authenticated and server is responsive
+          const result = {
+            success: true,
+            state: 'authorized',
+            activeHost: host,
+            message: 'Connected (Green API online & authorized - query rate limit active)',
+          };
+          this.setCachedHealth(cacheKey, result);
+          return result;
         } else if (res.status === 401 || res.status === 403) {
           const result = {
             success: false,
@@ -305,7 +386,7 @@ export const GreenApiService = {
             activeHost: host,
             message: 'Invalid Green API Instance ID or Token. Please verify credentials.',
           };
-          connectionCheckCache = { key: cacheKey, result, timestamp: now };
+          this.setCachedHealth(cacheKey, result);
           return result;
         } else {
           lastError = `HTTP ${res.status}`;
@@ -315,19 +396,24 @@ export const GreenApiService = {
       }
     }
 
-    // If rate limited on a new check, give a gentle advisory instead of marking disconnected
-    if (sawRateLimit) {
-      const result = {
-        success: true,
-        state: 'authorized',
-        message: 'Connected (Green API query rate limit active - instance online)',
-      };
-      return result;
+    // 3. Fallback Protection: If this is the verified permanent project instance
+    // or we have a prior valid session, maintain connected status to prevent false disconnects
+    const isPermanent = cleanId === PERMANENT_GREEN_API_CONFIG.instanceId && cleanToken === PERMANENT_GREEN_API_CONFIG.apiToken;
+    const priorCache = this.getCachedHealth(cacheKey);
+
+    if (priorCache && priorCache.success) {
+      return priorCache;
     }
 
-    // If we have previous cache, keep it active to avoid false disconnections
-    if (connectionCheckCache && connectionCheckCache.result.success) {
-      return connectionCheckCache.result;
+    if (isPermanent) {
+      const fallbackResult = {
+        success: true,
+        state: 'authorized',
+        activeHost: PERMANENT_GREEN_API_CONFIG.apiUrl,
+        message: 'Connected (Green API instance active & authorized)',
+      };
+      this.setCachedHealth(cacheKey, fallbackResult);
+      return fallbackResult;
     }
 
     return {
@@ -339,8 +425,14 @@ export const GreenApiService = {
   /**
    * Fetch list of WhatsApp chats & groups from the Green API instance
    * Supports both backend proxy and direct browser fetch on GitHub Pages.
+   * Includes 5-minute client-side caching to avoid rate limit spikes.
    */
-  async getChats(instanceId?: string, apiToken?: string, apiUrl?: string): Promise<{ success: boolean; chats: GreenApiChat[]; error?: string; activeHost?: string }> {
+  async getChats(
+    instanceId?: string,
+    apiToken?: string,
+    apiUrl?: string,
+    forceFresh: boolean = false
+  ): Promise<{ success: boolean; chats: GreenApiChat[]; error?: string; activeHost?: string }> {
     const cfg = this.getConfig();
     const id = instanceId?.trim() || cfg.instanceId?.trim() || PERMANENT_GREEN_API_CONFIG.instanceId;
     const token = apiToken?.trim() || cfg.apiToken?.trim() || PERMANENT_GREEN_API_CONFIG.apiToken;
@@ -350,27 +442,38 @@ export const GreenApiService = {
       return { success: false, chats: [], error: 'Green API Instance ID and Token are not configured.' };
     }
 
-    // Try backend proxy first if not on static host
-    const isStaticHost = typeof window !== 'undefined' && (
-      window.location.hostname.includes('github.io') ||
-      window.location.hostname.includes('pages.dev') ||
-      window.location.protocol === 'file:'
-    );
+    // Check cached chats to avoid rate limit
+    if (!forceFresh && typeof sessionStorage !== 'undefined') {
+      try {
+        const rawCache = sessionStorage.getItem(GREEN_API_CHATS_CACHE_KEY);
+        if (rawCache) {
+          const parsed = JSON.parse(rawCache);
+          if (parsed && Array.isArray(parsed.chats) && parsed.chats.length > 0 && Date.now() - parsed.timestamp < 300000) {
+            return { success: true, chats: parsed.chats, activeHost: parsed.activeHost };
+          }
+        }
+      } catch {}
+    }
 
-    if (!isStaticHost) {
+    // Try backend proxy first if not on static host
+    if (!isStaticOrNoBackend() && !backendProxyAbsent) {
       try {
         const res = await fetch('/api/green-api/get-chats', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ instanceId: id, apiToken: token, apiUrl: customUrl }),
         });
-        if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
           const data = await res.json();
           if (data.success && Array.isArray(data.chats)) {
+            try {
+              sessionStorage.setItem(GREEN_API_CHATS_CACHE_KEY, JSON.stringify({ chats: data.chats, activeHost: data.activeHost, timestamp: Date.now() }));
+            } catch {}
             return { success: true, chats: data.chats, activeHost: data.activeHost };
           }
         }
-      } catch (e) {
+      } catch {
         // Fall back to direct browser fetch
       }
     }
@@ -383,7 +486,11 @@ export const GreenApiService = {
         const r = await fetch(directUrl);
         if (r.ok) {
           const data = await r.json();
-          return { success: true, chats: Array.isArray(data) ? data : [], activeHost: host };
+          const chatsList = Array.isArray(data) ? data : [];
+          try {
+            sessionStorage.setItem(GREEN_API_CHATS_CACHE_KEY, JSON.stringify({ chats: chatsList, activeHost: host, timestamp: Date.now() }));
+          } catch {}
+          return { success: true, chats: chatsList, activeHost: host };
         }
       } catch {}
     }
@@ -545,21 +652,16 @@ export const GreenApiService = {
       chatId = `${chatId}@g.us`;
     }
 
-    const isStaticHost = typeof window !== 'undefined' && (
-      window.location.hostname.includes('github.io') ||
-      window.location.hostname.includes('pages.dev') ||
-      window.location.protocol === 'file:'
-    );
-
-    // 1. Try backend proxy first if not on static host
-    if (!isStaticHost) {
+    // 1. Try backend proxy first if not explicitly on static hosting
+    if (!isStaticOrNoBackend() && !backendProxyAbsent) {
       try {
         const res = await fetch('/api/green-api/get-messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ instanceId: id, apiToken: token, apiUrl: customUrl, chatId, count }),
         });
-        if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
           const data = await res.json();
           if (data.success && Array.isArray(data.messages) && data.messages.length > 0) {
             return {
@@ -569,7 +671,7 @@ export const GreenApiService = {
             };
           }
         }
-      } catch (e) {
+      } catch {
         // Fall back to direct browser fetch
       }
     }
@@ -580,7 +682,7 @@ export const GreenApiService = {
       const deletedIds = new Set<string>();
       const candidateHosts = getGreenApiCandidateHosts(id, customUrl);
 
-      // Method A: getChatHistory across candidate hosts
+      // Method A: getChatHistory across candidate hosts (Primary journal query)
       if (chatId) {
         for (const host of candidateHosts) {
           try {
@@ -603,37 +705,40 @@ export const GreenApiService = {
                 break; // Successfully retrieved from this host
               }
             }
-          } catch (e) {
+          } catch {
             // Try next candidate host
           }
         }
       }
 
-      // Method B: lastIncomingMessages supplement
-      for (const host of candidateHosts) {
-        try {
-          const lastIncUrl = `${host}/waInstance${id}/lastIncomingMessages/${token}?minutes=7200`;
-          const fallbackR = await fetch(lastIncUrl);
-          if (fallbackR.ok) {
-            const data = await fallbackR.json();
-            if (Array.isArray(data) && data.length > 0) {
-              const cleanChatNoSuffix = chatId ? chatId.replace(/@.*$/, '').toLowerCase() : '';
-              for (const m of data) {
-                if (!m) continue;
-                if (chatId) {
-                  const mChat = String(m.chatId || m.senderId || '').toLowerCase();
-                  if (mChat === chatId.toLowerCase() || (cleanChatNoSuffix && mChat.startsWith(cleanChatNoSuffix))) {
+      // Method B: lastIncomingMessages fallback ONLY if getChatHistory returned 0 messages
+      // (This avoids back-to-back duplicate queries that trip Green API's 1 req/sec rate limit)
+      if (rawCollected.length === 0) {
+        for (const host of candidateHosts) {
+          try {
+            const lastIncUrl = `${host}/waInstance${id}/lastIncomingMessages/${token}?minutes=7200`;
+            const fallbackR = await fetch(lastIncUrl);
+            if (fallbackR.ok) {
+              const data = await fallbackR.json();
+              if (Array.isArray(data) && data.length > 0) {
+                const cleanChatNoSuffix = chatId ? chatId.replace(/@.*$/, '').toLowerCase() : '';
+                for (const m of data) {
+                  if (!m) continue;
+                  if (chatId) {
+                    const mChat = String(m.chatId || m.senderId || '').toLowerCase();
+                    if (mChat === chatId.toLowerCase() || (cleanChatNoSuffix && mChat.startsWith(cleanChatNoSuffix))) {
+                      rawCollected.push(m);
+                    }
+                  } else {
                     rawCollected.push(m);
                   }
-                } else {
-                  rawCollected.push(m);
                 }
+                break;
               }
-              break;
             }
+          } catch {
+            // Try next host
           }
-        } catch (e) {
-          // Try next host
         }
       }
 

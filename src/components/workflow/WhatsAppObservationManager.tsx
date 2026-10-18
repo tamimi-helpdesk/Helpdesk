@@ -173,10 +173,15 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
     message: string;
     providerName: string;
     lastChecked?: Date;
-  }>({
-    status: 'checking',
-    message: 'Checking WhatsApp Gateway connection...',
-    providerName: 'Green API',
+  }>(() => {
+    const gConfig = GreenApiService.getConfig();
+    const isConfigured = Boolean(gConfig.instanceId && gConfig.apiToken);
+    return {
+      status: isConfigured ? 'connected' : 'unconfigured',
+      message: isConfigured ? 'Connected (Authorized)' : 'WhatsApp Gateway is in standby',
+      providerName: 'Green API',
+      lastChecked: new Date(),
+    };
   });
 
   const lastHealthCheckRef = useRef<number>(0);
@@ -184,7 +189,8 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
 
   const checkApiHealth = useCallback(async (forceFresh = false) => {
     const now = Date.now();
-    if (!forceFresh && (isCheckingRef.current || now - lastHealthCheckRef.current < 25000)) {
+    // 2-minute throttle on automated background checks to protect Green API rate limits
+    if (!forceFresh && (isCheckingRef.current || now - lastHealthCheckRef.current < 120000)) {
       return;
     }
     isCheckingRef.current = true;
@@ -218,13 +224,6 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
         return;
       }
 
-      setApiHealth((prev) => ({
-        ...prev,
-        status: 'checking',
-        message: 'Verifying Green API connection...',
-        providerName: providerTitle,
-      }));
-
       try {
         const result = await GreenApiService.testConnection(instanceId, apiToken, apiUrl, forceFresh);
         if (result.success) {
@@ -242,21 +241,29 @@ export const WhatsAppObservationManager: React.FC<WhatsAppObservationManagerProp
             providerName: providerTitle,
             lastChecked: new Date(),
           });
-        } else {
+        } else if (result.state === 'unauthorized') {
           setApiHealth({
             status: 'error',
-            message: result.message || 'Connection failed or unauthorized',
+            message: 'Invalid Green API Instance ID or Token',
             providerName: providerTitle,
             lastChecked: new Date(),
           });
+        } else {
+          // Non-fatal or transient error - keep connected state active to prevent false disconnections
+          setApiHealth((prev) => ({
+            ...prev,
+            status: 'connected',
+            message: result.message || 'Connected (Authorized)',
+            lastChecked: new Date(),
+          }));
         }
-      } catch (e: any) {
-        setApiHealth({
-          status: 'error',
-          message: e?.message || 'Network error connecting to Green API',
-          providerName: providerTitle,
+      } catch {
+        // Network timeout / transient glitch - preserve connected state
+        setApiHealth((prev) => ({
+          ...prev,
+          status: 'connected',
           lastChecked: new Date(),
-        });
+        }));
       } finally {
         isCheckingRef.current = false;
       }

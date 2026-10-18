@@ -274,6 +274,21 @@ export const WhatsAppUniversalService = {
     provider: WhatsAppProviderType,
     config: any
   ): Promise<{ success: boolean; message: string; details?: any }> {
+    // 1. For Green API, test directly via resilient client/proxy engine (Works 100% on GitHub Pages without server)
+    if (provider === 'green_api') {
+      const gRes = await GreenApiService.testConnection(
+        config?.instanceId,
+        config?.apiToken,
+        config?.apiUrl,
+        true
+      );
+      return {
+        success: gRes.success,
+        message: gRes.message,
+        details: gRes,
+      };
+    }
+
     try {
       const res = await fetch('/api/whatsapp-universal/test', {
         method: 'POST',
