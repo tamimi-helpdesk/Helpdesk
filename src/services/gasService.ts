@@ -58,6 +58,26 @@ function disableServerProxy() {
   } catch {}
 }
 
+export function getGasProxyHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem('tamimi_helpdesk_auth_session_v2');
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s.sessionToken) {
+          headers['Authorization'] = `Bearer ${s.sessionToken}`;
+          headers['x-session-token'] = s.sessionToken;
+        }
+        if (s.username) {
+          headers['x-operator-username'] = s.username;
+        }
+      }
+    }
+  } catch (_) {}
+  return headers;
+}
+
 // In-flight active sync promise deduplication to prevent multiple simultaneous 20s requests
 let activeSyncPromise: Promise<{ success: boolean; count?: number; error?: string; diagnosis?: string }> | null = null;
 
@@ -3220,10 +3240,10 @@ export const GasService = {
     if (!isStaticClientEnv()) {
       try {
         const proxyController = new AbortController();
-        const proxyTimeout = setTimeout(() => proxyController.abort(), 2000);
+        const proxyTimeout = setTimeout(() => proxyController.abort(), 8000);
         const proxyRes = await fetch('/api/gas/proxy', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getGasProxyHeaders(),
           signal: proxyController.signal,
           body: JSON.stringify({
             targetUrl: cleanUrl,
@@ -3366,7 +3386,7 @@ export const GasService = {
     try {
       const proxyRes = await fetch('/api/gas/proxy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getGasProxyHeaders(),
         body: JSON.stringify({
           targetUrl: cleanUrl,
           method: 'POST',
@@ -3601,7 +3621,7 @@ export const GasService = {
       try {
         const proxyRes = await fetch('/api/gas/proxy', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getGasProxyHeaders(),
           body: JSON.stringify({
             targetUrl: cleanUrl,
             method: 'POST',
@@ -3901,7 +3921,7 @@ export const GasService = {
       try {
         const proxyRes = await fetch('/api/gas/proxy', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getGasProxyHeaders(),
           body: JSON.stringify({
             targetUrl: cleanUrl,
             method: 'POST',

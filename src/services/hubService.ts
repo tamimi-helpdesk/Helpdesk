@@ -212,6 +212,10 @@ export class HubService {
             const parsed = JSON.parse(rawSession);
             if (parsed && parsed.sessionToken) {
               headers['Authorization'] = `Bearer ${parsed.sessionToken}`;
+              headers['x-session-token'] = parsed.sessionToken;
+            }
+            if (parsed && parsed.username) {
+              headers['x-operator-username'] = parsed.username;
             }
           }
         }

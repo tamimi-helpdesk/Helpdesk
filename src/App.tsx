@@ -513,26 +513,29 @@ export default function App() {
     };
     window.addEventListener('tamimi_navigate_facility', handleNavigateFacility);
 
-    // Multi-device background polling (every 15 seconds) with overlap protection
-    let isPollingInProgress = false;
-    const interval = setInterval(() => {
-      if (isPollingInProgress) return;
+    // Resilient Offline Queue auto-flush (every 30 seconds if pending items exist)
+    const queueInterval = setInterval(() => {
+      if (OfflineQueueService.getPendingCount() > 0 && (typeof navigator === 'undefined' || navigator.onLine)) {
+        OfflineQueueService.flushQueue(GasService).catch(() => {});
+      }
+    }, 30000);
+
+    // Periodic Google Sheets reconciliation (every 5 minutes, non-blocking background task)
+    let isReconciliationInProgress = false;
+    const reconciliationInterval = setInterval(() => {
+      if (isReconciliationInProgress) return;
       const currentCfg = GasService.getConfig();
-      if (currentCfg.webAppUrl) {
-        isPollingInProgress = true;
+      if (currentCfg.webAppUrl && (typeof navigator === 'undefined' || navigator.onLine)) {
+        isReconciliationInProgress = true;
         GasService.syncWithRemote().then((res) => {
           if (res.success) {
             setRefreshTrigger((prev) => prev + 1);
-            window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
           }
         }).catch(() => {}).finally(() => {
-          isPollingInProgress = false;
+          isReconciliationInProgress = false;
         });
       }
-      if (OfflineQueueService.getPendingCount() > 0) {
-        OfflineQueueService.flushQueue(GasService).catch(() => {});
-      }
-    }, 15000);
+    }, 300000);
 
     return () => {
       window.removeEventListener('tamimi_bookings_updated', handleLocalRefresh);
@@ -557,7 +560,8 @@ export default function App() {
       window.removeEventListener('tamimi_navigate_facility', handleNavigateFacility);
       if (initialSyncTimer1) clearTimeout(initialSyncTimer1);
       if (initialSyncTimer2) clearTimeout(initialSyncTimer2);
-      clearInterval(interval);
+      clearInterval(queueInterval);
+      clearInterval(reconciliationInterval);
     };
   }, []);
 

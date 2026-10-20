@@ -186,8 +186,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         notes: combinedNotes || undefined,
       };
 
-      // 1. Create booking in local store & real-time multi-computer Hub (instant <5ms)
-      const result = StorageService.createBooking(bookingPayload);
+      // 1. Create booking with authoritative Cloud Firestore slot-lock concurrency check
+      const result = await StorageService.createBookingAuthoritative(bookingPayload);
 
       if (!result.success || !result.booking) {
         setErrorMessage(result.error || 'Failed to create booking. Please try another slot.');

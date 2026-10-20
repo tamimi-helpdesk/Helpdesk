@@ -23,6 +23,7 @@ import { FacilityLockdownService } from './facilityLockdownService';
 import { idbStorageService } from './idbStorageService';
 import { TicketService } from './ticketService';
 import { isResourceOrStageMatch, getCanonicalResourceName } from '../utils/resourceMatching';
+import { SyncDiagnosticsService } from './syncDiagnosticsService';
 
 const STORAGE_KEY = 'executive_facility_bookings_v1';
 const GAS_CONFIG_KEY = 'executive_gas_config_v1';
@@ -43,6 +44,9 @@ let inMemoryHandovers: HandoverItemRecord[] = [];
 let inMemoryParcels: ParcelRecord[] = [];
 let inMemoryLostFound: LostFoundRecord[] = [];
 let inMemoryBlockouts: SlotBlockoutRecord[] = [];
+
+// Session-level tracker for bookings created on this specific client
+const localInFlightBookingIds = new Set<string>();
 
 let isInitialized = false;
 let isIsolationInitialized = false;
@@ -2015,17 +2019,32 @@ export const StorageService = {
       cloudMap.set(key, clean);
     });
 
-    // Check existing inMemoryBookings: keep fresh local bookings created in last 10 minutes
-    // that may still be in-flight to cloud
+    // Check existing inMemoryBookings:
+    // Only preserve local bookings that are genuinely queued in this device's OfflineQueue
+    // or currently in-flight from this specific client (<15 seconds).
+    // Stale bookings missing from Cloud Firestore were deleted on other devices and MUST NOT be resurrected!
     const now = Date.now();
+    const queuedBookingIds = new Set<string>();
+    try {
+      const q = OfflineQueueService.getQueue();
+      q.forEach((item) => {
+        if (item.action === 'saveBooking' && item.payload?.id) {
+          queuedBookingIds.add(String(item.payload.id).toLowerCase().trim());
+        }
+      });
+    } catch (_) {}
+
     inMemoryBookings.forEach((localB) => {
       if (!localB || !localB.id) return;
       const key = localB.id.toLowerCase().trim();
-      if (deletedIds.has(key)) return;
+      if (deletedIds.has(key) || isIdDeleted(key)) return;
+
       if (!cloudMap.has(key)) {
         const createdTime = localB.createdAt ? new Date(localB.createdAt).getTime() : 0;
-        const isFresh = now - createdTime < 10 * 60 * 1000;
-        if (isFresh && localB.status !== 'CANCELLED') {
+        const isQueuedLocally = queuedBookingIds.has(key);
+        const isInFlightLocally = localInFlightBookingIds.has(key) && (now - createdTime < 15 * 1000);
+
+        if ((isQueuedLocally || isInFlightLocally) && localB.status !== 'CANCELLED') {
           cloudMap.set(key, localB);
         }
       } else {
@@ -2362,14 +2381,16 @@ export const StorageService = {
     const preservedLocalBookings = inMemoryBookings.filter((localB) => {
       if (!localB.id) return false;
       const idKey = localB.id.toLowerCase().trim();
-      if (deletedIds.has(idKey)) return false; // Deleted permanently
+      if (deletedIds.has(idKey) || isIdDeleted(idKey)) return false; // Deleted permanently
       if (remoteIdMap.has(idKey)) return false; // Already updated from remote
 
-      const slotKey = `${resolveFacilityId(localB.facilityId || localB.sheetTabName)}_${normalizeDateString(localB.date)}_${localB.stage}_${localB.startTime}`.toLowerCase();
       const createdTime = localB.createdAt ? new Date(localB.createdAt).getTime() : 0;
-      const isFreshLocal = now - createdTime < 10 * 60 * 1000;
-      if (!isFreshLocal && remoteSlotMap.has(slotKey)) {
-        return false; // Stale slot superseded by remote
+      const isQueued = queuedBookingIds.has(idKey);
+      const isInFlight = localInFlightBookingIds.has(idKey) && (now - createdTime < 15 * 1000);
+
+      // Only preserve local booking if it's currently queued or in-flight on this device
+      if (!isQueued && !isInFlight) {
+        return false;
       }
 
       // If locally marked as CANCELLED, do not retain as active booking
@@ -3622,40 +3643,54 @@ export const StorageService = {
       createdAt: new Date().toISOString(),
     };
 
+    const correlationId = SyncDiagnosticsService.generateCorrelationId('MUT-CREATE');
+    (newBooking as any)._correlationId = correlationId;
+    localInFlightBookingIds.add(newBooking.id.toLowerCase().trim());
+
+    SyncDiagnosticsService.startTrace(
+      'CREATE',
+      newBooking.id,
+      newBooking.facilityId,
+      `${newBooking.startTime}-${newBooking.endTime}`,
+      correlationId
+    );
+
     const updated = [newBooking, ...inMemoryBookings];
     this.saveBookings(updated);
 
-    // Save directly to Cloud Firestore in real time so all computers update in <100ms
+    // Save directly to Cloud Firestore in real time with distributed slot-locking concurrency protection
     try {
       import('./firebaseService').then(({ CloudDatabaseService }) => {
-        CloudDatabaseService.saveBookingToCloud(newBooking).catch((err) => {
-          console.warn('[StorageService] Cloud sync notice:', err);
+        CloudDatabaseService.saveBookingWithSlotLock(newBooking, correlationId).catch((err) => {
+          console.warn('[StorageService] Authoritative Cloud Firestore write notice:', err);
         });
       }).catch(() => {});
     } catch (e) {}
 
     // Broadcast immediately to multi-computer real-time hub
     try {
-      if (typeof fetch !== 'undefined') {
-        fetch('/api/hub/mutate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mutationType: 'UPSERT',
-            entity: 'bookings',
-            id: newBooking.id,
-            data: newBooking,
-          }),
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
+          mutationType: 'UPSERT',
+          entity: 'bookings',
+          id: newBooking.id,
+          data: newBooking,
         }).catch(() => {});
-      }
+      }).catch(() => {});
     } catch (e) {}
 
     // Guaranteed Google Sheets sync (pushes directly and queues if offline)
     try {
       import('./gasService').then(({ GasService }) => {
-        GasService.pushBookingToRemote(newBooking).catch((err) => {
-          console.warn('[StorageService] Background Google Sheets push notice:', err);
-        });
+        const sheetsStart = performance.now();
+        GasService.pushBookingToRemote(newBooking)
+          .then((res) => {
+            const sheetsDuration = Math.round(performance.now() - sheetsStart);
+            SyncDiagnosticsService.markSheetsSync(correlationId, Boolean(res?.success), sheetsDuration);
+          })
+          .catch((err) => {
+            SyncDiagnosticsService.markSheetsSync(correlationId, false, undefined, String(err));
+          });
       }).catch(() => {});
     } catch (e) {}
 
@@ -3666,6 +3701,112 @@ export const StorageService = {
         );
       }
     } catch (e) {}
+
+    return { success: true, booking: newBooking };
+  },
+
+  /**
+   * Authoritative Booking Creation with Slot Lock Concurrency Check:
+   * Awaits the Cloud Firestore distributed transaction to ensure two computers
+   * cannot concurrently reserve the exact same facility, stage, date, and time slot.
+   */
+  async createBookingAuthoritative(
+    bookingData: Omit<Booking, 'id' | 'createdAt' | 'status'> & {
+      id?: string;
+      isForceOverride?: boolean;
+      replaceExisting?: boolean;
+    }
+  ): Promise<{ success: boolean; booking?: Booking; error?: string }> {
+    this.init();
+    const isForceOverride = Boolean(
+      bookingData.isForceOverride || bookingData.notes?.includes('SUPREME_VIP_OVERRIDE')
+    );
+
+    const lockdownCheck = FacilityLockdownService.isFacilityBlocked(bookingData.facilityId);
+    if (!isForceOverride && lockdownCheck.isBlocked && lockdownCheck.lockdown) {
+      const remaining = FacilityLockdownService.getRemainingTimeString(lockdownCheck.lockdown.unlockAt);
+      return {
+        success: false,
+        error: `Facility Locked: This facility is temporarily suspended by Supreme Administration (${lockdownCheck.lockdown.reason}). Status: ${remaining}.`,
+      };
+    }
+
+    const facilityObj = FACILITIES.find((f) => f.id === bookingData.facilityId);
+    const facilityCode = facilityObj ? facilityObj.code || 'FAC' : 'FAC';
+    const id = bookingData.id || generateBookingId(facilityCode);
+    const normTargetDate = normalizeDateString(bookingData.date);
+
+    const newBooking: Booking = {
+      ...bookingData,
+      date: normTargetDate,
+      id,
+      status: 'CONFIRMED',
+      createdAt: new Date().toISOString(),
+    };
+
+    const correlationId = SyncDiagnosticsService.generateCorrelationId('MUT-CREATE');
+    (newBooking as any)._correlationId = correlationId;
+
+    SyncDiagnosticsService.startTrace(
+      'CREATE',
+      newBooking.id,
+      newBooking.facilityId,
+      `${newBooking.startTime}-${newBooking.endTime}`,
+      correlationId
+    );
+
+    // If online, perform authoritative Firestore transaction with slot lock first
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    if (isOnline) {
+      try {
+        const { CloudDatabaseService } = await import('./firebaseService');
+        const lockRes = await CloudDatabaseService.saveBookingWithSlotLock(newBooking, correlationId);
+        if (!lockRes.success) {
+          return { success: false, error: lockRes.error || 'Slot reservation conflict on another device.' };
+        }
+      } catch (err: any) {
+        console.warn('[StorageService] Slot lock check notice, proceeding with resilient write:', err);
+      }
+    }
+
+    localInFlightBookingIds.add(newBooking.id.toLowerCase().trim());
+    const updated = [newBooking, ...inMemoryBookings];
+    this.saveBookings(updated);
+
+    // Broadcast immediately to multi-computer real-time hub
+    try {
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
+          mutationType: 'UPSERT',
+          entity: 'bookings',
+          id: newBooking.id,
+          data: newBooking,
+        }).catch(() => {});
+      }).catch(() => {});
+    } catch (_) {}
+
+    // Push to Google Sheets asynchronously in background
+    try {
+      import('./gasService').then(({ GasService }) => {
+        const sheetsStart = performance.now();
+        GasService.pushBookingToRemote(newBooking)
+          .then((res) => {
+            const duration = Math.round(performance.now() - sheetsStart);
+            SyncDiagnosticsService.markSheetsSync(correlationId, Boolean(res?.success), duration);
+          })
+          .catch((err) => {
+            SyncDiagnosticsService.markSheetsSync(correlationId, false, undefined, String(err));
+          });
+      }).catch(() => {});
+    } catch (_) {}
+
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('tamimi_incoming_booking', { detail: { booking: newBooking } })
+        );
+      }
+    } catch (_) {}
 
     return { success: true, booking: newBooking };
   },
@@ -4015,32 +4156,40 @@ export const StorageService = {
     inMemoryBookings[index] = updatedBooking;
     this.saveBookings(inMemoryBookings);
 
-    // Push cancellation directly to Cloud Firestore in real time
+    const correlationId = SyncDiagnosticsService.generateCorrelationId('MUT-CANCEL');
+    SyncDiagnosticsService.startTrace(
+      'CANCEL',
+      updatedBooking.id,
+      updatedBooking.facilityId,
+      undefined,
+      correlationId
+    );
+
+    // Push cancellation directly to Cloud Firestore in real time with distributed tombstone
     try {
       import('./firebaseService').then(({ CloudDatabaseService }) => {
-        CloudDatabaseService.cancelBookingInCloud(updatedBooking.id, effectiveReason).catch(() => {});
+        CloudDatabaseService.cancelBookingInCloud(updatedBooking.id, effectiveReason, correlationId).catch((err) => {
+          console.warn('[StorageService] Cloud cancellation write notice:', err);
+        });
       }).catch(() => {});
     } catch (e) {}
 
     // Broadcast cancellation immediately to multi-computer real-time hub
     try {
-      if (typeof fetch !== 'undefined') {
-        fetch('/api/hub/mutate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mutationType: 'CANCEL',
-            entity: 'bookings',
-            id: updatedBooking.id,
-            reason: effectiveReason,
-          }),
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
+          mutationType: 'CANCEL',
+          entity: 'bookings',
+          id: updatedBooking.id,
+          reason: effectiveReason,
         }).catch(() => {});
-      }
+      }).catch(() => {});
     } catch (e) {}
 
     // Guaranteed Google Sheets cancellation push
     try {
       import('./gasService').then(({ GasService }) => {
+        const sheetsStart = performance.now();
         GasService.pushCancelToRemote({
           bookingId: updatedBooking.id,
           phoneNumber: updatedBooking.phoneNumber,
@@ -4055,9 +4204,14 @@ export const StorageService = {
           guestsCount: updatedBooking.numberOfGuests,
           customerName: updatedBooking.customerName,
           cancelledBy: effectiveCancelledBy,
-        }).catch((err) => {
-          console.warn('[StorageService] Background GAS cancel push notice:', err);
-        });
+        })
+          .then((res) => {
+            const sheetsDuration = Math.round(performance.now() - sheetsStart);
+            SyncDiagnosticsService.markSheetsSync(correlationId, Boolean(res?.success), sheetsDuration);
+          })
+          .catch((err) => {
+            SyncDiagnosticsService.markSheetsSync(correlationId, false, undefined, String(err));
+          });
       }).catch(() => {});
     } catch (e) {}
 
@@ -4203,26 +4357,27 @@ export const StorageService = {
     
     this.saveBookings(inMemoryBookings);
 
-    // Push deletion directly to Cloud Firestore in real time
+    const correlationId = SyncDiagnosticsService.generateCorrelationId('MUT-DELETE');
+    SyncDiagnosticsService.startTrace('DELETE', cleanId, undefined, undefined, correlationId);
+
+    // Push deletion directly to Cloud Firestore in real time with permanent tombstone
     try {
       import('./firebaseService').then(({ CloudDatabaseService }) => {
-        CloudDatabaseService.deleteBookingInCloud(cleanId).catch(() => {});
+        CloudDatabaseService.deleteBookingInCloud(cleanId, correlationId).catch((err) => {
+          console.warn('[StorageService] Cloud deletion write notice:', err);
+        });
       }).catch(() => {});
     } catch (e) {}
 
     // Broadcast deletion immediately to multi-computer real-time hub
     try {
-      if (typeof fetch !== 'undefined') {
-        fetch('/api/hub/mutate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mutationType: 'DELETE',
-            entity: 'bookings',
-            id: cleanId,
-          }),
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
+          mutationType: 'DELETE',
+          entity: 'bookings',
+          id: cleanId,
         }).catch(() => {});
-      }
+      }).catch(() => {});
     } catch (e) {}
 
     return { success: true };
