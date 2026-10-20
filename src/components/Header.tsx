@@ -399,6 +399,25 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               )}
 
+              {/* Mobile Real-Time Sync Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  audioFeedback.playTap();
+                  if (onSyncGas) onSyncGas();
+                }}
+                disabled={isSyncing}
+                aria-label="Synchronize Bookings Across All Computers"
+                className={`p-1.5 sm:p-2 rounded-xl border transition cursor-pointer active:scale-95 ${
+                  isSyncing
+                    ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-700 animate-pulse'
+                    : 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:bg-sky-100'
+                }`}
+                title={isSyncing ? 'Syncing with Google Sheets & network...' : 'Sync All Computers Now'}
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-amber-500' : 'text-sky-600 dark:text-sky-400'}`} />
+              </button>
+
               {/* Mobile Notification Bell */}
               <div className="relative">
                 <button
@@ -476,6 +495,26 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Desktop Navigation & Actions */}
           <div className="hidden lg:flex items-center space-x-2.5">
+            {/* Real-Time Multi-Computer Sync Button */}
+            <button
+              type="button"
+              onClick={() => {
+                audioFeedback.playTap();
+                if (onSyncGas) onSyncGas();
+              }}
+              disabled={isSyncing}
+              aria-label="Synchronize Bookings Across All Computers"
+              className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer active:scale-95 border ${
+                isSyncing
+                  ? 'bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700 animate-pulse'
+                  : 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:bg-sky-100 dark:hover:bg-sky-900/60'
+              }`}
+              title="Click to instantly sync bookings with other computers & Google Sheets"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-amber-500' : 'text-sky-600 dark:text-sky-400'}`} />
+              <span className="font-bold tracking-tight">{isSyncing ? 'Syncing...' : 'Sync All'}</span>
+            </button>
+
             {/* Desktop Notification Bell Button */}
             <div className="relative">
               <button

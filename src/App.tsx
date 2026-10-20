@@ -74,6 +74,7 @@ import {
   ShieldAlert,
   Lock,
   Crown,
+  RefreshCw,
 } from 'lucide-react';
 
 export default function App() {
@@ -234,7 +235,7 @@ export default function App() {
         GasService.syncFacility(facilityId, { forceFresh: true }),
         HubService.pullStateFromHub(),
       ]);
-      const maxTimeout = new Promise((r) => setTimeout(r, 3200));
+      const maxTimeout = new Promise((r) => setTimeout(r, 6500));
 
       await Promise.race([syncTasks, maxTimeout]);
     } catch (err) {
@@ -359,6 +360,8 @@ export default function App() {
   const [gasConfig, setGasConfig] = useState<GasConnectionConfig>(() => GasService.getConfig());
   const [isSyncing, setIsSyncing] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [isNetworkSyncing, setIsNetworkSyncing] = useState(true);
+  const [networkSyncMessage, setNetworkSyncMessage] = useState('Syncing with Google Sheets & All Computers...');
 
   // Initialize storage, real-time hub sync & auto-sync from Google Sheets on mount, window focus, cross-tab events
   useEffect(() => {
@@ -409,6 +412,9 @@ export default function App() {
 
     // Initial background sync from Google Sheets if configured
     const cfg = GasService.getConfig();
+    let initialSyncTimer1: any = null;
+    let initialSyncTimer2: any = null;
+
     if (cfg.webAppUrl) {
       // First immediately flush any pending bookings queued locally
       OfflineQueueService.flushQueue(GasService).then((res) => {
@@ -416,11 +422,39 @@ export default function App() {
           setRefreshTrigger((prev) => prev + 1);
         }
       }).catch(() => {});
-      GasService.syncWithRemote().then((res) => {
-        if (res.success) {
-          setRefreshTrigger((prev) => prev + 1);
+
+      const runSync = async (isFirst = false) => {
+        if (isFirst) {
+          setIsNetworkSyncing(true);
+          setNetworkSyncMessage('Syncing with Google Sheets & All Computers...');
         }
-      }).catch(() => {});
+        try {
+          const res = await GasService.syncWithRemote();
+          if (res.success) {
+            setRefreshTrigger((prev) => prev + 1);
+            window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
+            if (isFirst) {
+              setNetworkSyncMessage('Connected: All bookings up to date with Google Sheets');
+              setTimeout(() => setIsNetworkSyncing(false), 2400);
+            }
+          } else if (isFirst) {
+            setIsNetworkSyncing(false);
+          }
+        } catch {
+          if (isFirst) setIsNetworkSyncing(false);
+        }
+      };
+
+      // 1. Immediate sync on page load/refresh (Computer B)
+      runSync(true);
+
+      // 2. High-priority follow-up sync at 5s (catches in-flight booking if Computer A booked right before refresh)
+      initialSyncTimer1 = setTimeout(() => runSync(false), 5000);
+
+      // 3. Second follow-up sync at 12s
+      initialSyncTimer2 = setTimeout(() => runSync(false), 12000);
+    } else {
+      setIsNetworkSyncing(false);
     }
 
     // Cloud Database (Firebase Firestore) Real-Time Synchronization across all computers:
@@ -454,6 +488,7 @@ export default function App() {
           GasService.syncWithRemote().then((res) => {
             if (res.success) {
               setRefreshTrigger((prev) => prev + 1);
+              window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
             }
           }).catch(() => {});
         }
@@ -478,7 +513,7 @@ export default function App() {
     };
     window.addEventListener('tamimi_navigate_facility', handleNavigateFacility);
 
-    // Multi-device background polling (every 2 minutes) with overlap protection to avoid Google quota limits
+    // Multi-device background polling (every 15 seconds) with overlap protection
     let isPollingInProgress = false;
     const interval = setInterval(() => {
       if (isPollingInProgress) return;
@@ -488,6 +523,7 @@ export default function App() {
         GasService.syncWithRemote().then((res) => {
           if (res.success) {
             setRefreshTrigger((prev) => prev + 1);
+            window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
           }
         }).catch(() => {}).finally(() => {
           isPollingInProgress = false;
@@ -496,7 +532,7 @@ export default function App() {
       if (OfflineQueueService.getPendingCount() > 0) {
         OfflineQueueService.flushQueue(GasService).catch(() => {});
       }
-    }, 120000);
+    }, 15000);
 
     return () => {
       window.removeEventListener('tamimi_bookings_updated', handleLocalRefresh);
@@ -519,6 +555,8 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('tamimi_request_flush_queue', handleRequestFlush);
       window.removeEventListener('tamimi_navigate_facility', handleNavigateFacility);
+      if (initialSyncTimer1) clearTimeout(initialSyncTimer1);
+      if (initialSyncTimer2) clearTimeout(initialSyncTimer2);
       clearInterval(interval);
     };
   }, []);
@@ -727,6 +765,19 @@ export default function App() {
 
       {/* Campus Emergency Broadcast Alert Banner */}
       <CampusBroadcastBanner />
+
+      {/* Network Syncing Progress Banner on Refresh / Load */}
+      {isNetworkSyncing && (
+        <div className="w-full bg-gradient-to-r from-sky-600 via-blue-600 to-indigo-600 text-white px-4 py-2 flex items-center justify-between shadow-md z-40 text-xs font-bold animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex items-center space-x-2.5">
+            <RefreshCw className="w-4 h-4 animate-spin text-sky-200" />
+            <span>{networkSyncMessage}</span>
+          </div>
+          <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-mono text-sky-100">
+            Multi-Computer Live Sync
+          </span>
+        </div>
+      )}
 
       {/* Top Header */}
       <Header

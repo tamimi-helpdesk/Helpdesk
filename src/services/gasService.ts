@@ -21,6 +21,46 @@ export interface TestConnectionResult {
 let consecutiveSyncErrors = 0;
 let isServerProxyDisabled = false;
 
+// Universal detector for client-side static hosting environments (GitHub Pages, Netlify, Vercel, etc.)
+function isStaticClientEnv(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = (window.location.hostname || '').toLowerCase();
+  if (
+    host.includes('github.io') ||
+    host.includes('pages.dev') ||
+    host.includes('netlify.app') ||
+    host.includes('vercel.app') ||
+    host.includes('azurestaticapps.net') ||
+    window.location.protocol === 'file:'
+  ) {
+    return true;
+  }
+  try {
+    if (
+      localStorage.getItem('tamimi_static_proxy_disabled') === 'true' ||
+      sessionStorage.getItem('tamimi_static_proxy_disabled') === 'true'
+    ) {
+      return true;
+    }
+  } catch {}
+  return isServerProxyDisabled;
+}
+
+function disableServerProxy() {
+  isServerProxyDisabled = true;
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('tamimi_static_proxy_disabled', 'true');
+    }
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem('tamimi_static_proxy_disabled', 'true');
+    }
+  } catch {}
+}
+
+// In-flight active sync promise deduplication to prevent multiple simultaneous 20s requests
+let activeSyncPromise: Promise<{ success: boolean; count?: number; error?: string; diagnosis?: string }> | null = null;
+
 export const GasService = {
   getConfig(): GasConnectionConfig {
     let webAppUrl = DEFAULT_GAS_WEB_APP_URL || '';
@@ -363,6 +403,19 @@ export const GasService = {
   },
 
   async syncWithRemote(isManual: boolean = false): Promise<{ success: boolean; count?: number; error?: string; diagnosis?: string }> {
+    // If a remote sync is already in flight, reuse the promise to prevent multiple heavy concurrent requests
+    if (activeSyncPromise) {
+      return activeSyncPromise;
+    }
+
+    activeSyncPromise = this.executeSyncWithRemote(isManual).finally(() => {
+      activeSyncPromise = null;
+    });
+
+    return activeSyncPromise;
+  },
+
+  async executeSyncWithRemote(isManual: boolean = false): Promise<{ success: boolean; count?: number; error?: string; diagnosis?: string }> {
     const config = this.getConfig();
     if (!config.webAppUrl) {
       if (isManual) {
@@ -380,21 +433,26 @@ export const GasService = {
 
     const { url: cleanUrl } = this.sanitizeUrl(config.webAppUrl);
 
-    // 1. Try server proxy first (when running on fullstack node server)
-    try {
-      const proxyRes = await fetch('/api/gas/proxy', {
+    // 1. Try server proxy first ONLY if running on fullstack node server (skip on GitHub Pages / static hosting)
+    if (!isStaticClientEnv()) {
+      try {
+        const proxyController = new AbortController();
+        const proxyTimeout = setTimeout(() => proxyController.abort(), 2000);
+        const proxyRes = await fetch('/api/gas/proxy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: proxyController.signal,
           body: JSON.stringify({
             targetUrl: cleanUrl,
             action: 'getAll',
             method: 'GET',
           }),
         });
+        clearTimeout(proxyTimeout);
 
         const contentType = proxyRes.headers.get('content-type') || '';
         if (!proxyRes.ok || !contentType.includes('application/json')) {
-          isServerProxyDisabled = true;
+          disableServerProxy();
         } else {
           const proxyData = await proxyRes.json();
           if (proxyData.success && proxyData.data) {
@@ -503,10 +561,11 @@ export const GasService = {
         }
       }
     } catch (proxyErr: any) {
-      console.warn('[GasService] Server proxy sync warning:', proxyErr);
+      disableServerProxy();
     }
+  }
 
-    // 2. Direct fetch fallback for Netlify & browser clients
+    // 2. Direct fetch fallback for GitHub Pages, Netlify & browser clients
     try {
       const url = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}action=getAll&t=${Date.now()}`;
       const response = await fetch(url, {
@@ -613,6 +672,9 @@ export const GasService = {
             message: 'All records are up to date with Google Sheets master',
             type: 'success',
           });
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
         }
 
         return { success: true, count: totalCount };
@@ -784,33 +846,44 @@ export const GasService = {
       const isMultipurpose = facilityTabOrName && (facilityTabOrName.toLowerCase().includes('multipurpose') || facilityTabOrName.toLowerCase().includes('mr'));
       const targetParam = isMultipurpose ? 'Multipurpose Room' : (facilityTabOrName || 'Barber Booking');
       
-      // 1. Try server proxy first (avoids browser CORS & uses Node-level caching)
-      try {
-        const proxyRes = await fetch('/api/gas/proxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            targetUrl: cleanUrl,
-            action: 'getBookings',
-            method: 'GET',
-            tab: targetParam,
-            facility: targetParam,
-            facilityName: targetParam,
-            skipCache: Boolean(options?.forceFresh),
-          }),
-        });
-        if (proxyRes.ok) {
-          const proxyData = await proxyRes.json();
-          const list = proxyData?.data?.bookings || proxyData?.bookings;
-          if (Array.isArray(list)) {
-            const merged = StorageService.mergeRemoteBookings(list);
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
+      // 1. Try server proxy first (skip on GitHub Pages / static hosting)
+      if (!isStaticClientEnv()) {
+        try {
+          const proxyRes = await fetch('/api/gas/proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              targetUrl: cleanUrl,
+              action: 'getBookings',
+              method: 'GET',
+              tab: targetParam,
+              facility: targetParam,
+              facilityName: targetParam,
+              skipCache: Boolean(options?.forceFresh),
+            }),
+          });
+          if (proxyRes.ok) {
+            const contentType = proxyRes.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+              const proxyData = await proxyRes.json();
+              const list = proxyData?.data?.bookings || proxyData?.bookings;
+              if (Array.isArray(list) && list.length > 0) {
+                const merged = StorageService.mergeRemoteBookings(list);
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
+                }
+                return { success: true, count: merged.length };
+              }
+            } else {
+              disableServerProxy();
             }
-            return { success: true, count: merged.length };
+          } else {
+            disableServerProxy();
           }
+        } catch (pErr) {
+          disableServerProxy();
         }
-      } catch (pErr) {}
+      }
 
       // 2. Direct browser GET fallback
       const url = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}action=getBookings&tab=${encodeURIComponent(targetParam)}&facility=${encodeURIComponent(targetParam)}&t=${Date.now()}`;
@@ -821,7 +894,7 @@ export const GasService = {
       if (response.ok) {
         const result = await response.json();
         const list = result?.bookings || (result?.data && result.data.bookings);
-        if (Array.isArray(list)) {
+        if (Array.isArray(list) && list.length > 0) {
           const merged = StorageService.mergeRemoteBookings(list);
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
@@ -829,10 +902,14 @@ export const GasService = {
           return { success: true, count: merged.length };
         }
       }
+
+      // If targeted tab fetch returned no list (older deployed Apps Script), seamlessly sync all
+      const fullRes = await this.syncWithRemote();
+      return { success: fullRes.success, count: fullRes.count };
     } catch (e) {
-      console.warn('[GasService] syncFacilityBookings notice:', e);
+      console.warn('[GasService] syncFacilityBookings notice, falling back to syncWithRemote:', e);
+      return this.syncWithRemote();
     }
-    return { success: false };
   },
 
   mergeRemoteBlankForms(remoteForms: any[]) {
@@ -3139,41 +3216,54 @@ export const GasService = {
       sheetTabName: targetSheetTabName,
     };
 
-    // 1. Try server proxy (for localhost development server)
-    try {
-      const proxyRes = await fetch('/api/gas/proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetUrl: cleanUrl,
-          action: 'createBooking',
+    // 1. Try server proxy (for localhost / Express development server only; skip on GitHub Pages / static hosting)
+    if (!isStaticClientEnv()) {
+      try {
+        const proxyController = new AbortController();
+        const proxyTimeout = setTimeout(() => proxyController.abort(), 2000);
+        const proxyRes = await fetch('/api/gas/proxy', {
           method: 'POST',
-          body: {
+          headers: { 'Content-Type': 'application/json' },
+          signal: proxyController.signal,
+          body: JSON.stringify({
+            targetUrl: cleanUrl,
             action: 'createBooking',
-            booking: normalizedBooking,
-          },
-        }),
-      });
+            method: 'POST',
+            body: {
+              action: 'createBooking',
+              booking: normalizedBooking,
+            },
+          }),
+        });
+        clearTimeout(proxyTimeout);
 
-      if (proxyRes.ok) {
-        const proxyData = await proxyRes.json();
-        if (proxyData.success) {
-          consecutiveSyncErrors = 0;
-          return { success: true };
-        } else {
-          if (
-            (proxyData.diagnosis === 'AUTH_REQUIRED' || String(proxyData.error || '').includes('Permission Denied')) &&
-            cleanUrl !== DEFAULT_GAS_WEB_APP_URL
-          ) {
-            console.warn('[GasService] Stored URL requires login, auto-healing to master DEFAULT_GAS_WEB_APP_URL');
-            this.resetToDefaultUrl();
-            return this.pushBookingToRemoteDirect(booking);
+        if (proxyRes.ok) {
+          const contentType = proxyRes.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const proxyData = await proxyRes.json();
+            if (proxyData.success) {
+              consecutiveSyncErrors = 0;
+              return { success: true };
+            } else {
+              if (
+                (proxyData.diagnosis === 'AUTH_REQUIRED' || String(proxyData.error || '').includes('Permission Denied')) &&
+                cleanUrl !== DEFAULT_GAS_WEB_APP_URL
+              ) {
+                console.warn('[GasService] Stored URL requires login, auto-healing to master DEFAULT_GAS_WEB_APP_URL');
+                this.resetToDefaultUrl();
+                return this.pushBookingToRemoteDirect(booking);
+              }
+              return { success: false, error: proxyData.error };
+            }
+          } else {
+            disableServerProxy();
           }
-          return { success: false, error: proxyData.error };
+        } else {
+          disableServerProxy();
         }
+      } catch (proxyErr) {
+        disableServerProxy();
       }
-    } catch (proxyErr) {
-      // GitHub Pages / Netlify static client fallback
     }
 
     // 2. Direct browser GET query parameter fallback (bypasses browser CORS & 302 redirect POST drop)
@@ -3506,29 +3596,38 @@ export const GasService = {
 
     const { url: cleanUrl } = this.sanitizeUrl(config.webAppUrl);
 
-    // Try server proxy first
-    try {
-      const proxyRes = await fetch('/api/gas/proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetUrl: cleanUrl,
+    // Try server proxy first (skip on GitHub Pages / static hosting)
+    if (!isStaticClientEnv()) {
+      try {
+        const proxyRes = await fetch('/api/gas/proxy', {
           method: 'POST',
-          body: payload,
-        }),
-      });
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetUrl: cleanUrl,
+            method: 'POST',
+            body: payload,
+          }),
+        });
 
-      if (proxyRes.ok) {
-        const proxyData = await proxyRes.json();
-        if (proxyData.success) {
-          consecutiveSyncErrors = 0;
-          return { success: true, message: proxyData.message };
+        if (proxyRes.ok) {
+          const contentType = proxyRes.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const proxyData = await proxyRes.json();
+            if (proxyData.success) {
+              consecutiveSyncErrors = 0;
+              return { success: true, message: proxyData.message };
+            } else {
+              return { success: false, error: proxyData.error || 'Cancellation rejected by Google Apps Script' };
+            }
+          } else {
+            disableServerProxy();
+          }
         } else {
-          return { success: false, error: proxyData.error || 'Cancellation rejected by Google Apps Script' };
+          disableServerProxy();
         }
+      } catch (proxyErr) {
+        disableServerProxy();
       }
-    } catch (proxyErr) {
-      // Netlify client fallback
     }
 
     // Direct fallback: 1. Try GET query parameters (bypasses browser CORS & redirect drops)
@@ -3797,29 +3896,38 @@ export const GasService = {
       ...payloadObj,
     };
 
-    // Try server proxy first
-    try {
-      const proxyRes = await fetch('/api/gas/proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetUrl: cleanUrl,
+    // Try server proxy first (skip on GitHub Pages / static hosting)
+    if (!isStaticClientEnv()) {
+      try {
+        const proxyRes = await fetch('/api/gas/proxy', {
           method: 'POST',
-          body: requestBody,
-        }),
-      });
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetUrl: cleanUrl,
+            method: 'POST',
+            body: requestBody,
+          }),
+        });
 
-      if (proxyRes.ok) {
-        const proxyData = await proxyRes.json();
-        if (proxyData.success) {
-          consecutiveSyncErrors = 0;
-          return { success: true };
+        if (proxyRes.ok) {
+          const contentType = proxyRes.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const proxyData = await proxyRes.json();
+            if (proxyData.success) {
+              consecutiveSyncErrors = 0;
+              return { success: true };
+            } else {
+              return { success: false, error: proxyData.error || 'Deletion rejected by Google Apps Script' };
+            }
+          } else {
+            disableServerProxy();
+          }
         } else {
-          return { success: false, error: proxyData.error || 'Deletion rejected by Google Apps Script' };
+          disableServerProxy();
         }
+      } catch (proxyErr) {
+        disableServerProxy();
       }
-    } catch (proxyErr) {
-      // Direct fallback
     }
 
     // Direct fallback for Netlify / browser with 3-attempt auto-retry
