@@ -227,11 +227,12 @@ export default function App() {
     setSyncingFacilityName(targetFac.name);
     setIsFacilitySyncing(true);
 
-    // 2. Perform live multi-computer and Google Sheets targeted sync:
-    // Thoroughly loads this specific facility's Google Sheets data before opening
+    // 2. Perform live multi-computer, server authoritative and Google Sheets targeted sync:
+    // Thoroughly loads this specific facility's authoritative server and Google Sheets data before opening
     const startTime = Date.now();
     try {
       const syncTasks = Promise.allSettled([
+        HubService.fetchAuthoritativeBookings(facilityId),
         GasService.syncFacility(facilityId, { forceFresh: true }),
         HubService.pullStateFromHub(),
       ]);
@@ -362,6 +363,7 @@ export default function App() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isNetworkSyncing, setIsNetworkSyncing] = useState(true);
   const [networkSyncMessage, setNetworkSyncMessage] = useState('Syncing with Google Sheets & All Computers...');
+  const [isAuthoritativeLoading, setIsAuthoritativeLoading] = useState<boolean>(true);
 
   // Initialize storage, real-time hub sync & auto-sync from Google Sheets on mount, window focus, cross-tab events
   useEffect(() => {
@@ -371,6 +373,20 @@ export default function App() {
     });
     HubService.init();
     DesktopNotificationService.init();
+
+    // Directly fetch authoritative server bookings on load/refresh (Requirement 1, 2, 3)
+    const loadAuthoritativeBookings = async () => {
+      setIsAuthoritativeLoading(true);
+      try {
+        await HubService.fetchAuthoritativeBookings();
+        setRefreshTrigger((prev) => prev + 1);
+      } catch (err) {
+        console.warn('[App] Authoritative server bookings fetch error:', err);
+      } finally {
+        setIsAuthoritativeLoading(false);
+      }
+    };
+    loadAuthoritativeBookings();
 
     // Trigger local refresh handler
     const handleLocalRefresh = () => {
@@ -1000,6 +1016,19 @@ export default function App() {
             {/* Mode A: Daily Single Slot Booking */}
             {bookingMode === 'single' && (
               <div className="space-y-4 sm:space-y-5 animate-in fade-in duration-150">
+                {/* Authoritative Server Data Fetching Indicator (Requirement 2) */}
+                {isAuthoritativeLoading && (
+                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-sky-500/30 bg-sky-500/10 dark:bg-sky-950/40 px-4 py-3 text-sky-900 dark:text-sky-100 text-xs sm:text-sm font-semibold shadow-sm animate-pulse">
+                    <div className="flex items-center gap-2.5">
+                      <RefreshCw className="w-4 h-4 animate-spin text-sky-600 dark:text-sky-400 shrink-0" />
+                      <span>সর্বশেষ বুকিং লোড হচ্ছে... (Loading latest authoritative bookings from server)</span>
+                    </div>
+                    <span className="text-[10px] bg-sky-600 text-white font-mono px-2 py-0.5 rounded-full uppercase tracking-wider font-bold">
+                      Direct Server Sync
+                    </span>
+                  </div>
+                )}
+
                 {/* Date Selector Strip (Accurate Booking Counts filtered by facility and stage) */}
                 <DatePickerStrip
                   selectedDate={selectedDate}

@@ -1804,6 +1804,53 @@ export const StorageService = {
     }
   },
 
+  applyTombstones(deletedIds: Record<string, number>) {
+    if (!deletedIds || typeof deletedIds !== 'object') return;
+    try {
+      const raw = localStorage.getItem(DELETED_CACHE_KEY);
+      const currentObj = raw ? JSON.parse(raw) : {};
+      const mergedObj = { ...currentObj, ...deletedIds };
+      safeSetLocalStorage(DELETED_CACHE_KEY, JSON.stringify(mergedObj));
+
+      // Remove tombstoned records from in-memory bookings
+      const tombstoneSet = new Set(Object.keys(deletedIds).map((k) => k.toLowerCase().trim()));
+      const prevLen = inMemoryBookings.length;
+      inMemoryBookings = inMemoryBookings.filter((b) => !b.id || !tombstoneSet.has(b.id.toLowerCase().trim()));
+      if (inMemoryBookings.length !== prevLen) {
+        safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
+        notifyBookingsChanged();
+      }
+    } catch (e) {}
+  },
+
+  applyCancellations(cancelledIds: Record<string, number>) {
+    if (!cancelledIds || typeof cancelledIds !== 'object') return;
+    try {
+      const raw = localStorage.getItem(CANCELLED_CACHE_KEY);
+      const currentObj = raw ? JSON.parse(raw) : {};
+      const mergedObj = { ...currentObj, ...cancelledIds };
+      safeSetLocalStorage(CANCELLED_CACHE_KEY, JSON.stringify(mergedObj));
+
+      const cancelSet = new Set(Object.keys(cancelledIds).map((k) => k.toLowerCase().trim()));
+      let changed = false;
+      inMemoryBookings = inMemoryBookings.map((b) => {
+        if (b.id && cancelSet.has(b.id.toLowerCase().trim()) && b.status !== 'CANCELLED') {
+          changed = true;
+          return {
+            ...b,
+            status: 'CANCELLED',
+            cancelledAt: b.cancelledAt || new Date().toISOString(),
+          };
+        }
+        return b;
+      });
+      if (changed) {
+        safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
+        notifyBookingsChanged();
+      }
+    } catch (e) {}
+  },
+
   /**
    * Universal Hub State Application:
    * Instantly synchronizes this client with the authoritative Server Hub state.
@@ -1813,22 +1860,12 @@ export const StorageService = {
 
     // 1. Ingest Tombstones
     if (hubData.deletedIds && typeof hubData.deletedIds === 'object') {
-      try {
-        const raw = localStorage.getItem(DELETED_CACHE_KEY);
-        const currentObj = raw ? JSON.parse(raw) : {};
-        const mergedObj = { ...currentObj, ...hubData.deletedIds };
-        safeSetLocalStorage(DELETED_CACHE_KEY, JSON.stringify(mergedObj));
-      } catch (e) {}
+      this.applyTombstones(hubData.deletedIds);
     }
 
     // 2. Ingest Cancellations
     if (hubData.cancelledIds && typeof hubData.cancelledIds === 'object') {
-      try {
-        const raw = localStorage.getItem(CANCELLED_CACHE_KEY);
-        const currentObj = raw ? JSON.parse(raw) : {};
-        const mergedObj = { ...currentObj, ...hubData.cancelledIds };
-        safeSetLocalStorage(CANCELLED_CACHE_KEY, JSON.stringify(mergedObj));
-      } catch (e) {}
+      this.applyCancellations(hubData.cancelledIds);
     }
 
     // 3. Ingest Bookings
@@ -2301,30 +2338,23 @@ export const StorageService = {
    * while never dropping any pending or in-flight local bookings, and preventing cancelled
    * or deleted bookings from resurrecting.
    */
-  mergeRemoteBookings(remoteBookings: Booking[]): Booking[] {
+  /**
+   * Direct Authoritative Server Bookings Ingestion:
+   * Sets bookings directly from the server's authoritative /api/bookings endpoint.
+   * Guarantees that Device B immediately receives all newly created bookings from Device A.
+   */
+  setAuthoritativeServerBookings(serverBookings: Booking[], facilityId?: string, date?: string): Booking[] {
     this.init();
-    if (!Array.isArray(remoteBookings)) return inMemoryBookings;
+    if (!Array.isArray(serverBookings)) return inMemoryBookings;
 
-    const recentCancelled = getRecentCancelledMap();
     const deletedIds = getDeletedIdsMap();
+    const recentCancelled = getRecentCancelledMap();
+    const locallyCancelledIds = getLocallyCancelledIdsMap();
 
-    // Track any booking that is locally marked as CANCELLED so remote never resurrects it as CONFIRMED
-    const locallyCancelledIds = new Set<string>();
-    const prevMap = new Map<string, string>();
-    inMemoryBookings.forEach((b) => {
-      if (b.status === 'CANCELLED' && b.id) {
-        locallyCancelledIds.add(b.id.toLowerCase().trim());
-      }
-      if (b.id) {
-        prevMap.set(b.id.toLowerCase().trim(), `${b.status}_${b.customerName}_${b.startTime}_${b.endTime}_${b.date}`);
-      }
-    });
-
-    const sanitizedRemote = remoteBookings
+    const sanitizedServer = serverBookings
       .filter((item) => item && typeof item === 'object' && item.id !== 'Booking ID' && item.date !== 'Date')
       .filter((item) => {
-        // Drop any permanently deleted bookings
-        if (item.id && deletedIds.has(item.id.toLowerCase().trim())) {
+        if (item.id && (deletedIds.has(item.id.toLowerCase().trim()) || isIdDeleted(item.id))) {
           return false;
         }
         return true;
@@ -2332,94 +2362,142 @@ export const StorageService = {
       .map((b, idx) => {
         const item = sanitizeBooking(b, idx);
         const idKey = item.id ? item.id.toLowerCase().trim() : '';
-        // If this booking was cancelled locally or in recent cache, enforce CANCELLED
         if (idKey && (recentCancelled.has(idKey) || locallyCancelledIds.has(idKey))) {
           item.status = 'CANCELLED';
         }
         return item;
       });
 
-    // Deduplicate remote before merge
+    const deduplicatedServer = deduplicateBookings(sanitizedServer);
+
+    if (facilityId || date) {
+      const resolvedFacId = facilityId ? resolveFacilityId(facilityId) : null;
+      const targetDate = date ? normalizeDateString(date) : null;
+      const serverIdSet = new Set(deduplicatedServer.map((b) => b.id.toLowerCase().trim()));
+
+      const retained = inMemoryBookings.filter((b) => {
+        if (!b || !b.id) return false;
+        const bId = b.id.toLowerCase().trim();
+        if (deletedIds.has(bId) || isIdDeleted(bId)) return false;
+        if (serverIdSet.has(bId)) return false;
+
+        const bFac = resolveFacilityId(b.facilityId || b.sheetTabName);
+        const bDate = normalizeDateString(b.date);
+
+        const isFacilityTarget = resolvedFacId ? bFac === resolvedFacId : true;
+        const isDateTarget = targetDate ? bDate === targetDate : true;
+
+        if (isFacilityTarget && isDateTarget) {
+          return false;
+        }
+        return true;
+      });
+
+      inMemoryBookings = deduplicateBookings([...deduplicatedServer, ...retained]);
+    } else {
+      // Full authoritative state update for all facilities!
+      const queuedBookingMap = new Map<string, Booking>();
+      try {
+        const q = OfflineQueueService.getQueue();
+        q.forEach((item) => {
+          if (item.action === 'saveBooking' && item.payload && item.payload.id) {
+            queuedBookingMap.set(String(item.payload.id).toLowerCase().trim(), item.payload);
+          }
+        });
+      } catch (_) {}
+
+      const serverIdSet = new Set(deduplicatedServer.map((b) => b.id.toLowerCase().trim()));
+      const pendingOfflineBookings: Booking[] = [];
+      queuedBookingMap.forEach((bk, k) => {
+        if (!serverIdSet.has(k) && !deletedIds.has(k) && !isIdDeleted(k)) {
+          pendingOfflineBookings.push(bk);
+        }
+      });
+
+      inMemoryBookings = deduplicateBookings([...deduplicatedServer, ...pendingOfflineBookings]);
+    }
+
+    try {
+      safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
+      notifyBookingsChanged();
+      this.reconcileIsolationRoomsFromBookings();
+    } catch (e) {
+      console.error('[StorageService] Error saving authoritative bookings:', e);
+    }
+
+    return inMemoryBookings;
+  },
+
+  /**
+   * Smart Remote & Multi-Device Reconciliation:
+   * Merges bookings fetched from Google Sheets across all tabs with local storage.
+   * Ensures that bookings are never dropped or overwritten with stale snapshots.
+   */
+  mergeRemoteBookings(remoteBookings: Booking[]): Booking[] {
+    this.init();
+    if (!Array.isArray(remoteBookings)) return inMemoryBookings;
+
+    const recentCancelled = getRecentCancelledMap();
+    const deletedIds = getDeletedIdsMap();
+    const locallyCancelledIds = getLocallyCancelledIdsMap();
+
+    const sanitizedRemote = remoteBookings
+      .filter((item) => item && typeof item === 'object' && item.id !== 'Booking ID' && item.date !== 'Date')
+      .filter((item) => {
+        if (item.id && (deletedIds.has(item.id.toLowerCase().trim()) || isIdDeleted(item.id))) {
+          return false;
+        }
+        return true;
+      })
+      .map((b, idx) => {
+        const item = sanitizeBooking(b, idx);
+        const idKey = item.id ? item.id.toLowerCase().trim() : '';
+        if (idKey && (recentCancelled.has(idKey) || locallyCancelledIds.has(idKey))) {
+          item.status = 'CANCELLED';
+        }
+        return item;
+      });
+
     const deduplicatedRemote = deduplicateBookings(sanitizedRemote);
 
-    // Index remote bookings
-    const remoteIdMap = new Map<string, Booking>();
-    const remoteSlotMap = new Set<string>();
-    let updatedOrNewCount = 0;
-
-    deduplicatedRemote.forEach((rb) => {
-      if (rb.id) {
-        const idKey = rb.id.toLowerCase().trim();
-        remoteIdMap.set(idKey, rb);
-        const prevSig = prevMap.get(idKey);
-        const newSig = `${rb.status}_${rb.customerName}_${rb.startTime}_${rb.endTime}_${rb.date}`;
-        if (!prevSig || prevSig !== newSig) {
-          updatedOrNewCount++;
+    // Build map of existing in-memory bookings to preserve all valid server bookings
+    const bookingMap = new Map<string, Booking>();
+    inMemoryBookings.forEach((localB) => {
+      if (localB && localB.id) {
+        const idKey = localB.id.toLowerCase().trim();
+        if (!deletedIds.has(idKey) && !isIdDeleted(idKey)) {
+          bookingMap.set(idKey, localB);
         }
       }
-      const slotKey = `${resolveFacilityId(rb.facilityId || rb.sheetTabName)}_${normalizeDateString(rb.date)}_${rb.stage}_${rb.startTime}`;
-      remoteSlotMap.add(slotKey.toLowerCase());
+    });
+
+    // Merge incoming remote bookings without dropping existing server bookings
+    let updatedOrNewCount = 0;
+    deduplicatedRemote.forEach((rb) => {
+      if (rb && rb.id) {
+        const idKey = rb.id.toLowerCase().trim();
+        if (!deletedIds.has(idKey) && !isIdDeleted(idKey)) {
+          const existing = bookingMap.get(idKey);
+          if (existing && existing.status === 'CANCELLED' && rb.status !== 'CANCELLED') {
+            rb.status = 'CANCELLED';
+            rb.cancellationReason = existing.cancellationReason || rb.cancellationReason;
+          }
+          if (!existing) {
+            updatedOrNewCount++;
+          }
+          bookingMap.set(idKey, rb);
+        }
+      }
     });
 
     if (updatedOrNewCount > 0) {
       lastSyncChangesCount += updatedOrNewCount;
     }
 
-    // Merge: Keep remote bookings (authoritative), and keep any local bookings that aren't in remote yet and haven't been deleted
-    const now = Date.now();
-    const TEN_MINUTES_MS = 10 * 60 * 1000;
-    const queuedBookingIds = new Set<string>();
-    try {
-      const q = OfflineQueueService.getQueue();
-      q.forEach((item) => {
-        if (item.action === 'saveBooking' && item.payload?.id) {
-          queuedBookingIds.add(String(item.payload.id).toLowerCase().trim());
-        }
-      });
-    } catch (e) {}
-
-    const preservedLocalBookings = inMemoryBookings.filter((localB) => {
-      if (!localB.id) return false;
-      const idKey = localB.id.toLowerCase().trim();
-      if (deletedIds.has(idKey) || isIdDeleted(idKey)) return false; // Deleted permanently
-      if (remoteIdMap.has(idKey)) return false; // Already updated from remote
-
-      const createdTime = localB.createdAt ? new Date(localB.createdAt).getTime() : 0;
-      const isQueued = queuedBookingIds.has(idKey);
-      const isInFlight = localInFlightBookingIds.has(idKey) && (now - createdTime < 15 * 1000);
-
-      // Only preserve local booking if it's currently queued or in-flight on this device
-      if (!isQueued && !isInFlight) {
-        return false;
-      }
-
-      // If locally marked as CANCELLED, do not retain as active booking
-      if (localB.status === 'CANCELLED') {
-        return false;
-      }
-
-      // Never drop legitimate bookings! Keep them and ensure they are queued for remote sync
-      try {
-        if (!queuedBookingIds.has(idKey)) {
-          OfflineQueueService.enqueue({
-            targetId: localB.id,
-            action: 'saveBooking',
-            facilityName: localB.facilityName || 'Facility Booking',
-            description: `Auto-reconciled booking for ${localB.customerName}`,
-            payload: localB,
-          });
-        }
-      } catch (e) {}
-
-      // Keep this local booking so user's bookings NEVER disappear across computers!
-      return true;
-    });
-
-    inMemoryBookings = deduplicateBookings([...deduplicatedRemote, ...preservedLocalBookings]);
+    inMemoryBookings = deduplicateBookings(Array.from(bookingMap.values()));
     try {
       safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
       notifyBookingsChanged();
-      // Auto-reconcile isolation room occupants from bookings so new devices immediately populate
       this.reconcileIsolationRoomsFromBookings();
     } catch (e) {
       console.error('Failed to save merged bookings to localStorage', e);
@@ -3769,21 +3847,39 @@ export const StorageService = {
       }
     }
 
-    localInFlightBookingIds.add(newBooking.id.toLowerCase().trim());
-    const updated = [newBooking, ...inMemoryBookings];
-    this.saveBookings(updated);
-
-    // Broadcast immediately to multi-computer real-time hub
-    try {
-      import('./hubService').then(({ HubService }) => {
-        HubService.pushMutation({
+    // 1. Authoritative Server Save First (Requirement 5: নিশ্চিত করো server-এ save হয়েছে)
+    if (isOnline) {
+      try {
+        const { HubService } = await import('./hubService');
+        const mutateResult = await HubService.pushMutation({
           mutationType: 'UPSERT',
           entity: 'bookings',
           id: newBooking.id,
           data: newBooking,
-        }).catch(() => {});
-      }).catch(() => {});
-    } catch (_) {}
+        });
+
+        if (mutateResult) {
+          if (mutateResult.conflict) {
+            return {
+              success: false,
+              error: mutateResult.error || 'Conflict detected: this slot was already booked on the server.',
+            };
+          }
+          if (mutateResult.success === false && mutateResult.error) {
+            return {
+              success: false,
+              error: mutateResult.error,
+            };
+          }
+        }
+      } catch (pushErr: any) {
+        console.warn('[StorageService] Server mutation push notice:', pushErr);
+      }
+    }
+
+    localInFlightBookingIds.add(newBooking.id.toLowerCase().trim());
+    const updated = [newBooking, ...inMemoryBookings];
+    this.saveBookings(updated);
 
     // Push to Google Sheets asynchronously in background
     try {
@@ -3967,27 +4063,13 @@ export const StorageService = {
 
     // Broadcast recurring bookings to multi-computer real-time hub
     try {
-      import('./hubService').then(({ HubService }) => {
-        // Send batch mutation to hub with individual item compatibility
-        HubService.pushMutation({
+      import('./hubService').then(async ({ HubService }) => {
+        await HubService.pushMutation({
           mutationType: 'UPSERT',
           entity: 'bookings',
           data: createdBookings,
-        }).catch(() => {});
-      }).catch(() => {
-        // Fallback fetch if import delayed
-        if (typeof fetch !== 'undefined') {
-          fetch('/api/hub/mutate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              mutationType: 'UPSERT',
-              entity: 'bookings',
-              data: createdBookings,
-            }),
-          }).catch(() => {});
-        }
-      });
+        });
+      }).catch(() => {});
     } catch (e) {}
 
     // Guaranteed Google Sheets batch sync

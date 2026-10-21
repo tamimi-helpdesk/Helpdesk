@@ -11,11 +11,81 @@ export class HubService {
 
   private static lastKnownVersion = 0;
 
+  public static getAuthHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache',
+    };
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const rawSession = localStorage.getItem('tamimi_helpdesk_auth_session_v2');
+        if (rawSession) {
+          const parsed = JSON.parse(rawSession);
+          if (parsed && parsed.sessionToken) {
+            headers['Authorization'] = `Bearer ${parsed.sessionToken}`;
+            headers['x-session-token'] = parsed.sessionToken;
+          }
+          if (parsed && parsed.username) {
+            headers['x-operator-username'] = parsed.username;
+          }
+        }
+      }
+    } catch (_) {}
+    return headers;
+  }
+
+  // Instant Authoritative Booking Fetch directly from Server Endpoint (Cache-busted, no-store)
+  public static async fetchAuthoritativeBookings(facilityId?: string, date?: string): Promise<boolean> {
+    try {
+      const queryParams = new URLSearchParams();
+      queryParams.set('_t', String(Date.now()));
+      if (facilityId) queryParams.set('facilityId', facilityId);
+      if (date) queryParams.set('date', date);
+
+      const res = await fetch(`/api/bookings?${queryParams.toString()}`, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: this.getAuthHeaders(),
+      });
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || !contentType.includes('application/json')) {
+        return false;
+      }
+
+      const data = await res.json();
+      if (!data || !data.success || !Array.isArray(data.bookings)) {
+        return false;
+      }
+
+      if (typeof data.version === 'number') {
+        this.lastKnownVersion = data.version;
+      }
+
+      // Ingest tombstones & cancellations
+      if (data.deletedIds && typeof data.deletedIds === 'object') {
+        StorageService.applyTombstones(data.deletedIds);
+      }
+      if (data.cancelledIds && typeof data.cancelledIds === 'object') {
+        StorageService.applyCancellations(data.cancelledIds);
+      }
+
+      // Directly apply authoritative server bookings into StorageService
+      StorageService.setAuthoritativeServerBookings(data.bookings, facilityId, date);
+      return true;
+    } catch (err) {
+      console.warn('[HubService] Error fetching authoritative bookings:', err);
+      return false;
+    }
+  }
+
   // Initialize real-time synchronization listener
   public static init() {
     if (typeof window === 'undefined') return;
 
     // 1. Initial State Fetch from Hub
+    this.fetchAuthoritativeBookings().catch(() => {});
     this.pullStateFromHub().catch(() => {});
 
     // 2. Connect Real-time SSE Stream
@@ -24,7 +94,10 @@ export class HubService {
     // 3. Ultra-lightweight periodic version check (Every 6 seconds, <50 bytes instead of full state)
     setInterval(async () => {
       try {
-        const vRes = await fetch('/api/hub/version');
+        const vRes = await fetch(`/api/hub/version?_t=${Date.now()}`, {
+          cache: 'no-store',
+          headers: this.getAuthHeaders(),
+        });
         if (vRes.ok) {
           const vData = await vRes.json();
           if (vData && typeof vData.version === 'number') {
@@ -40,10 +113,12 @@ export class HubService {
 
     // 4. Focus & Visibility Sync (Instantly pull when user focuses or returns to window)
     window.addEventListener('focus', () => {
+      this.fetchAuthoritativeBookings().catch(() => {});
       this.pullStateFromHub().catch(() => {});
     });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
+        this.fetchAuthoritativeBookings().catch(() => {});
         this.pullStateFromHub().catch(() => {});
       }
     });
@@ -136,7 +211,11 @@ export class HubService {
     if (this.isSyncing) return false;
     this.isSyncing = true;
     try {
-      const res = await fetch('/api/hub/state');
+      const res = await fetch(`/api/hub/state?_t=${Date.now()}`, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: this.getAuthHeaders(),
+      });
       const contentType = res.headers.get('content-type') || '';
       if (!res.ok || !contentType.includes('application/json')) {
         return false;
@@ -204,22 +283,7 @@ export class HubService {
     [key: string]: any;
   }): Promise<any> {
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      try {
-        if (typeof localStorage !== 'undefined') {
-          const rawSession = localStorage.getItem('tamimi_helpdesk_auth_session_v2');
-          if (rawSession) {
-            const parsed = JSON.parse(rawSession);
-            if (parsed && parsed.sessionToken) {
-              headers['Authorization'] = `Bearer ${parsed.sessionToken}`;
-              headers['x-session-token'] = parsed.sessionToken;
-            }
-            if (parsed && parsed.username) {
-              headers['x-operator-username'] = parsed.username;
-            }
-          }
-        }
-      } catch (_) {}
+      const headers = this.getAuthHeaders();
 
       const res = await fetch('/api/hub/mutate', {
         method: 'POST',
@@ -227,12 +291,38 @@ export class HubService {
         body: JSON.stringify(payload),
       });
       const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
+      if (contentType.includes('application/json')) {
         return await res.json();
       }
-    } catch (e) {
-      // Quiet fallback
+      return { success: res.ok };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Network error pushing mutation' };
     }
-    return { success: false };
+  }
+
+  // Authoritative Server-First Booking Save (Requirement 5: নিশ্চিত করো server-এ save হয়েছে)
+  public static async saveBookingAuthoritative(booking: any): Promise<{ success: boolean; booking?: any; conflict?: boolean; error?: string }> {
+    try {
+      const headers = this.getAuthHeaders();
+      const res = await fetch('/api/bookings', {
+        method: 'POST',
+        headers,
+        cache: 'no-store',
+        body: JSON.stringify({ booking }),
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        return await res.json();
+      }
+      return { success: res.ok, booking };
+    } catch (e: any) {
+      // Fallback to /api/hub/mutate
+      return await this.pushMutation({
+        mutationType: 'UPSERT',
+        entity: 'bookings',
+        id: booking.id,
+        data: booking,
+      });
+    }
   }
 }
