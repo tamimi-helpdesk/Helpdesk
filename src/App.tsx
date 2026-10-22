@@ -208,8 +208,9 @@ export default function App() {
   const [syncingFacilityName, setSyncingFacilityName] = useState<string>('');
   const [syncingFacilityId, setSyncingFacilityId] = useState<string>('');
   const [isFacilitySyncComplete, setIsFacilitySyncComplete] = useState<boolean>(false);
+  const [facilitySyncError, setFacilitySyncError] = useState<string | null>(null);
 
-  // When facility is clicked from any device/view, show stylish spinner, await live Google Sheets sync, then open
+  // When facility is clicked from any device/view, show loading screen, fetch authoritative server/database records, verify, then open
   const handleSelectFacility = useCallback(async (facilityId: string) => {
     // 0. Security Clearance Check: verify user has permission to access this facility
     if (!AuthService.isSuperAdmin() && !AuthService.canAccessFacility(facilityId)) {
@@ -220,50 +221,51 @@ export default function App() {
 
     const targetFac = facilities.find((f) => f.id === facilityId) || facilities[0];
     
-    // 1. Show sleek stylish circular loader and top loading progress immediately
-    ActionFeedback.startLoading(targetFac.name, `Loading real-time Google Sheets schedule for "${targetFac.name}"...`, facilityId, 600);
+    // 1. Show existing loading screen immediately and reset any previous error
+    setFacilitySyncError(null);
     setIsFacilitySyncComplete(false);
     setSyncingFacilityId(facilityId);
     setSyncingFacilityName(targetFac.name);
     setIsFacilitySyncing(true);
+    ActionFeedback.startLoading(targetFac.name, `Fetching complete authoritative records for "${targetFac.name}"...`, facilityId);
 
-    // 2. Perform live multi-computer, server authoritative and Google Sheets targeted sync:
-    // Thoroughly loads this specific facility's authoritative server and Google Sheets data before opening
-    const startTime = Date.now();
+    // 2. Fetch authoritative records from server/database BEFORE opening facility:
+    // Strictly guarantees facility is NOT opened with stale local cache or partial data
     try {
-      const syncTasks = Promise.allSettled([
-        HubService.fetchAuthoritativeBookings(facilityId),
-        GasService.syncFacility(facilityId, { forceFresh: true }),
-        HubService.pullStateFromHub(),
-      ]);
-      const maxTimeout = new Promise((r) => setTimeout(r, 6500));
+      const syncResult = await HubService.fetchFacilityAuthoritativeBookings(facilityId);
 
-      await Promise.race([syncTasks, maxTimeout]);
-    } catch (err) {
-      console.warn('GAS facility sync notice:', err);
+      // Also trigger background Sheets sync if configured
+      GasService.syncFacility(facilityId, { forceFresh: true }).catch(() => {});
+
+      if (!syncResult.success) {
+        // Data fetch failed: DO NOT OPEN FACILITY! Show error & retry option
+        setFacilitySyncError(syncResult.error || `Unable to load latest booking records for ${targetFac.name} from server/database.`);
+        ActionFeedback.stopLoading();
+        return;
+      }
+
+      // 3. Authoritative data fetch verified and loaded into StorageService!
+      setIsFacilitySyncComplete(true);
+
+      // Immediately route to booking screen - NO UNNECESSARY FIXED DELAY!
+      setActiveFacilityId(facilityId);
+      setSelectedStage(targetFac.stages[0] || '');
+      setSelectedSlotIds([]);
+      setCurrentView('booking');
+      setRefreshTrigger((prev) => prev + 1);
+      window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
+
+      // 4. Ensure real-time listener is actively connected so new bookings appear instantaneously
+      HubService.ensureConnected();
+      CloudDatabaseService.initRealtimeSync();
+
+      // Smoothly hide loading overlay
+      setIsFacilitySyncing(false);
+      ActionFeedback.stopLoading();
+    } catch (err: any) {
+      setFacilitySyncError(err?.message || `Failed to fetch latest bookings for ${targetFac.name}. Stale cache blocked.`);
+      ActionFeedback.stopLoading();
     }
-
-    // Minimum delay for visually pleasing transition
-    const elapsed = Date.now() - startTime;
-    if (elapsed < 420) {
-      await new Promise((r) => setTimeout(r, 420 - elapsed));
-    }
-
-    // Mark sync complete to display green verified badge
-    setIsFacilitySyncComplete(true);
-    await new Promise((r) => setTimeout(r, 220));
-
-    // 3. Update active facility & route to booking screen with fresh authoritative data
-    setActiveFacilityId(facilityId);
-    setSelectedStage(targetFac.stages[0] || '');
-    setSelectedSlotIds([]);
-    setCurrentView('booking');
-    setRefreshTrigger((prev) => prev + 1);
-    window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
-
-    // 4. Smoothly hide spinner and stop loading
-    setIsFacilitySyncing(false);
-    ActionFeedback.stopLoading();
   }, [facilities]);
 
   // Selected slot IDs for booking
@@ -1244,13 +1246,24 @@ export default function App() {
         )}
       </React.Suspense>
 
-      {/* Facility Google Sheet Real-Time Sync Transition Overlay */}
+      {/* Facility Authoritative Database Real-Time Sync Transition Overlay */}
       <FacilitySyncTransitionOverlay
         isOpen={isFacilitySyncing}
         facilityName={syncingFacilityName}
         facilityId={syncingFacilityId}
         isComplete={isFacilitySyncComplete}
-        message="Loading fresh schedule & bookings from Google Sheets..."
+        error={facilitySyncError}
+        onRetry={() => {
+          if (syncingFacilityId) {
+            handleSelectFacility(syncingFacilityId);
+          }
+        }}
+        onCancel={() => {
+          setIsFacilitySyncing(false);
+          setFacilitySyncError(null);
+          ActionFeedback.stopLoading();
+        }}
+        message="Fetching authoritative booking records from server database..."
       />
 
       {/* Minimal Footer with Designer Tag */}

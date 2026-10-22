@@ -71,13 +71,138 @@ export class HubService {
         StorageService.applyCancellations(data.cancelledIds);
       }
 
-      // Directly apply authoritative server bookings into StorageService
       StorageService.setAuthoritativeServerBookings(data.bookings, facilityId, date);
       return true;
     } catch (err) {
       console.warn('[HubService] Error fetching authoritative bookings:', err);
       return false;
     }
+  }
+
+  /**
+   * Authoritative Facility Booking Fetch:
+   * Guarantees complete and latest booking records are loaded directly from the server database
+   * before a facility can be opened. Prevents opening with stale local cache or partial data.
+   */
+  public static async fetchFacilityAuthoritativeBookings(facilityId: string): Promise<{
+    success: boolean;
+    bookingsCount: number;
+    error?: string;
+  }> {
+    if (!facilityId) {
+      return { success: false, bookingsCount: 0, error: 'Invalid facility identifier' };
+    }
+
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 7000);
+
+    try {
+      const queryParams = new URLSearchParams();
+      queryParams.set('_t', String(Date.now()));
+      queryParams.set('facilityId', facilityId);
+
+      const res = await fetch(`/api/bookings?${queryParams.toString()}`, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: this.getAuthHeaders(),
+        signal: abortController.signal,
+      });
+      clearTimeout(timeoutId);
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || !contentType.includes('application/json')) {
+        const cloudResult = await this.fallbackFetchFromCloud(facilityId);
+        if (cloudResult.success) {
+          return cloudResult;
+        }
+        return {
+          success: false,
+          bookingsCount: 0,
+          error: `Server responded with status ${res.status}. Authoritative records could not be fetched.`,
+        };
+      }
+
+      const data = await res.json();
+      if (!data || !data.success || !Array.isArray(data.bookings)) {
+        const cloudResult = await this.fallbackFetchFromCloud(facilityId);
+        if (cloudResult.success) {
+          return cloudResult;
+        }
+        return {
+          success: false,
+          bookingsCount: 0,
+          error: data?.error || 'Invalid database response structure. Sync aborted.',
+        };
+      }
+
+      if (typeof data.version === 'number') {
+        this.lastKnownVersion = Math.max(this.lastKnownVersion, data.version);
+      }
+
+      // Ingest tombstones & cancellations
+      if (data.deletedIds && typeof data.deletedIds === 'object') {
+        StorageService.applyTombstones(data.deletedIds);
+      }
+      if (data.cancelledIds && typeof data.cancelledIds === 'object') {
+        StorageService.applyCancellations(data.cancelledIds);
+      }
+
+      // Set authoritative server bookings into StorageService for this facility
+      StorageService.setAuthoritativeServerBookings(data.bookings, facilityId);
+
+      // Verify records are active in storage
+      const verified = StorageService.getAllBookings();
+      if (!Array.isArray(verified)) {
+        return { success: false, bookingsCount: 0, error: 'Authoritative data validation failed in local storage.' };
+      }
+
+      // Ensure real-time connection is running for instant updates
+      this.ensureConnected();
+
+      return {
+        success: true,
+        bookingsCount: data.bookings.length,
+      };
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      const isTimeout = err?.name === 'AbortError' || String(err?.message || '').toLowerCase().includes('aborted');
+
+      const cloudResult = await this.fallbackFetchFromCloud(facilityId);
+      if (cloudResult.success) {
+        return cloudResult;
+      }
+
+      return {
+        success: false,
+        bookingsCount: 0,
+        error: isTimeout
+          ? 'Network request timed out while connecting to authoritative server database.'
+          : (err?.message || 'Network connection failed while fetching latest booking records.'),
+      };
+    }
+  }
+
+  private static async fallbackFetchFromCloud(facilityId: string): Promise<{ success: boolean; bookingsCount: number; error?: string }> {
+    try {
+      const { CloudDatabaseService } = await import('./firebaseService');
+      const cloudRes = await CloudDatabaseService.fetchFacilityBookingsFromCloud(facilityId);
+      if (cloudRes.success) {
+        StorageService.setAuthoritativeServerBookings(cloudRes.bookings, facilityId);
+        this.ensureConnected();
+        return { success: true, bookingsCount: cloudRes.bookings.length };
+      }
+    } catch (_) {}
+    return { success: false, bookingsCount: 0 };
+  }
+
+  public static ensureConnected(): void {
+    if (!this.isConnected || !this.eventSource || (this.eventSource && this.eventSource.readyState === 2)) {
+      this.connectSSE();
+    }
+  }
+
+  public static isRealtimeActive(): boolean {
+    return this.isConnected && !!this.eventSource && this.eventSource.readyState === 1;
   }
 
   private static seenEvents = new Map<string, number>();

@@ -83,7 +83,7 @@ export interface Booking {
   startTime: string;
   endTime: string;
   durationMinutes: number;
-  slotIds: string[];
+  slotIds?: string[];
   numberOfGuests: number;
   notes?: string;
   status: BookingStatus;

@@ -1111,7 +1111,7 @@ class FirebaseService {
    * Delete booking directly in Cloud Firestore with permanent tombstone
    * and delete distributed slot lock.
    */
-  public async deleteBookingInCloud(bookingId: string, correlationId?: string): Promise<boolean> {
+  public async deleteBookingInCloud(bookingId: string, correlationId?: string, bookingDetails?: Booking): Promise<boolean> {
     if (!this.db) this.init();
     if (!this.db || !bookingId) return false;
 
@@ -1122,7 +1122,7 @@ class FirebaseService {
       // Look up booking before deletion to release its slot lock
       let slotLockId: string | null = null;
       try {
-        const b = StorageService.getBookingById(bookingId);
+        const b = bookingDetails || StorageService.getBookingById(bookingId);
         if (b && b.date && b.startTime && b.endTime) {
           slotLockId = this.getSlotLockId(b);
         }
@@ -1224,6 +1224,35 @@ class FirebaseService {
     } catch (e) {
       console.warn('[FirebaseService] Seed local bookings notice:', e);
       return 0;
+    }
+  }
+
+  /**
+   * Direct fetch from Cloud Firestore for a specific facility
+   */
+  public async fetchFacilityBookingsFromCloud(facilityId: string): Promise<{ success: boolean; bookings: Booking[]; error?: string }> {
+    if (!this.db) this.init();
+    if (!this.db) return { success: false, bookings: [], error: 'Firestore database not initialized' };
+
+    try {
+      const colRef = collection(this.db, 'bookings');
+      const snap = await getDocs(colRef);
+      const bookings: Booking[] = [];
+      const cleanFac = facilityId.toLowerCase().trim();
+
+      snap.forEach((d) => {
+        const b = d.data() as Booking;
+        if (b && b.id) {
+          const bFac = String(b.facilityId || b.sheetTabName || b.facilityName || '').toLowerCase().trim();
+          if (!cleanFac || bFac === cleanFac || bFac.includes(cleanFac) || cleanFac.includes(bFac)) {
+            bookings.push(b);
+          }
+        }
+      });
+
+      return { success: true, bookings };
+    } catch (err: any) {
+      return { success: false, bookings: [], error: err?.message || 'Firestore query failed' };
     }
   }
 }

@@ -3388,7 +3388,7 @@ export const StorageService = {
     // Push cancellations to Cloud Firestore in real time via atomic batch
     try {
       import('./firebaseService').then(({ CloudDatabaseService }) => {
-        CloudDatabaseService.cancelBatchInCloud(cancelledIds, cancelReasonText, undefined, matching).catch(() => {
+        CloudDatabaseService.cancelBatchInCloud(cancelledIds, cancelReasonText, undefined).catch(() => {
           // Fallback to per-item if batch fails
           matching.forEach((b) => {
             CloudDatabaseService.cancelBookingInCloud(b.id, cancelReasonText, undefined, b).catch(() => {});
