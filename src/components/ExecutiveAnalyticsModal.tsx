@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   X,
   TrendingUp,
@@ -47,6 +47,18 @@ export const ExecutiveAnalyticsModal: React.FC<ExecutiveAnalyticsModalProps> = (
   const [activeTab, setActiveTab] = useState<'analytics' | 'shift_report' | 'blockouts'>('analytics');
   const [selectedDate, setSelectedDate] = useState<string>(() => getTodayDateString());
   const [isCopied, setIsCopied] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  // Persistent real-time listener for instantaneous updates without refresh (Requirement 2)
+  useEffect(() => {
+    const handleUpdate = () => setRefreshTrigger((prev) => prev + 1);
+    window.addEventListener('tamimi_bookings_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('tamimi_bookings_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
 
   // New Blockout Form State
   const [isNewBlockoutOpen, setIsNewBlockoutOpen] = useState(false);
@@ -59,12 +71,13 @@ export const ExecutiveAnalyticsModal: React.FC<ExecutiveAnalyticsModalProps> = (
   const [blockoutNotes, setBlockoutNotes] = useState('');
 
   // Live Data Calculation
-  const allBookings = useMemo(() => StorageService.getAllBookings(), [isOpen, selectedDate]);
-  const allParcels = useMemo(() => StorageService.getParcelRecords(), [isOpen, selectedDate]);
-  const allHandovers = useMemo(() => StorageService.getHandoverRecords(), [isOpen, selectedDate]);
-  const allRooms = useMemo(() => StorageService.getIsolationRooms(), [isOpen, selectedDate]);
-  const allBlockouts = useMemo(() => StorageService.getBlockouts(), [isOpen, selectedDate]);
-  const shiftSummary = useMemo(() => StorageService.getShiftClosingSummary(selectedDate), [isOpen, selectedDate]);
+  const allBookings = useMemo(() => StorageService.getAllBookings(), [isOpen, selectedDate, refreshTrigger]);
+  const allParcels = useMemo(() => StorageService.getParcelRecords(), [isOpen, selectedDate, refreshTrigger]);
+  const allHandovers = useMemo(() => StorageService.getHandoverRecords(), [isOpen, selectedDate, refreshTrigger]);
+  const allRooms = useMemo(() => StorageService.getIsolationRooms(), [isOpen, selectedDate, refreshTrigger]);
+  const allBlockouts = useMemo(() => StorageService.getBlockouts(), [isOpen, selectedDate, refreshTrigger]);
+  const shiftSummary = useMemo(() => StorageService.getShiftClosingSummary(selectedDate), [isOpen, selectedDate, refreshTrigger]);
+
 
   // Calculations for Analytics
   const activeBookings = useMemo(() => {

@@ -23,7 +23,7 @@ let isServerProxyDisabled = false;
 
 // Universal detector for client-side static hosting environments (GitHub Pages, Netlify, Vercel, etc.)
 function isStaticClientEnv(): boolean {
-  if (typeof window === 'undefined') return false;
+  if (typeof window === 'undefined' || !window.location) return false;
   const host = (window.location.hostname || '').toLowerCase();
   if (
     host.includes('github.io') ||
@@ -3371,8 +3371,16 @@ export const GasService = {
       });
       return { success: true, queued: true, error: res.error };
     }
+    // Reliably notify Node server and Firestore upon confirmed Sheets write (Requirement 4)
+    import('./hubService').then(({ HubService }) => {
+      HubService.notifyServerBookingSaved(booking, 'upsert').catch(() => {});
+    }).catch(() => {});
+    import('./firebaseService').then(({ CloudDatabaseService }) => {
+      CloudDatabaseService.saveBookingToCloud(booking).catch(() => {});
+    }).catch(() => {});
     return { success: true, queued: false };
   },
+
 
   async pushBatchBookingsToRemote(bookings: Booking[]): Promise<{ success: boolean; error?: string; createdCount?: number; queued?: boolean }> {
     const config = this.getConfig();
@@ -3741,6 +3749,13 @@ export const GasService = {
         description: `Cancel Booking ${bookingId}`,
         payload: typeof bookingIdOrPayload === 'object' ? bookingIdOrPayload : { bookingId, phone, reason },
       });
+    } else {
+      import('./hubService').then(({ HubService }) => {
+        HubService.notifyServerBookingSaved({ id: bookingId, status: 'CANCELLED', cancellationReason: reason }, 'cancel').catch(() => {});
+      }).catch(() => {});
+      import('./firebaseService').then(({ CloudDatabaseService }) => {
+        CloudDatabaseService.cancelBookingInCloud(bookingId, reason).catch(() => {});
+      }).catch(() => {});
     }
     return res;
   },

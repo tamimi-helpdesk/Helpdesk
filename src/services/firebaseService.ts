@@ -196,10 +196,8 @@ class FirebaseService {
         // ignore in non-browser environments
       }
 
-      // Use auto-detect long-polling transport for smooth compatibility across cloud containers and iframes
       const firestoreSettings = {
         ignoreUndefinedProperties: true,
-        experimentalAutoDetectLongPolling: true,
       };
 
       if (FIREBASE_CONFIG.firestoreDatabaseId) {
@@ -867,9 +865,23 @@ class FirebaseService {
         if (lockSnap.exists()) {
           const lockData = lockSnap.data();
           if (lockData && lockData.bookingId !== booking.id && lockData.status === 'ACTIVE') {
-            throw new Error(
-              `CONCURRENT_SLOT_CONFLICT: This slot (${booking.startTime} - ${booking.endTime}) was just reserved on another computer by ${lockData.customerName || 'another customer'}. Please select another slot.`
-            );
+            // Check if holding booking has been cancelled or tombstoned
+            const holdingBookingRef = doc(this.db, 'bookings', String(lockData.bookingId));
+            const holdingTombRef = doc(this.db, 'tombstones', String(lockData.bookingId));
+            const [holdingSnap, holdingTombSnap] = await Promise.all([
+              txn.get(holdingBookingRef).catch(() => null),
+              txn.get(holdingTombRef).catch(() => null),
+            ]);
+
+            const isHoldingCancelled = (holdingSnap && holdingSnap.exists() && holdingSnap.data()?.status === 'CANCELLED') ||
+                                       (holdingTombSnap && holdingTombSnap.exists() && (holdingTombSnap.data()?.type === 'CANCELLED' || holdingTombSnap.data()?.type === 'DELETED'));
+            const isHoldingMissing = holdingSnap && !holdingSnap.exists();
+
+            if (!isHoldingCancelled && !isHoldingMissing) {
+              throw new Error(
+                `CONCURRENT_SLOT_CONFLICT: This slot (${booking.startTime} - ${booking.endTime}) was just reserved on another computer by ${lockData.customerName || 'another customer'}. Please select another slot.`
+              );
+            }
           }
         }
 
@@ -960,8 +972,9 @@ class FirebaseService {
 
   /**
    * Cancel booking directly in Cloud Firestore (propagates instant status change to all computers)
+   * and immediately releases distributed slot lock so slot can be reserved again.
    */
-  public async cancelBookingInCloud(bookingId: string, reason?: string, correlationId?: string): Promise<boolean> {
+  public async cancelBookingInCloud(bookingId: string, reason?: string, correlationId?: string, bookingDetails?: Booking): Promise<boolean> {
     if (!this.db) this.init();
     if (!this.db || !bookingId) return false;
 
@@ -993,6 +1006,18 @@ class FirebaseService {
         }), { merge: true });
       } catch (_) {}
 
+      // Immediately release / clear the corresponding slot lock in Cloud Firestore
+      try {
+        const b = bookingDetails || StorageService.getBookingById(bookingId);
+        if (b && b.date && b.startTime && b.endTime) {
+          const slotLockId = this.getSlotLockId(b);
+          const lockRef = doc(this.db, 'slotLocks', slotLockId);
+          await deleteDoc(lockRef).catch(async () => {
+            await setDoc(lockRef, { status: 'RELEASED', releasedAt: nowIso }, { merge: true });
+          });
+        }
+      } catch (_) {}
+
       if (correlationId) {
         SyncDiagnosticsService.markFirestoreWrite(correlationId, true);
       }
@@ -1009,6 +1034,7 @@ class FirebaseService {
 
   /**
    * Batch cancel multiple bookings in Cloud Firestore atomically
+   * and release corresponding slot locks.
    */
   public async cancelBatchInCloud(bookingIds: string[], reason?: string, correlationId?: string): Promise<number> {
     if (!this.db) this.init();
@@ -1052,6 +1078,16 @@ class FirebaseService {
             { merge: true }
           );
 
+          // Release slot lock in Firestore
+          try {
+            const b = StorageService.getBookingById(String(bId));
+            if (b && b.date && b.startTime && b.endTime) {
+              const slotLockId = this.getSlotLockId(b);
+              const lockRef = doc(this.db, 'slotLocks', slotLockId);
+              batch.delete(lockRef);
+            }
+          } catch (_) {}
+
           totalCancelled++;
         }
         await batch.commit();
@@ -1073,6 +1109,7 @@ class FirebaseService {
 
   /**
    * Delete booking directly in Cloud Firestore with permanent tombstone
+   * and delete distributed slot lock.
    */
   public async deleteBookingInCloud(bookingId: string, correlationId?: string): Promise<boolean> {
     if (!this.db) this.init();
@@ -1081,6 +1118,15 @@ class FirebaseService {
     try {
       const nowIso = new Date().toISOString();
       const nowMs = Date.now();
+
+      // Look up booking before deletion to release its slot lock
+      let slotLockId: string | null = null;
+      try {
+        const b = StorageService.getBookingById(bookingId);
+        if (b && b.date && b.startTime && b.endTime) {
+          slotLockId = this.getSlotLockId(b);
+        }
+      } catch (_) {}
 
       // 1. Record permanent tombstone in Firestore FIRST so other devices receive immediate notice
       const tombRef = doc(this.db, 'tombstones', String(bookingId));
@@ -1095,6 +1141,14 @@ class FirebaseService {
       // 2. Delete the document from /bookings collection
       const bRef = doc(this.db, 'bookings', String(bookingId));
       await deleteDoc(bRef);
+
+      // 3. Delete slot lock if computed
+      if (slotLockId) {
+        try {
+          const lockRef = doc(this.db, 'slotLocks', slotLockId);
+          await deleteDoc(lockRef);
+        } catch (_) {}
+      }
 
       if (correlationId) {
         SyncDiagnosticsService.markFirestoreWrite(correlationId, true);

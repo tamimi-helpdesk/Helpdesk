@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Film,
   Users,
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Facility } from '../../types';
+import { StorageService } from '../../services/storageService';
 
 interface CinemaSeatPickerModalProps {
   isOpen: boolean;
@@ -38,9 +39,35 @@ export const CinemaSeatPickerModal: React.FC<CinemaSeatPickerModalProps> = ({
   const [selectedTime, setSelectedTime] = useState('08:00 PM - 10:30 PM');
   const [selectedSeats, setSelectedSeats] = useState<string[]>(() => initialSeats && initialSeats.length > 0 ? initialSeats : ['C4', 'C5']);
   const [selectedRefreshments, setSelectedRefreshments] = useState<string[]>(() => initialRefreshments && initialRefreshments.length > 0 ? initialRefreshments : ['Popcorn (Regular)', 'Karak Chai']);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Pre-booked seats for realism
-  const bookedSeats = new Set(['A1', 'A2', 'B5', 'B6', 'D1', 'D2', 'F9', 'F10']);
+  useEffect(() => {
+    const handleUpdate = () => setRefreshTrigger((prev) => prev + 1);
+    window.addEventListener('tamimi_bookings_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('tamimi_bookings_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
+
+  // Compute booked seats dynamically including live bookings from other devices
+  const bookedSeats = useMemo(() => {
+    const occupied = new Set(['A1', 'A2', 'B5', 'B6', 'D1', 'D2', 'F9', 'F10']);
+    try {
+      const allBookings = StorageService.getBookings();
+      allBookings
+        .filter((b) => b.facilityId === facility.id && b.status === 'CONFIRMED')
+        .forEach((b) => {
+          if (Array.isArray(b.customOptions?.cinemaSeats)) {
+            b.customOptions.cinemaSeats.forEach((seat: string) => occupied.add(seat));
+          }
+        });
+    } catch {
+      // fallback to preset
+    }
+    return occupied;
+  }, [facility.id, refreshTrigger]);
 
   const rows = ['A', 'B', 'C', 'D', 'E', 'F'];
   const seatsPerRow = 10;

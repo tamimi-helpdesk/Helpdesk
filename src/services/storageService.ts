@@ -181,6 +181,8 @@ export function getRecentCancelledMap(): Map<string, number> {
   return map;
 }
 
+export const getLocallyCancelledIdsMap = getRecentCancelledMap;
+
 export function recordRecentCancellation(bookingId: string, reason?: string, pushToHub: boolean = true) {
   if (!bookingId) return;
   try {
@@ -2077,11 +2079,13 @@ export const StorageService = {
       if (deletedIds.has(key) || isIdDeleted(key)) return;
 
       if (!cloudMap.has(key)) {
-        const createdTime = localB.createdAt ? new Date(localB.createdAt).getTime() : 0;
-        const isQueuedLocally = queuedBookingIds.has(key);
-        const isInFlightLocally = localInFlightBookingIds.has(key) && (now - createdTime < 15 * 1000);
+        // Only retain local booking if it's genuinely queued in OfflineQueue or in-flight on this client (<60s)
+        const isQueued = queuedBookingIds.has(key);
+        const isInFlight = localInFlightBookingIds.has(key);
+        const createdMs = localB.createdAt ? new Date(localB.createdAt).getTime() : 0;
+        const isRecent = createdMs > 0 && (now - createdMs < 60000); // created within last 60 seconds
 
-        if ((isQueuedLocally || isInFlightLocally) && localB.status !== 'CANCELLED') {
+        if (isQueued || isInFlight || isRecent) {
           cloudMap.set(key, localB);
         }
       } else {
@@ -2105,8 +2109,29 @@ export const StorageService = {
     return inMemoryBookings;
   },
 
-  applyRemoteUpsert(entity: string, data: any) {
-    if (!entity || !data) return;
+  getBookings(): Booking[] {
+    return this.getAllBookings();
+  },
+
+  reconcileAuthoritativeBookings(bookings: Booking[]): Booking[] {
+    return this.mergeRemoteBookings(bookings);
+  },
+
+  applyRemoteCancel(bookingId: string, cancellationLogOrReason?: any) {
+    const reason = typeof cancellationLogOrReason === 'string'
+      ? cancellationLogOrReason
+      : (cancellationLogOrReason?.cancellationReason || cancellationLogOrReason?.reason || 'Cancelled remotely');
+    this.applyRemoteCancellation(bookingId, reason);
+  },
+
+  applyRemoteUpsert(entityOrData: any, optionalData?: any) {
+    let entity = 'bookings';
+    let data = entityOrData;
+    if (typeof entityOrData === 'string') {
+      entity = entityOrData;
+      data = optionalData;
+    }
+    if (!data) return;
 
     // Handle array payloads cleanly & atomically
     if (Array.isArray(data)) {
@@ -2134,23 +2159,43 @@ export const StorageService = {
               sanitized.cancelledAt = existing.cancelledAt || sanitized.cancelledAt || new Date().toISOString();
             }
 
-            if (
+            const isIdentical =
               existing.status === sanitized.status &&
               existing.date === sanitized.date &&
               existing.startTime === sanitized.startTime &&
               existing.endTime === sanitized.endTime &&
               existing.stage === sanitized.stage &&
               existing.customerName === sanitized.customerName &&
-              existing.facilityId === sanitized.facilityId
-            ) {
+              existing.phoneNumber === sanitized.phoneNumber &&
+              existing.facilityId === sanitized.facilityId &&
+              (existing.numberOfGuests || 0) === (sanitized.numberOfGuests || 0) &&
+              (existing.notes || '') === (sanitized.notes || '') &&
+              (existing.bookedByStaff || '') === (sanitized.bookedByStaff || '') &&
+              (existing.email || '') === (sanitized.email || '');
+
+            if (isIdentical) {
               continue;
             }
             inMemoryBookings[idx] = { ...existing, ...sanitized };
             changed = true;
           } else {
-            inMemoryBookings.unshift(sanitized);
+            const matchIdx = inMemoryBookings.findIndex((b) =>
+              b.status === 'CONFIRMED' &&
+              b.facilityId === sanitized.facilityId &&
+              b.date === sanitized.date &&
+              b.stage === sanitized.stage &&
+              b.startTime === sanitized.startTime &&
+              b.endTime === sanitized.endTime &&
+              (b.customerName === sanitized.customerName || b.phoneNumber === sanitized.phoneNumber)
+            );
+            if (matchIdx >= 0) {
+              inMemoryBookings[matchIdx] = sanitized;
+            } else {
+              inMemoryBookings.unshift(sanitized);
+            }
             changed = true;
           }
+
         }
         if (changed) {
           safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
@@ -2233,24 +2278,45 @@ export const StorageService = {
         }
 
         // Idempotency: if status and fields are already identical, skip redundant write
-        if (
+        const isIdentical =
           existing.status === sanitized.status &&
           existing.date === sanitized.date &&
           existing.startTime === sanitized.startTime &&
           existing.endTime === sanitized.endTime &&
           existing.stage === sanitized.stage &&
           existing.customerName === sanitized.customerName &&
-          existing.facilityId === sanitized.facilityId
-        ) {
+          existing.phoneNumber === sanitized.phoneNumber &&
+          existing.facilityId === sanitized.facilityId &&
+          (existing.numberOfGuests || 0) === (sanitized.numberOfGuests || 0) &&
+          (existing.notes || '') === (sanitized.notes || '') &&
+          (existing.bookedByStaff || '') === (sanitized.bookedByStaff || '') &&
+          (existing.email || '') === (sanitized.email || '');
+
+        if (isIdentical) {
           return;
         }
         inMemoryBookings[idx] = { ...existing, ...sanitized };
       } else {
-        inMemoryBookings.unshift(sanitized);
+        // Idempotency: Check if an in-flight booking with the same slot parameters exists to prevent duplicate entries
+        const matchIdx = inMemoryBookings.findIndex((b) =>
+          b.status === 'CONFIRMED' &&
+          b.facilityId === sanitized.facilityId &&
+          b.date === sanitized.date &&
+          b.stage === sanitized.stage &&
+          b.startTime === sanitized.startTime &&
+          b.endTime === sanitized.endTime &&
+          (b.customerName === sanitized.customerName || b.phoneNumber === sanitized.phoneNumber)
+        );
+        if (matchIdx >= 0) {
+          inMemoryBookings[matchIdx] = sanitized;
+        } else {
+          inMemoryBookings.unshift(sanitized);
+        }
       }
       safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
       notifyBookingsChanged();
       this.reconcileIsolationRoomsFromBookings();
+
     } else if (entity === 'handovers') {
       this.initHandover();
       const idx = inMemoryHandovers.findIndex((h) => String(h.id || '').toLowerCase().trim() === targetId);
@@ -3322,10 +3388,10 @@ export const StorageService = {
     // Push cancellations to Cloud Firestore in real time via atomic batch
     try {
       import('./firebaseService').then(({ CloudDatabaseService }) => {
-        CloudDatabaseService.cancelBatchInCloud(cancelledIds, cancelReasonText).catch(() => {
+        CloudDatabaseService.cancelBatchInCloud(cancelledIds, cancelReasonText, undefined, matching).catch(() => {
           // Fallback to per-item if batch fails
           matching.forEach((b) => {
-            CloudDatabaseService.cancelBookingInCloud(b.id, cancelReasonText).catch(() => {});
+            CloudDatabaseService.cancelBookingInCloud(b.id, cancelReasonText, undefined, b).catch(() => {});
           });
         });
       }).catch(() => {});
@@ -3510,7 +3576,10 @@ export const StorageService = {
     this.init();
     const targetDate = normalizeDateString(dateStr);
     const startMinutes = timeToMinutes(facility.openTime || '07:00');
-    const endMinutes = timeToMinutes(facility.closeTime || '23:00');
+    let endMinutes = timeToMinutes(facility.closeTime || '23:00');
+    if (facility.closeTime === '23:59' || endMinutes === 1439) {
+      endMinutes = 1440;
+    }
     const duration = facility.defaultSlotDurationMinutes || 60;
 
     // Get active bookings for this facility, date, stage
@@ -3833,36 +3902,18 @@ export const StorageService = {
       correlationId
     );
 
-    // If online, perform authoritative Firestore transaction with slot lock first
+    // 1. Authoritative Server Commit First: Atomic mutex & collision check on Node server
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
     if (isOnline) {
       try {
-        const { CloudDatabaseService } = await import('./firebaseService');
-        const lockRes = await CloudDatabaseService.saveBookingWithSlotLock(newBooking, correlationId);
-        if (!lockRes.success) {
-          return { success: false, error: lockRes.error || 'Slot reservation conflict on another device.' };
-        }
-      } catch (err: any) {
-        console.warn('[StorageService] Slot lock check notice, proceeding with resilient write:', err);
-      }
-    }
-
-    // 1. Authoritative Server Save First (Requirement 5: নিশ্চিত করো server-এ save হয়েছে)
-    if (isOnline) {
-      try {
         const { HubService } = await import('./hubService');
-        const mutateResult = await HubService.pushMutation({
-          mutationType: 'UPSERT',
-          entity: 'bookings',
-          id: newBooking.id,
-          data: newBooking,
-        });
+        const mutateResult = await HubService.saveBookingAuthoritative(newBooking);
 
         if (mutateResult) {
           if (mutateResult.conflict) {
             return {
               success: false,
-              error: mutateResult.error || 'Conflict detected: this slot was already booked on the server.',
+              error: mutateResult.error || 'Conflict detected: this slot was already reserved on another device.',
             };
           }
           if (mutateResult.success === false && mutateResult.error) {
@@ -3875,13 +3926,52 @@ export const StorageService = {
       } catch (pushErr: any) {
         console.warn('[StorageService] Server mutation push notice:', pushErr);
       }
+
+      // 1b. Distributed Slot Lock via Cloud Firestore Transaction
+      try {
+        const { CloudDatabaseService } = await import('./firebaseService');
+        const lockRes = await CloudDatabaseService.saveBookingWithSlotLock(newBooking, correlationId);
+        if (lockRes && !lockRes.success && lockRes.error?.includes('CONCURRENT_SLOT_CONFLICT')) {
+          try {
+            const { HubService } = await import('./hubService');
+            await HubService.pushMutation({
+              mutationType: 'DELETE',
+              entity: 'bookings',
+              id: newBooking.id,
+            });
+          } catch {}
+          return {
+            success: false,
+            error: lockRes.error,
+          };
+        }
+      } catch (cloudLockErr: any) {
+        console.warn('[StorageService] Cloud slot lock notice:', cloudLockErr);
+      }
     }
 
+    // 2. Commit locally with deduplication against optimistic items
     localInFlightBookingIds.add(newBooking.id.toLowerCase().trim());
-    const updated = [newBooking, ...inMemoryBookings];
+    const existingIdx = inMemoryBookings.findIndex((b) => String(b.id || '').toLowerCase().trim() === newBooking.id.toLowerCase().trim());
+    let updated: Booking[];
+    if (existingIdx >= 0) {
+      updated = [...inMemoryBookings];
+      updated[existingIdx] = newBooking;
+    } else {
+      updated = [newBooking, ...inMemoryBookings];
+    }
     this.saveBookings(updated);
 
-    // Push to Google Sheets asynchronously in background
+    // 3. Cloud Firestore Backup (already locked or queued)
+    if (isOnline) {
+      import('./firebaseService').then(({ CloudDatabaseService }) => {
+        CloudDatabaseService.saveBookingToCloud(newBooking, correlationId).catch((err) => {
+          console.warn('[StorageService] Background cloud backup notice:', err);
+        });
+      }).catch(() => {});
+    }
+
+    // 4. Push to Google Sheets in background and notify server upon completion (Requirement 4)
     try {
       import('./gasService').then(({ GasService }) => {
         const sheetsStart = performance.now();
@@ -3889,12 +3979,17 @@ export const StorageService = {
           .then((res) => {
             const duration = Math.round(performance.now() - sheetsStart);
             SyncDiagnosticsService.markSheetsSync(correlationId, Boolean(res?.success), duration);
+            // Notify server & other computers that Sheets write completed
+            import('./hubService').then(({ HubService }) => {
+              HubService.notifyServerBookingSaved(newBooking, 'upsert').catch(() => {});
+            }).catch(() => {});
           })
           .catch((err) => {
             SyncDiagnosticsService.markSheetsSync(correlationId, false, undefined, String(err));
           });
       }).catch(() => {});
     } catch (_) {}
+
 
     try {
       if (typeof window !== 'undefined') {
@@ -3954,6 +4049,176 @@ export const StorageService = {
       totalDates: params.dates.length,
       availableDates,
       conflictDates,
+    };
+  },
+
+  /**
+   * Authoritative Recurring Booking Creation:
+   * Validates each date atomically against the Node server hub mutex and Cloud Firestore distributed slot locks.
+   * Prevents multi-device double-booking during recurring batch creation.
+   */
+  async createRecurringBookingsAuthoritative(params: {
+    facilityId: string;
+    facilityName: string;
+    sheetTabName: string;
+    stage: string;
+    dates: string[];
+    startTime: string;
+    endTime: string;
+    durationMinutes: number;
+    customerName: string;
+    phoneNumber: string;
+    bookedByStaff?: string;
+    email?: string;
+    departmentOrTeam?: string;
+    numberOfGuests: number;
+    notes?: string;
+    recurringSummary?: string;
+  }): Promise<{
+    success: boolean;
+    createdBookings: Booking[];
+    skippedDates: string[];
+    error?: string;
+  }> {
+    this.init();
+    const facility = FACILITIES.find((f) => f.id === params.facilityId);
+    const facilityCode = facility ? facility.code : 'REC';
+    const recurringGroupId = `GRP-${facilityCode}-${Date.now()}`;
+
+    const candidateBookings: Booking[] = [];
+    const skippedDates: string[] = [];
+
+    const reqStart = timeToMinutes(params.startTime);
+    const reqEnd = timeToMinutes(params.endTime);
+
+    for (const d of params.dates) {
+      const normD = normalizeDateString(d);
+      // Check collision locally first
+      const collision = inMemoryBookings.find(
+        (b) =>
+          b.status === 'CONFIRMED' &&
+          b.facilityId === params.facilityId &&
+          normalizeDateString(b.date) === normD &&
+          isStageMatch(b.stage, params.stage, facility) &&
+          timeToMinutes(b.startTime) < reqEnd &&
+          timeToMinutes(b.endTime) > reqStart
+      );
+
+      if (collision) {
+        skippedDates.push(normD);
+        continue;
+      }
+
+      const slotId = `${params.facilityId}-${normD}-${params.startTime}-${params.endTime}-${params.stage}`;
+      const singleBookingId = generateBookingId(facilityCode);
+
+      const b: Booking = {
+        id: singleBookingId,
+        facilityId: params.facilityId,
+        facilityName: params.facilityName,
+        sheetTabName: params.sheetTabName,
+        stage: params.stage,
+        date: normD,
+        startTime: params.startTime,
+        endTime: params.endTime,
+        durationMinutes: params.durationMinutes,
+        slotIds: [slotId],
+        customerName: params.customerName,
+        phoneNumber: params.phoneNumber,
+        bookedByStaff: params.bookedByStaff,
+        email: params.email,
+        departmentOrTeam: params.departmentOrTeam,
+        numberOfGuests: params.numberOfGuests,
+        notes: params.notes,
+        status: 'CONFIRMED',
+        createdAt: new Date().toISOString(),
+        isRecurring: true,
+        recurringGroupId,
+        recurringSummary: params.recurringSummary || `${params.dates.length} recurring sessions`,
+      };
+
+      candidateBookings.push(b);
+    }
+
+    if (candidateBookings.length === 0) {
+      return {
+        success: false,
+        createdBookings: [],
+        skippedDates,
+        error: 'All selected dates have conflicts with existing bookings.',
+      };
+    }
+
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    const confirmedBookings: Booking[] = [];
+
+    // Authoritative verification against Server Hub & Cloud Firestore Slot Locks
+    for (const b of candidateBookings) {
+      let conflictDetected = false;
+      if (isOnline) {
+        try {
+          const { HubService } = await import('./hubService');
+          const mutateResult = await HubService.saveBookingAuthoritative(b);
+          if (mutateResult && (mutateResult.conflict || mutateResult.success === false)) {
+            conflictDetected = true;
+            skippedDates.push(b.date);
+            continue;
+          }
+        } catch {
+          // Fallback to local
+        }
+
+        // Distributed Firestore Slot Lock
+        try {
+          const { CloudDatabaseService } = await import('./firebaseService');
+          const lockRes = await CloudDatabaseService.saveBookingWithSlotLock(b);
+          if (lockRes && !lockRes.success && lockRes.error?.includes('CONCURRENT_SLOT_CONFLICT')) {
+            try {
+              const { HubService } = await import('./hubService');
+              await HubService.pushMutation({
+                mutationType: 'DELETE',
+                entity: 'bookings',
+                id: b.id,
+              });
+            } catch {}
+            conflictDetected = true;
+            skippedDates.push(b.date);
+            continue;
+          }
+        } catch {}
+      }
+
+      if (!conflictDetected) {
+        localInFlightBookingIds.add(b.id.toLowerCase().trim());
+        confirmedBookings.push(b);
+      }
+    }
+
+    if (confirmedBookings.length === 0) {
+      return {
+        success: false,
+        createdBookings: [],
+        skippedDates,
+        error: 'All selected dates encountered concurrent conflicts on other devices.',
+      };
+    }
+
+    const updated = [...confirmedBookings, ...inMemoryBookings];
+    this.saveBookings(updated);
+
+    // Guaranteed Google Sheets batch sync in background
+    try {
+      import('./gasService').then(({ GasService }) => {
+        GasService.pushBatchBookingsToRemote(confirmedBookings).catch((err) => {
+          console.warn('[StorageService] Background GAS batch push notice:', err);
+        });
+      }).catch(() => {});
+    } catch (e) {}
+
+    return {
+      success: true,
+      createdBookings: confirmedBookings,
+      skippedDates,
     };
   },
 
@@ -4250,7 +4515,7 @@ export const StorageService = {
     // Push cancellation directly to Cloud Firestore in real time with distributed tombstone
     try {
       import('./firebaseService').then(({ CloudDatabaseService }) => {
-        CloudDatabaseService.cancelBookingInCloud(updatedBooking.id, effectiveReason, correlationId).catch((err) => {
+        CloudDatabaseService.cancelBookingInCloud(updatedBooking.id, effectiveReason, correlationId, updatedBooking).catch((err) => {
           console.warn('[StorageService] Cloud cancellation write notice:', err);
         });
       }).catch(() => {});
@@ -4356,18 +4621,14 @@ export const StorageService = {
 
     // Broadcast to multi-computer real-time hub
     try {
-      if (typeof fetch !== 'undefined') {
-        fetch('/api/hub/mutate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mutationType: 'UPSERT',
-            entity: 'bookings',
-            id: updatedBooking.id,
-            data: updatedBooking,
-          }),
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
+          mutationType: 'UPSERT',
+          entity: 'bookings',
+          id: updatedBooking.id,
+          data: updatedBooking,
         }).catch(() => {});
-      }
+      }).catch(() => {});
     } catch (e) {}
 
     return { success: true, booking: updatedBooking };
@@ -4404,18 +4665,14 @@ export const StorageService = {
 
     // Broadcast to multi-computer real-time hub
     try {
-      if (typeof fetch !== 'undefined') {
-        fetch('/api/hub/mutate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mutationType: 'UPSERT',
-            entity: 'bookings',
-            id: updatedBooking.id,
-            data: updatedBooking,
-          }),
+      import('./hubService').then(({ HubService }) => {
+        HubService.pushMutation({
+          mutationType: 'UPSERT',
+          entity: 'bookings',
+          id: updatedBooking.id,
+          data: updatedBooking,
         }).catch(() => {});
-      }
+      }).catch(() => {});
     } catch (e) {}
 
     return { success: true, booking: updatedBooking };
@@ -4434,6 +4691,7 @@ export const StorageService = {
     const cleanId = bookingId.trim();
     recordDeletedId(cleanId);
     
+    const targetBooking = inMemoryBookings.find((b) => b && b.id && b.id.toLowerCase().trim() === cleanId.toLowerCase());
     const prevCount = inMemoryBookings.length;
     inMemoryBookings = inMemoryBookings.filter((b) => b.id.toLowerCase().trim() !== cleanId.toLowerCase());
     
@@ -4442,10 +4700,10 @@ export const StorageService = {
     const correlationId = SyncDiagnosticsService.generateCorrelationId('MUT-DELETE');
     SyncDiagnosticsService.startTrace('DELETE', cleanId, undefined, undefined, correlationId);
 
-    // Push deletion directly to Cloud Firestore in real time with permanent tombstone
+    // Push deletion directly to Cloud Firestore in real time with permanent tombstone & slot lock release
     try {
       import('./firebaseService').then(({ CloudDatabaseService }) => {
-        CloudDatabaseService.deleteBookingInCloud(cleanId, correlationId).catch((err) => {
+        CloudDatabaseService.deleteBookingInCloud(cleanId, correlationId, targetBooking).catch((err) => {
           console.warn('[StorageService] Cloud deletion write notice:', err);
         });
       }).catch(() => {});

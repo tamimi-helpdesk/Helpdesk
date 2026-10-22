@@ -130,12 +130,50 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "invoiceNumber"]
+    },
+    "SlotLock": {
+      "title": "SlotLock",
+      "description": "Distributed concurrency slot lock preventing double-booking across terminals",
+      "type": "object",
+      "properties": {
+        "lockId": { "type": "string" },
+        "bookingId": { "type": "string" },
+        "facilityId": { "type": "string" },
+        "stage": { "type": "string" },
+        "date": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "customerName": { "type": "string" },
+        "status": { "type": "string" },
+        "lockedAt": { "type": "string" }
+      },
+      "required": ["lockId", "bookingId", "status"]
+    },
+    "Tombstone": {
+      "title": "Tombstone",
+      "description": "Permanent distributed deletion and cancellation tombstone",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "reason": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "type"]
     }
   },
   "firestore": {
     "/bookings/{bookingId}": {
       "schema": "Booking",
       "description": "Camp reservations"
+    },
+    "/slotLocks/{lockId}": {
+      "schema": "SlotLock",
+      "description": "Real-time distributed slot concurrency locks"
+    },
+    "/tombstones/{tombstoneId}": {
+      "schema": "Tombstone",
+      "description": "Distributed deletion and cancellation tombstones"
     },
     "/isolationRooms/{roomId}": {
       "schema": "IsolationRoom",

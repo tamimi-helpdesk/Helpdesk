@@ -274,13 +274,39 @@ export const OfflineQueueService = {
             switch (item.action) {
               case 'saveBooking':
                 result = await gasServiceRef.pushBookingToRemoteDirect(item.payload);
+                if (result.success && item.payload) {
+                  import('./hubService').then(({ HubService }) => {
+                    HubService.notifyServerBookingSaved(item.payload, 'upsert').catch(() => {});
+                  }).catch(() => {});
+                  import('./firebaseService').then(({ CloudDatabaseService }) => {
+                    CloudDatabaseService.saveBookingToCloud(item.payload).catch(() => {});
+                  }).catch(() => {});
+                }
                 break;
             case 'cancelBooking':
               result = await gasServiceRef.cancelBookingRemoteDirect(item.payload || item.targetId, item.payload?.phone || item.payload?.phoneNumber, item.payload?.reason);
+              if (result.success) {
+                const cancelObj = (typeof item.payload === 'object' && item.payload) ? item.payload : { id: item.targetId, status: 'CANCELLED' };
+                import('./hubService').then(({ HubService }) => {
+                  HubService.notifyServerBookingSaved(cancelObj, 'cancel').catch(() => {});
+                }).catch(() => {});
+                import('./firebaseService').then(({ CloudDatabaseService }) => {
+                  CloudDatabaseService.cancelBookingInCloud(item.targetId, item.payload?.reason).catch(() => {});
+                }).catch(() => {});
+              }
               break;
             case 'deleteBooking':
               result = await gasServiceRef.deleteBookingRemoteDirect(item.payload || item.targetId, item.payload?.phone || item.payload?.phoneNumber);
+              if (result.success) {
+                import('./hubService').then(({ HubService }) => {
+                  HubService.pushMutation({ mutationType: 'DELETE', entity: 'bookings', id: item.targetId }).catch(() => {});
+                }).catch(() => {});
+                import('./firebaseService').then(({ CloudDatabaseService }) => {
+                  CloudDatabaseService.deleteBookingInCloud(item.targetId).catch(() => {});
+                }).catch(() => {});
+              }
               break;
+
             case 'saveHandover':
               result = await gasServiceRef.pushHandoverToRemoteDirect(item.payload);
               break;

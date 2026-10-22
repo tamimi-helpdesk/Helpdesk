@@ -80,6 +80,24 @@ export class HubService {
     }
   }
 
+  private static seenEvents = new Map<string, number>();
+
+  private static isDuplicateEvent(eventKey: string): boolean {
+    if (!eventKey) return false;
+    const now = Date.now();
+    // Prune entries older than 30 seconds
+    for (const [k, timestamp] of this.seenEvents.entries()) {
+      if (now - timestamp > 30000) {
+        this.seenEvents.delete(k);
+      }
+    }
+    if (this.seenEvents.has(eventKey)) {
+      return true;
+    }
+    this.seenEvents.set(eventKey, now);
+    return false;
+  }
+
   // Initialize real-time synchronization listener
   public static init() {
     if (typeof window === 'undefined') return;
@@ -91,7 +109,7 @@ export class HubService {
     // 2. Connect Real-time SSE Stream
     this.connectSSE();
 
-    // 3. Ultra-lightweight periodic version check (Every 6 seconds, <50 bytes instead of full state)
+    // 3. Ultra-lightweight periodic version check (Every 5 seconds as secondary safety net)
     setInterval(async () => {
       try {
         const vRes = await fetch(`/api/hub/version?_t=${Date.now()}`, {
@@ -102,6 +120,7 @@ export class HubService {
           const vData = await vRes.json();
           if (vData && typeof vData.version === 'number') {
             if (vData.version > this.lastKnownVersion) {
+              await this.fetchAuthoritativeBookings();
               await this.pullStateFromHub();
             }
           }
@@ -109,15 +128,25 @@ export class HubService {
       } catch (e) {
         // Quiet fallback
       }
-    }, 6000);
+    }, 5000);
 
-    // 4. Focus & Visibility Sync (Instantly pull when user focuses or returns to window)
-    window.addEventListener('focus', () => {
+    // 4. Focus, Visibility & Online Sync (Instantly reconnect and catch missed events)
+    window.addEventListener('online', () => {
+      this.sseFailures = 0;
+      this.connectSSE();
       this.fetchAuthoritativeBookings().catch(() => {});
       this.pullStateFromHub().catch(() => {});
     });
+
+    window.addEventListener('focus', () => {
+      if (!this.isConnected) this.connectSSE();
+      this.fetchAuthoritativeBookings().catch(() => {});
+      this.pullStateFromHub().catch(() => {});
+    });
+
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
+        if (!this.isConnected) this.connectSSE();
         this.fetchAuthoritativeBookings().catch(() => {});
         this.pullStateFromHub().catch(() => {});
       }
@@ -138,30 +167,39 @@ export class HubService {
       this.eventSource.onopen = () => {
         this.isConnected = true;
         this.sseFailures = 0;
+        // On connection or reconnection: immediately fetch latest state to catch any missed events
+        this.fetchAuthoritativeBookings().catch(() => {});
       };
 
       this.eventSource.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data);
-          if (data.type === 'CONNECTED') {
+          const eventType = data.type;
+          const entity = data.entity;
+          const id = data.id || (data.payload && data.payload.id);
+          const version = typeof data.version === 'number' ? data.version : 0;
+
+          if (version > 0) {
+            this.lastKnownVersion = Math.max(this.lastKnownVersion, version);
+          }
+
+          if (eventType === 'CONNECTED') {
             if (typeof data.version === 'number') {
               this.lastKnownVersion = data.version;
             }
+            this.fetchAuthoritativeBookings().catch(() => {});
             this.pullStateFromHub().catch(() => {});
-          } else if (data.type === 'DELETE') {
-            if (typeof data.version === 'number') this.lastKnownVersion = data.version;
+          } else if (eventType === 'DELETE') {
             if (data.id) {
               StorageService.applyRemoteDeletion(data.id, data.entity);
               ToastService.hub('Terminal network: Record removed by another user');
             }
-          } else if (data.type === 'CANCEL') {
-            if (typeof data.version === 'number') this.lastKnownVersion = data.version;
+          } else if (eventType === 'CANCEL') {
             if (data.id) {
               StorageService.applyRemoteCancellation(data.id, data.payload?.reason);
               ToastService.hub('Terminal network: Booking status updated');
             }
-          } else if (data.type === 'CANCEL_BATCH') {
-            if (typeof data.version === 'number') this.lastKnownVersion = data.version;
+          } else if (eventType === 'CANCEL_BATCH') {
             const ids = Array.isArray(data.payload?.ids)
               ? data.payload.ids
               : (Array.isArray(data.payload) ? data.payload : []);
@@ -169,14 +207,13 @@ export class HubService {
               StorageService.applyRemoteBatchCancellation(ids, data.payload?.reason);
               ToastService.hub('Terminal network: Batch schedule status updated');
             }
-          } else if (data.type === 'UPSERT' || data.type === 'UPSERT_BATCH') {
-            if (typeof data.version === 'number') this.lastKnownVersion = data.version;
+          } else if (eventType === 'UPSERT' || eventType === 'UPSERT_BATCH') {
             if (data.entity && data.payload) {
               StorageService.applyRemoteUpsert(data.entity, data.payload);
               ToastService.hub('Terminal network: Real-time update synced');
             }
-          } else if (data.type === 'SYNC_ALL') {
-            if (typeof data.version === 'number') this.lastKnownVersion = data.version;
+          } else if (eventType === 'SYNC_ALL') {
+            this.fetchAuthoritativeBookings().catch(() => {});
             this.pullStateFromHub().catch(() => {});
           }
         } catch (err) {}
@@ -192,8 +229,8 @@ export class HubService {
         }
 
         this.sseFailures++;
-        // Reconnect with backoff (never permanently disable)
-        const delay = Math.min(30000, 3000 * Math.pow(1.5, Math.min(this.sseFailures, 5)));
+        // Fast reconnection: retry in 1s, 2s, max 3s (never wait 30s)
+        const delay = Math.min(3000, 1000 * Math.max(1, this.sseFailures));
         if (!this.reconnectTimer) {
           this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
@@ -205,6 +242,7 @@ export class HubService {
       // Graceful fallback to HTTP polling
     }
   }
+
 
   // Pull authoritative state from server hub and apply to local storage
   public static async pullStateFromHub(): Promise<boolean> {
@@ -325,4 +363,22 @@ export class HubService {
       });
     }
   }
+
+  // Notify server that a booking was saved or confirmed in Google Sheets / GAS (Requirement 4)
+  public static async notifyServerBookingSaved(booking: any, action: 'upsert' | 'cancel' = 'upsert'): Promise<boolean> {
+    try {
+      const headers = this.getAuthHeaders();
+      const res = await fetch('/api/gas/notify-booking-saved', {
+        method: 'POST',
+        headers,
+        cache: 'no-store',
+        body: JSON.stringify({ booking, action }),
+      });
+      return res.ok;
+    } catch (err) {
+      console.warn('[HubService] notifyServerBookingSaved error:', err);
+      return false;
+    }
+  }
 }
+

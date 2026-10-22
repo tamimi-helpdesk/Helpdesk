@@ -232,9 +232,24 @@ export const RecurringBookingEngine: React.FC<RecurringBookingEngineProps> = ({
     return dates;
   }, [startDate, endDate, selectedDays]);
 
+  // Live synchronization: recalculate availability report when bookings are updated across devices
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setRefreshTrigger((prev) => prev + 1);
+    };
+    window.addEventListener('tamimi_bookings_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('tamimi_bookings_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
+
   // Check Availability for all generated dates
   const availabilityReport = useMemo(() => {
-    if (matchedDates.length === 0) {
+    if (matchedDates.length === 0 || refreshTrigger < 0) {
       return { totalDates: 0, availableDates: [], conflictDates: [] };
     }
 
@@ -245,7 +260,7 @@ export const RecurringBookingEngine: React.FC<RecurringBookingEngineProps> = ({
       startTime,
       endTime,
     });
-  }, [facility.id, selectedStage, matchedDates, startTime, endTime]);
+  }, [facility.id, selectedStage, matchedDates, startTime, endTime, refreshTrigger]);
 
   // Generate valid start/end time options
   const timeOptions = useMemo(() => {
@@ -301,7 +316,7 @@ export const RecurringBookingEngine: React.FC<RecurringBookingEngineProps> = ({
         .join(', ');
       const summaryText = `Recurring (${dayNames}) | ${formatDisplayTime(startTime)} - ${formatDisplayTime(endTime)} | ${availabilityReport.availableDates.length} sessions`;
 
-      const result = StorageService.createRecurringBookings({
+      const result = await StorageService.createRecurringBookingsAuthoritative({
         facilityId: facility.id,
         facilityName: facility.name,
         sheetTabName: facility.sheetTabName,

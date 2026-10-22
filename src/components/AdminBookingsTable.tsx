@@ -112,7 +112,21 @@ export const AdminBookingsTable: React.FC<AdminBookingsTableProps> = ({
   const [editingDepartmentBookingId, setEditingDepartmentBookingId] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
+  // Persistent real-time listener for instantaneous updates without page refresh (Requirement 2)
+  useEffect(() => {
+    const handleUpdate = () => {
+      setRefreshTrigger((prev) => prev + 1);
+    };
+    window.addEventListener('tamimi_bookings_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('tamimi_bookings_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
+
   const allBookings = useMemo(() => StorageService.getAllBookings(), [refreshTrigger, isOpen]);
+
 
   // Helper to calculate date presets
   const todayStr = useMemo(() => getTodayDateString(), []);

@@ -9,7 +9,8 @@ import crypto from 'crypto';
 import { isResourceOrStageMatch, getCanonicalResourceName } from './src/utils/resourceMatching.ts';
 
 export const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const PORT = process.env.PORT && process.env.PORT !== '8080' ? parseInt(process.env.PORT, 10) : 3000;
+
 
 // Request body limits to prevent DoS attacks
 app.use(express.json({ limit: '10mb' }));
@@ -424,6 +425,7 @@ function broadcastHubEvent(event: { type: string; entity?: string; id?: string; 
   for (const client of sseClients) {
     try {
       client.res.write(dataString);
+      (client.res as any).flush?.();
     } catch (err) {
       sseClients.delete(client);
     }
@@ -435,6 +437,7 @@ setInterval(() => {
   for (const client of sseClients) {
     try {
       client.res.write(': keepalive\n\n');
+      (client.res as any).flush?.();
     } catch (e) {
       sseClients.delete(client);
     }
@@ -447,8 +450,12 @@ app.get('/api/hub/events', (req: Request, res: Response) => {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
     'Access-Control-Allow-Origin': '*',
   });
+  if (typeof (res as any).flushHeaders === 'function') {
+    (res as any).flushHeaders();
+  }
 
   const clientId = `client_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const client: SSEClient = { id: clientId, res };
@@ -456,6 +463,7 @@ app.get('/api/hub/events', (req: Request, res: Response) => {
 
   // Send initial connection handshake with current server version
   res.write(`data: ${JSON.stringify({ type: 'CONNECTED', version: hubState.version, serverTime: new Date().toISOString() })}\n\n`);
+  (res as any).flush?.();
 
   req.on('close', () => {
     sseClients.delete(client);
@@ -528,6 +536,13 @@ app.post('/api/bookings', (req: Request, res: Response) => {
       cleanItem.id = String(cleanItem.id).trim();
     }
 
+    if (!cleanItem.facilityId || !cleanItem.date || !cleanItem.startTime || !cleanItem.endTime) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required booking fields: facilityId, date, startTime, and endTime are required.',
+      });
+    }
+
     cleanItem.status = 'CONFIRMED';
     cleanItem.createdAt = cleanItem.createdAt || new Date().toISOString();
 
@@ -554,7 +569,10 @@ app.post('/api/bookings', (req: Request, res: Response) => {
     hubState.version += 1;
     hubState.lastUpdated = new Date().toISOString();
 
-    // Immediate SSE Broadcast to all connected terminals
+    invalidateGasCache();
+    await persistHubState();
+
+    // Broadcast only AFTER successful commit to server database
     broadcastHubEvent({
       type: 'UPSERT',
       entity: 'bookings',
@@ -563,9 +581,6 @@ app.post('/api/bookings', (req: Request, res: Response) => {
       payload: cleanItem,
     });
 
-    invalidateGasCache();
-    await persistHubState();
-
     return res.json({
       success: true,
       version: hubState.version,
@@ -573,6 +588,198 @@ app.post('/api/bookings', (req: Request, res: Response) => {
     });
   });
 });
+
+// 1.7.5. Authoritative Booking Cancellation Endpoint (Instant cross-device cancellation)
+app.delete('/api/bookings/:id', (req: Request, res: Response) => {
+  return mutationMutex.runExclusive(async () => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    const id = req.params.id;
+    if (!id || String(id).trim() === '') {
+      return res.status(400).json({ success: false, error: 'Booking ID is required.' });
+    }
+
+    const cleanId = String(id).toLowerCase().trim();
+    const reason = req.body?.reason || req.query?.reason || 'Cancelled via Portal';
+    const now = Date.now();
+
+    hubState.version += 1;
+    hubState.lastUpdated = new Date().toISOString();
+    hubState.cancelledIds[cleanId] = now;
+
+    let targetBooking: any = null;
+    hubState.bookings = hubState.bookings.map((b) => {
+      if (String(b.id || '').toLowerCase().trim() === cleanId) {
+        targetBooking = {
+          ...b,
+          status: 'CANCELLED',
+          cancellationReason: reason,
+          cancelledAt: new Date().toISOString(),
+          cancelledBy: req.body?.cancelledBy || 'Helpdesk',
+        };
+        return targetBooking;
+      }
+      return b;
+    });
+
+    invalidateGasCache();
+    await persistHubState();
+
+    broadcastHubEvent({
+      type: 'CANCEL',
+      entity: 'bookings',
+      id: targetBooking?.id || id,
+      version: hubState.version,
+      payload: { reason, booking: targetBooking },
+    });
+
+    return res.json({
+      success: true,
+      version: hubState.version,
+      cancelled: cleanId,
+      booking: targetBooking,
+    });
+  });
+});
+
+// 1.7.6. Authoritative Booking Update Endpoint (Instant cross-device edit & update synchronization)
+const handleBookingUpdate = (req: Request, res: Response) => {
+  return mutationMutex.runExclusive(async () => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    const id = req.params.id;
+    if (!id || String(id).trim() === '') {
+      return res.status(400).json({ success: false, error: 'Booking ID is required.' });
+    }
+
+    const cleanId = String(id).toLowerCase().trim();
+    const raw = req.body?.booking || req.body?.data || req.body;
+    if (!raw || typeof raw !== 'object') {
+      return res.status(400).json({ success: false, error: 'Invalid update payload.' });
+    }
+
+    const cleanItem: Record<string, any> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      cleanItem[k] = v;
+    }
+    cleanItem.id = id;
+
+    const existingIdx = hubState.bookings.findIndex((b) => String(b.id || '').toLowerCase().trim() === cleanId);
+    let updatedBooking: any;
+    if (existingIdx >= 0) {
+      updatedBooking = { ...hubState.bookings[existingIdx], ...cleanItem, id: hubState.bookings[existingIdx].id };
+      hubState.bookings[existingIdx] = updatedBooking;
+    } else {
+      updatedBooking = { ...cleanItem, id };
+      hubState.bookings.unshift(updatedBooking);
+    }
+
+    hubState.version += 1;
+    hubState.lastUpdated = new Date().toISOString();
+
+    invalidateGasCache();
+    await persistHubState();
+
+    broadcastHubEvent({
+      type: 'UPSERT',
+      entity: 'bookings',
+      id: updatedBooking.id,
+      version: hubState.version,
+      payload: updatedBooking,
+    });
+
+    return res.json({
+      success: true,
+      version: hubState.version,
+      booking: updatedBooking,
+    });
+  });
+};
+
+app.put('/api/bookings/:id', handleBookingUpdate);
+app.patch('/api/bookings/:id', handleBookingUpdate);
+
+// 1.8. Dedicated Google Sheets Write Notification Endpoint (Reliable multi-computer notification after Sheets/GAS write)
+app.post('/api/gas/notify-booking-saved', (req: Request, res: Response) => {
+  return mutationMutex.runExclusive(async () => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    const raw = req.body?.booking || req.body?.data || req.body;
+    if (!raw || typeof raw !== 'object') {
+      return res.status(400).json({ success: false, error: 'Invalid booking notification payload.' });
+    }
+
+    const cleanItem: Record<string, any> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      cleanItem[k] = v;
+    }
+
+    if (!cleanItem.id || String(cleanItem.id).trim() === '') {
+      return res.status(400).json({ success: false, error: 'Booking ID is required.' });
+    }
+
+    cleanItem.id = String(cleanItem.id).trim();
+    const action = req.body?.action || (cleanItem.status === 'CANCELLED' ? 'cancel' : 'upsert');
+    const targetId = cleanItem.id.toLowerCase().trim();
+
+    hubState.version += 1;
+    hubState.lastUpdated = new Date().toISOString();
+
+    if (action === 'cancel' || cleanItem.status === 'CANCELLED') {
+      cleanItem.status = 'CANCELLED';
+      hubState.cancelledIds[targetId] = Date.now();
+      const existingIdx = hubState.bookings.findIndex((b) => String(b.id || '').toLowerCase().trim() === targetId);
+      if (existingIdx >= 0) {
+        hubState.bookings[existingIdx] = { ...hubState.bookings[existingIdx], ...cleanItem };
+      } else {
+        hubState.bookings.unshift(cleanItem);
+      }
+
+      invalidateGasCache();
+      await persistHubState();
+
+      broadcastHubEvent({
+        type: 'CANCEL',
+        entity: 'bookings',
+        id: cleanItem.id,
+        version: hubState.version,
+        payload: { reason: cleanItem.cancellationReason || 'Cancelled via Google Sheets Sync' },
+      });
+
+      return res.json({ success: true, version: hubState.version, cancelled: cleanItem.id });
+    } else {
+      if (!cleanItem.status) cleanItem.status = 'CONFIRMED';
+      const existingIdx = hubState.bookings.findIndex((b) => String(b.id || '').toLowerCase().trim() === targetId);
+      if (existingIdx >= 0) {
+        hubState.bookings[existingIdx] = { ...hubState.bookings[existingIdx], ...cleanItem };
+      } else {
+        hubState.bookings.unshift(cleanItem);
+      }
+
+      invalidateGasCache();
+      await persistHubState();
+
+      broadcastHubEvent({
+        type: 'UPSERT',
+        entity: 'bookings',
+        id: cleanItem.id,
+        version: hubState.version,
+        payload: cleanItem,
+      });
+
+      return res.json({ success: true, version: hubState.version, booking: cleanItem });
+    }
+  });
+});
+
 
 // ---------------------------------------------------------------------------
 // SERVER-SIDE AUTHENTICATION, RBAC & SECURITY AUDIT LOGGING
@@ -1279,20 +1486,13 @@ const ALLOWED_ENTITIES = new Set([
 app.post('/api/hub/mutate', (req: Request, res: Response) => {
   return mutationMutex.runExclusive(async () => {
   // Authentication & Session Validation
-  let session = verifyServerSession(req);
+  const session = verifyServerSession(req);
   if (!session) {
-    const opUser = (req.headers['x-operator-username'] as string) || req.body?.data?.bookedByStaff || 'Helpdesk';
-    const clientToken = getClientToken(req) || `portal_tkn_${Date.now()}`;
-    session = {
-      token: clientToken,
-      username: String(opUser).trim(),
-      role: 'FACILITY_OPERATOR',
-      fullName: String(opUser).trim(),
-      createdAt: Date.now(),
-      lastActiveAt: Date.now(),
-      ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'portal'),
-    };
-    serverSessions.set(clientToken, session);
+    logServerSecurity('UNAUTHORIZED_ATTEMPT', `Unauthorized access to ${req.method} ${req.path}`, req);
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized: A valid authenticated session is required to perform this action.',
+    });
   }
 
   const { mutationType, entity, id, data, reason } = req.body;
@@ -1577,7 +1777,9 @@ app.post('/api/hub/mutate', (req: Request, res: Response) => {
 
       const multiRecordPayload = [updatedSrcRoom, updatedTgtRoom].filter(Boolean);
 
-      // Instant SSE Broadcast
+      await persistHubState();
+
+      // Instant SSE Broadcast after commit
       broadcastHubEvent({
         type: 'UPSERT_BATCH',
         entity: 'isolationRooms',
@@ -1594,7 +1796,6 @@ app.post('/api/hub/mutate', (req: Request, res: Response) => {
         });
       }
 
-      await persistHubState();
 
       return res.json({
         success: true,
@@ -1800,7 +2001,12 @@ app.post('/api/hub/mutate', (req: Request, res: Response) => {
         });
       }
 
-      // Broadcast individual item events for multi-record arrays to ensure maximum client compatibility
+      if (upsertedCount > 0) {
+        invalidateGasCache();
+        await persistHubState();
+      }
+
+      // Broadcast individual item events only AFTER successful disk/database commit
       if (Array.isArray(rawPayload)) {
         for (const item of broadcastedItems) {
           broadcastHubEvent({
@@ -1828,10 +2034,6 @@ app.post('/api/hub/mutate', (req: Request, res: Response) => {
         });
       }
 
-      if (upsertedCount > 0) {
-        invalidateGasCache();
-        await persistHubState();
-      }
 
       return res.json({
         success: true,
@@ -2451,10 +2653,15 @@ app.post('/api/gas/proxy', async (req: Request, res: Response) => {
                     } else {
                       hubState.bookings.unshift(nb);
                     }
-                    broadcastHubEvent({ type: 'UPSERT', entity: 'bookings', payload: nb, version: hubState.version });
                   }
                 });
                 await persistHubState();
+                newBookings.forEach((nb: any) => {
+                  if (nb && nb.id) {
+                    broadcastHubEvent({ type: 'UPSERT', entity: 'bookings', id: String(nb.id), payload: nb, version: hubState.version });
+                  }
+                });
+
               } else if (reqAction === 'cancelBooking') {
                 const cancelId = String(body?.bookingId || body?.id || jsonData?.bookingId || '').toLowerCase().trim();
                 if (cancelId) {
@@ -3779,7 +3986,7 @@ app.post('/api/export-excel', async (req: Request, res: Response) => {
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);

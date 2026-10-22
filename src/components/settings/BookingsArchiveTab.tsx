@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Database,
   Search,
@@ -28,6 +28,20 @@ export const BookingsArchiveTab: React.FC<BookingsArchiveTabProps> = ({
   const [statusFilter, setStatusFilter] = useState('ALL');
 
   const reload = () => setAllBookings(StorageService.getAllBookings());
+
+  // Persistent real-time listener for instantaneous updates without page refresh (Requirement 2)
+  useEffect(() => {
+    const handleUpdate = () => {
+      setAllBookings(StorageService.getAllBookings());
+    };
+    window.addEventListener('tamimi_bookings_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('tamimi_bookings_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
+
 
   const filtered = useMemo(() => {
     return allBookings.filter((b) => {
