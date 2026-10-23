@@ -19,7 +19,6 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Enterprise Security Headers & CORS Configuration
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
@@ -27,9 +26,15 @@ app.use((req, res, next) => {
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-session-token');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
   }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    (req.headers['access-control-request-headers'] as string) ||
+      'Content-Type, Authorization, x-session-token, x-operator-username, Cache-Control, Pragma, If-Modified-Since, If-None-Match, Range, Accept, Origin, User-Agent'
+  );
 
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
@@ -494,18 +499,22 @@ app.get('/api/bookings', (req: Request, res: Response) => {
   const date = req.query.date as string | undefined;
 
   let bookings = hubState.bookings || [];
+  let resolved: string | undefined;
   if (facilityId) {
-    const resolved = resolveServerFacilityId(facilityId);
+    resolved = resolveServerFacilityId(facilityId);
     bookings = bookings.filter((b) => resolveServerFacilityId(b.facilityId || b.sheetTabName || b.facilityName) === resolved);
   }
   if (date) {
     bookings = bookings.filter((b) => String(b.date || '').trim() === date.trim());
   }
 
+  console.log(`[API /api/bookings] GET facilityId="${facilityId || 'ALL'}" (resolved="${resolved || 'ALL'}") date="${date || 'ALL'}" -> returning ${bookings.length} bookings, version ${hubState.version}`);
+
   return res.json({
     success: true,
     version: hubState.version,
     lastUpdated: hubState.lastUpdated,
+    facilityId: facilityId || null,
     bookings,
     deletedIds: hubState.deletedIds || {},
     cancelledIds: hubState.cancelledIds || {},

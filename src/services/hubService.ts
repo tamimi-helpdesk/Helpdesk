@@ -11,12 +11,15 @@ export class HubService {
 
   private static lastKnownVersion = 0;
 
-  public static getAuthHeaders(): Record<string, string> {
+  public static getAuthHeaders(includeContentType = true): Record<string, string> {
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      'Accept': 'application/json',
       'Cache-Control': 'no-cache',
       'Pragma': 'no-cache',
     };
+    if (includeContentType) {
+      headers['Content-Type'] = 'application/json';
+    }
     try {
       if (typeof localStorage !== 'undefined') {
         const rawSession = localStorage.getItem('tamimi_helpdesk_auth_session_v2');
@@ -46,7 +49,8 @@ export class HubService {
       const res = await fetch(`/api/bookings?${queryParams.toString()}`, {
         method: 'GET',
         cache: 'no-store',
-        headers: this.getAuthHeaders(),
+        credentials: 'include',
+        headers: this.getAuthHeaders(false),
       });
 
       const contentType = res.headers.get('content-type') || '';
@@ -101,29 +105,38 @@ export class HubService {
       queryParams.set('_t', String(Date.now()));
       queryParams.set('facilityId', facilityId);
 
-      const res = await fetch(`/api/bookings?${queryParams.toString()}`, {
+      const endpointUrl = `/api/bookings?${queryParams.toString()}`;
+      console.log(`[HubService] Initiating authoritative fetch for facility="${facilityId}" from ${endpointUrl}`);
+
+      const res = await fetch(endpointUrl, {
         method: 'GET',
         cache: 'no-store',
-        headers: this.getAuthHeaders(),
+        credentials: 'include',
+        headers: this.getAuthHeaders(false),
         signal: abortController.signal,
       });
       clearTimeout(timeoutId);
 
       const contentType = res.headers.get('content-type') || '';
+      console.log(`[HubService] Authoritative response: status=${res.status}, ok=${res.ok}, contentType="${contentType}"`);
+
       if (!res.ok || !contentType.includes('application/json')) {
+        console.warn(`[HubService] Server returned non-OK or non-JSON (status: ${res.status}). Attempting Firestore fallback...`);
         const cloudResult = await this.fallbackFetchFromCloud(facilityId);
         if (cloudResult.success) {
+          console.log(`[HubService] Successfully recovered ${cloudResult.bookingsCount} records from Firestore for "${facilityId}"`);
           return cloudResult;
         }
         return {
           success: false,
           bookingsCount: 0,
-          error: `Server responded with status ${res.status}. Authoritative records could not be fetched.`,
+          error: `Server endpoint error (Status ${res.status}, Type "${contentType}"). Cloud fallback: ${cloudResult.error || 'Unavailable'}.`,
         };
       }
 
       const data = await res.json();
       if (!data || !data.success || !Array.isArray(data.bookings)) {
+        console.warn(`[HubService] Invalid JSON data from server. Attempting Firestore fallback...`, data);
         const cloudResult = await this.fallbackFetchFromCloud(facilityId);
         if (cloudResult.success) {
           return cloudResult;
@@ -131,7 +144,7 @@ export class HubService {
         return {
           success: false,
           bookingsCount: 0,
-          error: data?.error || 'Invalid database response structure. Sync aborted.',
+          error: data?.error || 'Invalid database response structure. Server sync aborted.',
         };
       }
 
@@ -159,6 +172,8 @@ export class HubService {
       // Ensure real-time connection is running for instant updates
       this.ensureConnected();
 
+      console.log(`[HubService] Authoritative sync completed for facility="${facilityId}" with ${data.bookings.length} verified bookings.`);
+
       return {
         success: true,
         bookingsCount: data.bookings.length,
@@ -167,8 +182,10 @@ export class HubService {
       clearTimeout(timeoutId);
       const isTimeout = err?.name === 'AbortError' || String(err?.message || '').toLowerCase().includes('aborted');
 
+      console.warn(`[HubService] Primary fetch threw error: ${err?.message}. Attempting Firestore fallback...`);
       const cloudResult = await this.fallbackFetchFromCloud(facilityId);
       if (cloudResult.success) {
+        console.log(`[HubService] Successfully recovered ${cloudResult.bookingsCount} records from Firestore after fetch error.`);
         return cloudResult;
       }
 
@@ -176,7 +193,7 @@ export class HubService {
         success: false,
         bookingsCount: 0,
         error: isTimeout
-          ? 'Network request timed out while connecting to authoritative server database.'
+          ? 'Network request timed out (7s) while connecting to authoritative server database.'
           : (err?.message || 'Network connection failed while fetching latest booking records.'),
       };
     }
@@ -191,8 +208,10 @@ export class HubService {
         this.ensureConnected();
         return { success: true, bookingsCount: cloudRes.bookings.length };
       }
-    } catch (_) {}
-    return { success: false, bookingsCount: 0 };
+      return { success: false, bookingsCount: 0, error: cloudRes.error || 'Firestore query returned failure' };
+    } catch (err: any) {
+      return { success: false, bookingsCount: 0, error: err?.message || 'Firestore query failed' };
+    }
   }
 
   public static ensureConnected(): void {
@@ -380,7 +399,8 @@ export class HubService {
       const res = await fetch(`/api/hub/state?_t=${Date.now()}`, {
         method: 'GET',
         cache: 'no-store',
-        headers: this.getAuthHeaders(),
+        credentials: 'include',
+        headers: this.getAuthHeaders(false),
       });
       const contentType = res.headers.get('content-type') || '';
       if (!res.ok || !contentType.includes('application/json')) {
@@ -454,6 +474,7 @@ export class HubService {
       const res = await fetch('/api/hub/mutate', {
         method: 'POST',
         headers,
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
       const contentType = res.headers.get('content-type') || '';
@@ -474,6 +495,7 @@ export class HubService {
         method: 'POST',
         headers,
         cache: 'no-store',
+        credentials: 'include',
         body: JSON.stringify({ booking }),
       });
       const contentType = res.headers.get('content-type') || '';
@@ -501,6 +523,7 @@ export class HubService {
         method: 'DELETE',
         headers,
         cache: 'no-store',
+        credentials: 'include',
         body: JSON.stringify({ reason, booking, facilityId: booking?.facilityId }),
       });
       if (res.ok) return true;
@@ -529,6 +552,7 @@ export class HubService {
         method: 'POST',
         headers,
         cache: 'no-store',
+        credentials: 'include',
         body: JSON.stringify({ booking, action }),
       });
       return res.ok;
