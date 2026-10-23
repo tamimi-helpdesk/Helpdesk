@@ -630,9 +630,15 @@ app.delete('/api/bookings/:id', (req: Request, res: Response) => {
     broadcastHubEvent({
       type: 'CANCEL',
       entity: 'bookings',
-      id: targetBooking?.id || id,
+      id: targetBooking?.id || cleanId,
       version: hubState.version,
-      payload: { reason, booking: targetBooking },
+      payload: {
+        id: targetBooking?.id || cleanId,
+        facilityId: targetBooking?.facilityId || req.body?.facilityId,
+        status: 'CANCELLED',
+        reason,
+        booking: targetBooking,
+      },
     });
 
     return res.json({
@@ -1573,24 +1579,51 @@ app.post('/api/hub/mutate', (req: Request, res: Response) => {
       // Record cancellation
       hubState.cancelledIds[cleanId] = now;
       let found = false;
+      let targetBooking: any = null;
 
       hubState.bookings = hubState.bookings.map((b) => {
         if (String(b.id || '').toLowerCase().trim() === cleanId) {
           found = true;
-          return {
+          targetBooking = {
             ...b,
             status: 'CANCELLED',
             cancellationReason: reason || 'Cancelled via Portal',
             cancelledAt: new Date().toISOString(),
           };
+          return targetBooking;
         }
         return b;
       });
 
+      if (!found && (req.body.data || req.body.booking)) {
+        const item = req.body.data || req.body.booking;
+        targetBooking = {
+          ...item,
+          id: cleanId,
+          status: 'CANCELLED',
+          cancellationReason: reason || 'Cancelled via Portal',
+          cancelledAt: new Date().toISOString(),
+        };
+        hubState.bookings.unshift(targetBooking);
+        found = true;
+      }
+
       invalidateGasCache();
       await persistHubState();
-      broadcastHubEvent({ type: 'CANCEL', entity: 'bookings', id: cleanId, version: hubState.version, payload: { reason } });
-      return res.json({ success: true, version: hubState.version, cancelled: cleanId, found });
+      broadcastHubEvent({
+        type: 'CANCEL',
+        entity: 'bookings',
+        id: targetBooking?.id || cleanId,
+        version: hubState.version,
+        payload: {
+          id: targetBooking?.id || cleanId,
+          facilityId: targetBooking?.facilityId || req.body?.facilityId || req.body?.data?.facilityId,
+          status: 'CANCELLED',
+          reason: reason || 'Cancelled via Portal',
+          booking: targetBooking,
+        },
+      });
+      return res.json({ success: true, version: hubState.version, cancelled: cleanId, found, booking: targetBooking });
     }
 
     if (effectiveMutationType === 'CANCEL_BATCH') {
@@ -1656,7 +1689,20 @@ app.post('/api/hub/mutate', (req: Request, res: Response) => {
       });
       // Defense-in-depth: Also broadcast individual CANCEL events so all client event listeners release slots
       for (const cId of cleanIds) {
-        broadcastHubEvent({ type: 'CANCEL', entity: 'bookings', id: cId, version: hubState.version, payload: { reason: effectiveReason } });
+        const bObj = hubState.bookings.find((b) => String(b.id || '').toLowerCase().trim() === cId);
+        broadcastHubEvent({
+          type: 'CANCEL',
+          entity: 'bookings',
+          id: cId,
+          version: hubState.version,
+          payload: {
+            id: cId,
+            facilityId: bObj?.facilityId,
+            status: 'CANCELLED',
+            reason: effectiveReason,
+            booking: bObj,
+          },
+        });
       }
 
       return res.json({ success: true, version: hubState.version, cancelledCount: cancelCount, cancelledIds: cleanIds });

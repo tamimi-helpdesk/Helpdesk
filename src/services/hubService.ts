@@ -320,8 +320,11 @@ export class HubService {
               ToastService.hub('Terminal network: Record removed by another user');
             }
           } else if (eventType === 'CANCEL') {
-            if (data.id) {
-              StorageService.applyRemoteCancellation(data.id, data.payload?.reason);
+            const cancelId = data.id || data.payload?.id;
+            const bookingObj = data.payload?.booking;
+            const reason = data.payload?.reason || 'Cancelled remotely';
+            if (cancelId || bookingObj?.id) {
+              StorageService.applyRemoteCancellation(cancelId || bookingObj?.id, reason, bookingObj);
               ToastService.hub('Terminal network: Booking status updated');
             }
           } else if (eventType === 'CANCEL_BATCH') {
@@ -486,6 +489,35 @@ export class HubService {
         id: booking.id,
         data: booking,
       });
+    }
+  }
+
+  // Authoritative Booking Cancellation directly on Server Endpoint (Cross-device instant sync)
+  public static async cancelBookingAuthoritative(bookingId: string, reason?: string, booking?: any): Promise<boolean> {
+    try {
+      const headers = this.getAuthHeaders();
+      const cleanId = encodeURIComponent(String(bookingId).trim());
+      const res = await fetch(`/api/bookings/${cleanId}`, {
+        method: 'DELETE',
+        headers,
+        cache: 'no-store',
+        body: JSON.stringify({ reason, booking, facilityId: booking?.facilityId }),
+      });
+      if (res.ok) return true;
+    } catch (_) {}
+    // Fallback to /api/hub/mutate
+    try {
+      const mutateRes = await this.pushMutation({
+        mutationType: 'CANCEL',
+        entity: 'bookings',
+        id: bookingId,
+        reason: reason || 'Cancelled by user',
+        data: booking,
+        facilityId: booking?.facilityId,
+      });
+      return Boolean(mutateRes?.success);
+    } catch (_) {
+      return false;
     }
   }
 

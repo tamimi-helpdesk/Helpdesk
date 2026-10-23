@@ -937,6 +937,16 @@ export default function App() {
               </button>
             </div>
           </div>
+        ) : (isFacilitySyncing || facilitySyncError) ? (
+          /* ========================================================
+             AUTHORITATIVE DATA GUARD:
+             Facility screen/route is strictly BLOCKED until authoritative database
+             records are fetched, verified, and committed to state.
+             Prevents opening with stale local cache or partial data.
+             ======================================================== */
+          <div className="w-full flex-1 flex flex-col items-center justify-center p-8 sm:p-16 min-h-[420px]">
+            {/* FacilitySyncTransitionOverlay presents the stylish circular loader or retry card */}
+          </div>
         ) : (
           /* ========================================================
              2. FACILITY RESERVATION & MANAGEMENT SCREEN
@@ -1248,7 +1258,7 @@ export default function App() {
 
       {/* Facility Authoritative Database Real-Time Sync Transition Overlay */}
       <FacilitySyncTransitionOverlay
-        isOpen={isFacilitySyncing}
+        isOpen={isFacilitySyncing || Boolean(facilitySyncError)}
         facilityName={syncingFacilityName}
         facilityId={syncingFacilityId}
         isComplete={isFacilitySyncComplete}
@@ -1261,6 +1271,7 @@ export default function App() {
         onCancel={() => {
           setIsFacilitySyncing(false);
           setFacilitySyncError(null);
+          setCurrentView('dashboard');
           ActionFeedback.stopLoading();
         }}
         message="Fetching authoritative booking records from server database..."

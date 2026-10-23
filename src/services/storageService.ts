@@ -1967,30 +1967,88 @@ export const StorageService = {
     }
   },
 
-  applyRemoteCancellation(id: string, reason?: string) {
-    if (!id) return;
-    const cleanId = String(id).toLowerCase().trim();
-    recordRecentCancellation(cleanId, reason, false);
+  applyRemoteCancellation(id: string, reason?: string, remoteBooking?: Booking) {
+    if (!id && !remoteBooking?.id) return;
+    const cleanId = String(id || remoteBooking?.id || '').toLowerCase().trim();
+    if (cleanId) {
+      recordRecentCancellation(cleanId, reason, false);
+    }
 
     this.init();
     let changed = false;
+    let found = false;
+
     inMemoryBookings = inMemoryBookings.map((b) => {
-      if (String(b.id || '').toLowerCase().trim() === cleanId && b.status !== 'CANCELLED') {
-        changed = true;
-        return {
-          ...b,
-          status: 'CANCELLED',
-          cancellationReason: reason || 'Cancelled remotely',
-          cancelledAt: new Date().toISOString(),
-        };
+      if (String(b.id || '').toLowerCase().trim() === cleanId) {
+        found = true;
+        if (b.status !== 'CANCELLED') {
+          changed = true;
+          return {
+            ...b,
+            status: 'CANCELLED',
+            cancellationReason: reason || b.cancellationReason || 'Cancelled remotely',
+            cancelledAt: new Date().toISOString(),
+          };
+        }
       }
       return b;
     });
 
-    if (changed) {
+    // If not found by exact ID but remoteBooking details are present, match by slot coordinates
+    if (!found && remoteBooking) {
+      const targetFacId = resolveFacilityId(remoteBooking.facilityId || remoteBooking.sheetTabName);
+      const targetDate = normalizeDateString(remoteBooking.date);
+      const targetStage = String(remoteBooking.stage || '').trim();
+      const targetStart = String(remoteBooking.startTime || '').trim();
+      const targetEnd = String(remoteBooking.endTime || '').trim();
+
+      inMemoryBookings = inMemoryBookings.map((b) => {
+        if (
+          b.status !== 'CANCELLED' &&
+          resolveFacilityId(b.facilityId || b.sheetTabName) === targetFacId &&
+          normalizeDateString(b.date) === targetDate &&
+          String(b.stage || '').trim() === targetStage &&
+          String(b.startTime || '').trim() === targetStart &&
+          String(b.endTime || '').trim() === targetEnd
+        ) {
+          found = true;
+          changed = true;
+          return {
+            ...b,
+            id: cleanId || b.id,
+            status: 'CANCELLED',
+            cancellationReason: reason || 'Cancelled remotely',
+            cancelledAt: new Date().toISOString(),
+          };
+        }
+        return b;
+      });
+
+      if (!found) {
+        // Record the cancelled booking so any future query or sync respects the cancellation
+        const cancelledRecord: Booking = {
+          ...remoteBooking,
+          id: cleanId || remoteBooking.id,
+          status: 'CANCELLED',
+          cancellationReason: reason || 'Cancelled remotely',
+          cancelledAt: new Date().toISOString(),
+        };
+        inMemoryBookings.unshift(cancelledRecord);
+        changed = true;
+      }
+    }
+
+    if (changed || cleanId) {
       safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
       notifyBookingsChanged();
       this.reconcileIsolationRoomsFromBookings();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('tamimi_bookings_updated', {
+            detail: { bookingId: cleanId, facilityId: remoteBooking?.facilityId, status: 'CANCELLED' },
+          })
+        );
+      }
     }
   },
 
@@ -2027,13 +2085,16 @@ export const StorageService = {
       safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
       notifyBookingsChanged();
       this.reconcileIsolationRoomsFromBookings();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
+      }
     }
   },
 
   /**
    * Universal Live Cloud Firestore Synchronizer:
-   * Instantly reconciles Cloud Firestore snapshot with local state across all computers.
-   * Ensures sub-100ms real-time booking updates between multiple machines.
+   * Reconciles Cloud Firestore snapshot with local state.
+   * Monotonic ordering: Prevents stale Firestore snapshots from dropping or reverting fresh SSE updates!
    */
   applyRemoteBookingsSnapshot(cloudBookings: Booking[]): Booking[] {
     this.init();
@@ -2051,48 +2112,38 @@ export const StorageService = {
       const key = clean.id.toLowerCase().trim();
       if (deletedIds.has(key)) return;
 
-      if (recentCancelled.has(key)) {
+      // Monotonic Rule 1: Cancellations are monotonic tombstones. If marked cancelled in memory or cache, NEVER revert to CONFIRMED!
+      if (recentCancelled.has(key) || isRecentlyCancelled(key)) {
         clean.status = 'CANCELLED';
         clean.cancellationReason = clean.cancellationReason || 'Cancelled';
       }
       cloudMap.set(key, clean);
     });
 
-    // Check existing inMemoryBookings:
-    // Only preserve local bookings that are genuinely queued in this device's OfflineQueue
-    // or currently in-flight from this specific client (<15 seconds).
-    // Stale bookings missing from Cloud Firestore were deleted on other devices and MUST NOT be resurrected!
-    const now = Date.now();
-    const queuedBookingIds = new Set<string>();
-    try {
-      const q = OfflineQueueService.getQueue();
-      q.forEach((item) => {
-        if (item.action === 'saveBooking' && item.payload?.id) {
-          queuedBookingIds.add(String(item.payload.id).toLowerCase().trim());
-        }
-      });
-    } catch (_) {}
-
+    // Monotonic Rule 2: NEVER drop existing bookings from inMemoryBookings unless they are in deletedIds!
+    // Stale Firestore snapshots must not delete fresh bookings received via Server SSE or direct endpoints!
     inMemoryBookings.forEach((localB) => {
       if (!localB || !localB.id) return;
       const key = localB.id.toLowerCase().trim();
       if (deletedIds.has(key) || isIdDeleted(key)) return;
 
       if (!cloudMap.has(key)) {
-        // Only retain local booking if it's genuinely queued in OfflineQueue or in-flight on this client (<60s)
-        const isQueued = queuedBookingIds.has(key);
-        const isInFlight = localInFlightBookingIds.has(key);
-        const createdMs = localB.createdAt ? new Date(localB.createdAt).getTime() : 0;
-        const isRecent = createdMs > 0 && (now - createdMs < 60000); // created within last 60 seconds
-
-        if (isQueued || isInFlight || isRecent) {
-          cloudMap.set(key, localB);
-        }
+        // Retain local/SSE booking - Firestore snapshot is just lagging behind
+        cloudMap.set(key, localB);
       } else {
-        if (localB.status === 'CANCELLED' && cloudMap.get(key)?.status !== 'CANCELLED') {
-          const cloudItem = cloudMap.get(key)!;
+        const cloudItem = cloudMap.get(key)!;
+        // If local state was already CANCELLED, preserve CANCELLED!
+        if (localB.status === 'CANCELLED' && cloudItem.status !== 'CANCELLED') {
           cloudItem.status = 'CANCELLED';
-          cloudItem.cancellationReason = localB.cancellationReason || 'Cancelled';
+          cloudItem.cancellationReason = localB.cancellationReason || cloudItem.cancellationReason || 'Cancelled';
+          cloudItem.cancelledAt = localB.cancelledAt || cloudItem.cancelledAt || new Date().toISOString();
+        }
+
+        // Monotonic timestamp ordering: If local booking was updated more recently than cloud item, preserve newer fields
+        const localTime = localB.updatedAt ? new Date(localB.updatedAt).getTime() : (localB.createdAt ? new Date(localB.createdAt).getTime() : 0);
+        const cloudTime = cloudItem.updatedAt ? new Date(cloudItem.updatedAt).getTime() : (cloudItem.createdAt ? new Date(cloudItem.createdAt).getTime() : 0);
+        if (localTime > cloudTime) {
+          cloudMap.set(key, { ...cloudItem, ...localB });
         }
       }
     });
@@ -4524,12 +4575,7 @@ export const StorageService = {
     // Broadcast cancellation immediately to multi-computer real-time hub
     try {
       import('./hubService').then(({ HubService }) => {
-        HubService.pushMutation({
-          mutationType: 'CANCEL',
-          entity: 'bookings',
-          id: updatedBooking.id,
-          reason: effectiveReason,
-        }).catch(() => {});
+        HubService.cancelBookingAuthoritative(updatedBooking.id, effectiveReason, updatedBooking).catch(() => {});
       }).catch(() => {});
     } catch (e) {}
 
