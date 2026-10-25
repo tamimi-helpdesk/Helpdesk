@@ -857,7 +857,7 @@ export const GasService = {
   async syncFacilityBookings(
     facilityTabOrName?: string,
     options?: { forceFresh?: boolean }
-  ): Promise<{ success: boolean; count?: number }> {
+  ): Promise<{ success: boolean; count?: number; error?: string }> {
     const config = this.getConfig();
     if (!config.webAppUrl) return { success: false };
     const { url: cleanUrl } = this.sanitizeUrl(config.webAppUrl);

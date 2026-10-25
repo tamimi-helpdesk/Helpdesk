@@ -152,6 +152,15 @@ export class HubService {
         this.lastKnownVersion = Math.max(this.lastKnownVersion, data.version);
       }
 
+      // If server returned 0 records, verify against Cloud Firestore to ensure a fresh server instance does not wipe valid bookings
+      if (Array.isArray(data.bookings) && data.bookings.length === 0) {
+        const cloudResult = await this.fallbackFetchFromCloud(facilityId);
+        if (cloudResult.success && cloudResult.bookingsCount > 0) {
+          console.log(`[HubService] Authoritative recovery: Loaded ${cloudResult.bookingsCount} records from Cloud Firestore for "${facilityId}"`);
+          return cloudResult;
+        }
+      }
+
       // Ingest tombstones & cancellations
       if (data.deletedIds && typeof data.deletedIds === 'object') {
         StorageService.applyTombstones(data.deletedIds);

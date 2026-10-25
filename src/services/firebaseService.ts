@@ -1228,23 +1228,54 @@ class FirebaseService {
   }
 
   /**
-   * Direct fetch from Cloud Firestore for a specific facility
+   * Direct authoritative fetch from Cloud Firestore for a specific facility.
+   * Resolves canonical facility IDs, reconciles cancellation tombstones,
+   * and returns verified bookings without relying on local cache.
    */
   public async fetchFacilityBookingsFromCloud(facilityId: string): Promise<{ success: boolean; bookings: Booking[]; error?: string }> {
     if (!this.db) this.init();
     if (!this.db) return { success: false, bookings: [], error: 'Firestore database not initialized' };
 
     try {
-      const colRef = collection(this.db, 'bookings');
-      const snap = await getDocs(colRef);
-      const bookings: Booking[] = [];
       const cleanFac = facilityId.toLowerCase().trim();
+      const resolvedTargetId = StorageService.resolveFacilityId(facilityId) || cleanFac;
 
+      // 1. Fetch bookings and tombstones in parallel from Cloud Firestore
+      const colRef = collection(this.db, 'bookings');
+      const tombstonesRef = collection(this.db, 'tombstones');
+
+      const [snap, tombSnap] = await Promise.all([
+        getDocs(colRef),
+        getDocs(tombstonesRef).catch(() => null),
+      ]);
+
+      const tombMap = new Map<string, { type: string; reason?: string }>();
+      if (tombSnap) {
+        tombSnap.forEach((d) => {
+          const tData = d.data();
+          const tId = String(d.id || tData?.id || '').toLowerCase().trim();
+          if (tId && tData) {
+            tombMap.set(tId, { type: tData.type || 'CANCELLED', reason: tData.reason || 'Cancelled' });
+          }
+        });
+      }
+
+      const bookings: Booking[] = [];
       snap.forEach((d) => {
         const b = d.data() as Booking;
         if (b && b.id) {
+          const bId = String(b.id).toLowerCase().trim();
           const bFac = String(b.facilityId || b.sheetTabName || b.facilityName || '').toLowerCase().trim();
-          if (!cleanFac || bFac === cleanFac || bFac.includes(cleanFac) || cleanFac.includes(bFac)) {
+          const bResolved = StorageService.resolveFacilityId(b.facilityId || b.sheetTabName || b.facilityName) || bFac;
+
+          const isMatch = !cleanFac || bResolved === resolvedTargetId || bFac === cleanFac || bFac.includes(cleanFac) || cleanFac.includes(bFac);
+          if (isMatch) {
+            // Apply tombstone if recorded in Firestore
+            if (tombMap.has(bId)) {
+              const tomb = tombMap.get(bId)!;
+              b.status = 'CANCELLED';
+              b.cancellationReason = tomb.reason || b.cancellationReason || 'Cancelled';
+            }
             bookings.push(b);
           }
         }
@@ -1253,6 +1284,61 @@ class FirebaseService {
       return { success: true, bookings };
     } catch (err: any) {
       return { success: false, bookings: [], error: err?.message || 'Firestore query failed' };
+    }
+  }
+
+  /**
+   * Scoped Real-time subscription to facility bookings:
+   * Attaches live Firestore listener on bookings and tombstones for this specific facility,
+   * updates StorageService and invokes onUpdate callback with fresh records.
+   * Returns an unsubscribe cleanup function.
+   */
+  public subscribeToFacilityBookings(
+    facilityId: string,
+    onUpdate: (bookings: Booking[]) => void
+  ): () => void {
+    if (!this.db) this.init();
+    if (!this.db) return () => {};
+
+    const cleanFac = facilityId.toLowerCase().trim();
+    const resolvedTargetId = StorageService.resolveFacilityId(facilityId) || cleanFac;
+
+    try {
+      const bookingsCol = collection(this.db, 'bookings');
+      const unsub = onSnapshot(
+        bookingsCol,
+        (snapshot) => {
+          if (!snapshot) return;
+
+          const allBookings: Booking[] = [];
+          const facilityBookings: Booking[] = [];
+
+          snapshot.forEach((d) => {
+            const b = d.data() as Booking;
+            if (b && b.id) {
+              allBookings.push(b);
+              const bFac = String(b.facilityId || b.sheetTabName || b.facilityName || '').toLowerCase().trim();
+              const bResolved = StorageService.resolveFacilityId(b.facilityId || b.sheetTabName || b.facilityName) || bFac;
+
+              if (bResolved === resolvedTargetId || bFac === cleanFac || bFac.includes(cleanFac) || cleanFac.includes(bFac)) {
+                facilityBookings.push(b);
+              }
+            }
+          });
+
+          // Reconcile into StorageService
+          StorageService.applyRemoteBookingsSnapshot(allBookings);
+          onUpdate(facilityBookings);
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, `bookings (facility: ${facilityId})`);
+        }
+      );
+
+      return unsub;
+    } catch (err) {
+      console.warn('[FirebaseService] Facility real-time subscription error:', err);
+      return () => {};
     }
   }
 }

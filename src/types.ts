@@ -89,6 +89,8 @@ export interface Booking {
   status: BookingStatus;
   createdAt: string;
   updatedAt?: string;
+  _updatedAt?: string;
+  _correlationId?: string;
   cancellationReason?: string;
   cancelledAt?: string;
   cancelledBy?: string;

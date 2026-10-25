@@ -209,9 +209,20 @@ export default function App() {
   const [syncingFacilityId, setSyncingFacilityId] = useState<string>('');
   const [isFacilitySyncComplete, setIsFacilitySyncComplete] = useState<boolean>(false);
   const [facilitySyncError, setFacilitySyncError] = useState<string | null>(null);
+  const [facilityBookings, setFacilityBookings] = useState<Booking[]>([]);
+  const activeFacilityUnsubRef = useRef<(() => void) | null>(null);
 
-  // When facility is clicked from any device/view, show loading screen, fetch authoritative server/database records, verify, then open
-  // When facility is clicked from any device/view, show loading screen, fetch authoritative server/database records & specific Google Sheet, verify date/time, then open
+  // Cleanup real-time facility listener on component unmount
+  useEffect(() => {
+    return () => {
+      if (activeFacilityUnsubRef.current) {
+        activeFacilityUnsubRef.current();
+        activeFacilityUnsubRef.current = null;
+      }
+    };
+  }, []);
+
+  // When facility is clicked from any device/view, show loading screen, fetch authoritative records, verify, then open
   const handleSelectFacility = useCallback(async (facilityId: string) => {
     // 0. Security Clearance Check: verify user has permission to access this facility
     if (!AuthService.isSuperAdmin() && !AuthService.canAccessFacility(facilityId)) {
@@ -229,40 +240,25 @@ export default function App() {
     setSyncingFacilityId(facilityId);
     setSyncingFacilityName(targetFac.name);
     setIsFacilitySyncing(true);
-    ActionFeedback.startLoading(targetFac.name, `Fetching latest records for "${targetFac.name}" from Google Sheets & Database...`, facilityId);
+    ActionFeedback.startLoading(targetFac.name, `Fetching authoritative records for "${targetFac.name}" from database...`, facilityId);
 
     // 2. Fetch authoritative records for ONLY this facility:
-    // Strictly guarantees facility is NOT opened with stale local cache or partial data
+    // Strictly guarantees facility is NOT opened with stale local cache or unverified partial data
     try {
-      const gasCfg = GasService.getConfig();
-      const hasGas = Boolean(gasCfg.webAppUrl && gasCfg.webAppUrl.trim().startsWith('http'));
+      const authRes = await HubService.fetchFacilityAuthoritativeBookings(facilityId);
 
-      // Run parallel fetches for this specific facility: Hub/Server authoritative bookings + Facility-specific Google Sheet
-      const hubPromise = HubService.fetchFacilityAuthoritativeBookings(facilityId);
-      const gasPromise = hasGas
-        ? GasService.syncFacility(facilityId, { forceFresh: true })
-        : Promise.resolve({ success: true, count: 0 });
-
-      const [hubRes, gasRes] = await Promise.allSettled([hubPromise, gasPromise]);
-
-      const hubSuccess = hubRes.status === 'fulfilled' && hubRes.value.success;
-      const gasSuccess = gasRes.status === 'fulfilled' && gasRes.value.success;
-
-      // Fail condition: if neither source could provide authoritative records
-      if (!hubSuccess && hasGas && !gasSuccess) {
-        const hubErr = hubRes.status === 'fulfilled' ? hubRes.value.error : (hubRes.reason?.message || 'Server database unreachable');
-        const gasErr = gasRes.status === 'fulfilled' ? gasRes.value.error : (gasRes.reason?.message || 'Google Sheet unreachable');
-        setFacilitySyncError(`Failed to fetch records for ${targetFac.name}. Server: ${hubErr}. Google Sheet: ${gasErr}. Facility kept closed.`);
+      if (!authRes.success) {
+        const errMsg = authRes.error || `Unable to load latest booking records for ${targetFac.name} from authoritative database.`;
+        setFacilitySyncError(errMsg);
+        setIsFacilitySyncComplete(false);
         ActionFeedback.stopLoading();
-        return;
-      } else if (!hubSuccess && !hasGas) {
-        const hubErr = hubRes.status === 'fulfilled' ? hubRes.value.error : (hubRes.reason?.message || 'Server database unreachable');
-        setFacilitySyncError(hubErr || `Unable to load latest booking records for ${targetFac.name} from server.`);
-        ActionFeedback.stopLoading();
-        return;
+        return; // Keep facility strictly closed on failure
       }
 
-      // 3. Verify latest booking date and time for this facility
+      // 3. Verify latest booking date and time for this facility and update reactive state
+      const verifiedBookings = StorageService.getBookingsForFacility(facilityId);
+      setFacilityBookings(verifiedBookings);
+
       const { latestBooking, latestDate, latestTime, count } = StorageService.getLatestBookingForFacility(facilityId);
       if (latestBooking) {
         console.log(`[Facility Flow] Verified ${count} records for "${targetFac.name}". Most recent booking Date="${latestDate}" Time="${latestTime || 'N/A'}" ID="${latestBooking.id}"`);
@@ -281,15 +277,34 @@ export default function App() {
       setRefreshTrigger((prev) => prev + 1);
       window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
 
-      // 5. Keep real-time sync actively connected so new bookings from other computers appear live without refresh
+      // 5. Attach real-time Firestore listener for this facility (Requirement 7 & 9)
+      if (activeFacilityUnsubRef.current) {
+        activeFacilityUnsubRef.current();
+        activeFacilityUnsubRef.current = null;
+      }
+      activeFacilityUnsubRef.current = CloudDatabaseService.subscribeToFacilityBookings(facilityId, (updatedFacilityBookings) => {
+        setFacilityBookings(updatedFacilityBookings);
+        setRefreshTrigger((prev) => prev + 1);
+      });
+
+      // Keep real-time sync actively connected
       HubService.ensureConnected();
       CloudDatabaseService.initRealtimeSync();
+
+      // 6. Non-blocking Google Sheets sync in background outside authoritative read path (Requirement 10)
+      try {
+        const gasCfg = GasService.getConfig();
+        if (gasCfg.webAppUrl && gasCfg.webAppUrl.trim().startsWith('http')) {
+          GasService.syncFacility(facilityId, { forceFresh: true }).catch(() => {});
+        }
+      } catch (_) {}
 
       // Smoothly hide loading overlay
       setIsFacilitySyncing(false);
       ActionFeedback.stopLoading();
     } catch (err: any) {
       setFacilitySyncError(err?.message || `Failed to fetch latest bookings for ${targetFac.name}. Stale cache blocked.`);
+      setIsFacilitySyncComplete(false);
       ActionFeedback.stopLoading();
     }
   }, [facilities]);
@@ -585,11 +600,11 @@ export default function App() {
     }).catch(() => {});
   }, [activeFacility, selectedStage]);
 
-  // Generate Slots for current view
+  // Generate Slots for current view (reactively updates on realtime booking mutations)
   const currentSlots = useMemo(() => {
     if (refreshTrigger < 0) return [];
     return StorageService.getFacilitySlots(activeFacility, selectedDate, selectedStage);
-  }, [activeFacility, selectedDate, selectedStage, refreshTrigger]);
+  }, [activeFacility, selectedDate, selectedStage, refreshTrigger, facilityBookings]);
 
   // Calculate available slot counts and booked counts for all 8 facilities for the selected date
   const { availableSlotCounts, bookedSlotCounts } = useMemo(() => {
@@ -604,7 +619,7 @@ export default function App() {
     });
 
     return { availableSlotCounts: avail, bookedSlotCounts: booked };
-  }, [facilities, selectedDate, refreshTrigger]);
+  }, [facilities, selectedDate, refreshTrigger, facilityBookings]);
 
   // Handle slot toggle
   const handleToggleSlot = useCallback((slot: TimeSlot) => {
@@ -1258,6 +1273,7 @@ export default function App() {
         onCancel={() => {
           setIsFacilitySyncing(false);
           setFacilitySyncError(null);
+          setIsFacilitySyncComplete(false);
           setCurrentView('dashboard');
           ActionFeedback.stopLoading();
         }}

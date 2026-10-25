@@ -130,6 +130,66 @@ export let hubState: ServerHubState = {
 // to prevent JSON serialization blocking on high-frequency booking mutations
 export let serverIsolationHistory: any[] = [];
 
+// ---------------------------------------------------------------------------
+// Cloud Firestore Integration for Distributed Multi-Server Authoritative Sync
+// ---------------------------------------------------------------------------
+export let serverFirestoreDb: any = null;
+let serverDocFn: any = null;
+let serverSetDocFn: any = null;
+
+if (process.env.VITEST !== 'true') {
+  (async () => {
+    try {
+      const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+      if (fs.existsSync(configPath)) {
+        const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const { initializeApp, getApps } = await import('firebase/app');
+        const { initializeFirestore, doc, setDoc, collection, getDocs, onSnapshot } = await import('firebase/firestore');
+
+        serverDocFn = doc;
+        serverSetDocFn = setDoc;
+
+        const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
+        serverFirestoreDb = initializeFirestore(app, {}, firebaseConfig.firestoreDatabaseId);
+        console.log('[Server] Cloud Firestore initialized with DB:', firebaseConfig.firestoreDatabaseId);
+
+        // Hydrate bookings from Cloud Firestore on boot
+        const snap = await getDocs(collection(serverFirestoreDb, 'bookings'));
+        if (!snap.empty) {
+          const docs: any[] = [];
+          snap.forEach((d) => {
+            const data = d.data();
+            if (data && data.id) docs.push(data);
+          });
+          hubState.bookings = docs;
+          hubState.version += 1;
+          hubState.lastUpdated = new Date().toISOString();
+          console.log(`[Server] Synced ${docs.length} authoritative bookings from Cloud Firestore.`);
+        }
+
+        // Live multi-instance Firestore onSnapshot listener
+        onSnapshot(
+          collection(serverFirestoreDb, 'bookings'),
+          (snap) => {
+            if (!snap || snap.empty) return;
+            const docs: any[] = [];
+            snap.forEach((d) => {
+              const data = d.data();
+              if (data && data.id) docs.push(data);
+            });
+            hubState.bookings = docs;
+            hubState.version += 1;
+            hubState.lastUpdated = new Date().toISOString();
+          },
+          (err) => console.warn('[Server] Firestore onSnapshot warning:', err?.message)
+        );
+      }
+    } catch (err: any) {
+      console.warn('[Server] Firestore setup notice:', err?.message || err);
+    }
+  })();
+}
+
 // Load historical isolation archive if available
 try {
   if (fs.existsSync(DB_HISTORY_FILE_PATH)) {
@@ -581,6 +641,13 @@ app.post('/api/bookings', (req: Request, res: Response) => {
     invalidateGasCache();
     await persistHubState();
 
+    // Commit to Cloud Firestore across server instances
+    if (serverFirestoreDb && serverSetDocFn && serverDocFn) {
+      serverSetDocFn(serverDocFn(serverFirestoreDb, 'bookings', String(cleanItem.id)), cleanItem, { merge: true }).catch((err: any) => {
+        console.warn('[Server] Firestore booking write notice:', err?.message);
+      });
+    }
+
     // Broadcast only AFTER successful commit to server database
     broadcastHubEvent({
       type: 'UPSERT',
@@ -613,9 +680,10 @@ app.delete('/api/bookings/:id', (req: Request, res: Response) => {
     const cleanId = String(id).toLowerCase().trim();
     const reason = req.body?.reason || req.query?.reason || 'Cancelled via Portal';
     const now = Date.now();
+    const nowIso = new Date().toISOString();
 
     hubState.version += 1;
-    hubState.lastUpdated = new Date().toISOString();
+    hubState.lastUpdated = nowIso;
     hubState.cancelledIds[cleanId] = now;
 
     let targetBooking: any = null;
@@ -625,7 +693,7 @@ app.delete('/api/bookings/:id', (req: Request, res: Response) => {
           ...b,
           status: 'CANCELLED',
           cancellationReason: reason,
-          cancelledAt: new Date().toISOString(),
+          cancelledAt: nowIso,
           cancelledBy: req.body?.cancelledBy || 'Helpdesk',
         };
         return targetBooking;
@@ -635,6 +703,14 @@ app.delete('/api/bookings/:id', (req: Request, res: Response) => {
 
     invalidateGasCache();
     await persistHubState();
+
+    // Commit cancellation and tombstone to Cloud Firestore across server instances
+    if (serverFirestoreDb && serverSetDocFn && serverDocFn) {
+      const tombRef = serverDocFn(serverFirestoreDb, 'tombstones', String(cleanId));
+      serverSetDocFn(tombRef, { id: cleanId, type: 'CANCELLED', reason, timestamp: nowIso }, { merge: true }).catch(() => {});
+      const bRef = serverDocFn(serverFirestoreDb, 'bookings', String(cleanId));
+      serverSetDocFn(bRef, { id: cleanId, status: 'CANCELLED', cancellationReason: reason, cancelledAt: nowIso }, { merge: true }).catch(() => {});
+    }
 
     broadcastHubEvent({
       type: 'CANCEL',

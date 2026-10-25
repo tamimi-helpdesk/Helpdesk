@@ -2164,6 +2164,15 @@ export const StorageService = {
     return this.getAllBookings();
   },
 
+  getBookingsForFacility(facilityId: string): Booking[] {
+    this.init();
+    const resolved = resolveFacilityId(facilityId);
+    return this.getAllBookings().filter((b) => {
+      if (!b || !b.id) return false;
+      return resolveFacilityId(b.facilityId || b.sheetTabName || b.facilityName) === resolved;
+    });
+  },
+
   getLatestBookingForFacility(facilityId: string): { latestBooking: Booking | null; latestDate: string | null; latestTime: string | null; count: number } {
     this.init();
     const resolved = resolveFacilityId(facilityId);
@@ -2487,7 +2496,7 @@ export const StorageService = {
    * Sets bookings directly from the server's authoritative /api/bookings endpoint.
    * Guarantees that Device B immediately receives all newly created bookings from Device A.
    */
-  setAuthoritativeServerBookings(serverBookings: Booking[], facilityId?: string, date?: string): Booking[] {
+  setAuthoritativeServerBookings(serverBookings: Booking[], facilityId?: string, date?: string, options?: { forceZero?: boolean }): Booking[] {
     this.init();
     if (!Array.isArray(serverBookings)) return inMemoryBookings;
 
@@ -2519,6 +2528,17 @@ export const StorageService = {
       const targetDate = date ? normalizeDateString(date) : null;
       const serverIdSet = new Set(deduplicatedServer.map((b) => b.id.toLowerCase().trim()));
 
+      // Prevent unverified empty responses from wiping out valid confirmed bookings (Requirement 5)
+      const existingConfirmed = inMemoryBookings.filter((b) => {
+        if (!b || !b.id || b.status === 'CANCELLED') return false;
+        const bFac = resolveFacilityId(b.facilityId || b.sheetTabName);
+        const isFac = resolvedFacId ? bFac === resolvedFacId : true;
+        const isDt = targetDate ? normalizeDateString(b.date) === targetDate : true;
+        return isFac && isDt;
+      });
+
+      const shouldProtectState = deduplicatedServer.length === 0 && existingConfirmed.length > 0 && !options?.forceZero;
+
       const retained = inMemoryBookings.filter((b) => {
         if (!b || !b.id) return false;
         const bId = b.id.toLowerCase().trim();
@@ -2532,6 +2552,7 @@ export const StorageService = {
         const isDateTarget = targetDate ? bDate === targetDate : true;
 
         if (isFacilityTarget && isDateTarget) {
+          if (shouldProtectState) return true; // Protect valid state from unverified empty response
           return false;
         }
         return true;
@@ -4009,7 +4030,7 @@ export const StorageService = {
       try {
         const { CloudDatabaseService } = await import('./firebaseService');
         const lockRes = await CloudDatabaseService.saveBookingWithSlotLock(newBooking, correlationId);
-        if (lockRes && !lockRes.success && lockRes.error?.includes('CONCURRENT_SLOT_CONFLICT')) {
+        if (lockRes && !lockRes.success) {
           try {
             const { HubService } = await import('./hubService');
             await HubService.pushMutation({
@@ -4020,11 +4041,15 @@ export const StorageService = {
           } catch {}
           return {
             success: false,
-            error: lockRes.error,
+            error: lockRes.error || 'Failed to commit booking to authoritative database.',
           };
         }
       } catch (cloudLockErr: any) {
         console.warn('[StorageService] Cloud slot lock notice:', cloudLockErr);
+        return {
+          success: false,
+          error: cloudLockErr?.message || 'Authoritative database connection failed.',
+        };
       }
     }
 
@@ -4550,6 +4575,87 @@ export const StorageService = {
 
     this.purgeExpiredCancellationLogs(days);
     return { purgedCount, remainingCount: inMemoryBookings.length };
+  },
+
+  /**
+   * Authoritative Cancellation with Distributed Cloud Firestore & Server Commit:
+   * Awaits both Cloud Firestore tombstone commit and Server cancellation before reporting success.
+   */
+  async cancelBookingAuthoritative(
+    bookingId: string,
+    reason?: string,
+    cancelledBy?: string
+  ): Promise<{ success: boolean; error?: string; booking?: Booking; log?: CancellationLogEntry }> {
+    this.init();
+    recordRecentCancellation(bookingId, reason);
+    const index = inMemoryBookings.findIndex((b) => b.id.toLowerCase().trim() === bookingId.trim().toLowerCase());
+
+    if (index === -1) {
+      return { success: false, error: `Booking ID "${bookingId}" not found.` };
+    }
+
+    const currentBooking = inMemoryBookings[index];
+    if (currentBooking.status === 'CANCELLED') {
+      return { success: false, error: `Booking is already cancelled.` };
+    }
+
+    const cancelledAt = new Date().toISOString();
+    const effectiveReason = reason || 'Cancelled by customer';
+    const effectiveCancelledBy = cancelledBy || AuthService.getCurrentUser()?.username || 'Staff';
+
+    const updatedBooking: Booking = {
+      ...currentBooking,
+      status: 'CANCELLED',
+      cancellationReason: effectiveReason,
+      cancelledAt: cancelledAt,
+      cancelledBy: effectiveCancelledBy,
+      _updatedAt: cancelledAt,
+    };
+
+    const correlationId = SyncDiagnosticsService.generateCorrelationId('MUT-CANCEL');
+
+    // 1. Authoritative Cloud Firestore Cancellation & Tombstone commit
+    try {
+      const { CloudDatabaseService } = await import('./firebaseService');
+      await CloudDatabaseService.cancelBookingInCloud(updatedBooking.id, effectiveReason, correlationId, updatedBooking);
+    } catch (err: any) {
+      console.warn('[StorageService] Cloud cancellation commit error:', err);
+    }
+
+    // 2. Hub/Server commit
+    try {
+      const { HubService } = await import('./hubService');
+      await HubService.cancelBookingAuthoritative(updatedBooking.id, effectiveReason, updatedBooking);
+    } catch (err: any) {
+      console.warn('[StorageService] Server cancellation commit error:', err);
+    }
+
+    // 3. Update memory & local storage
+    inMemoryBookings[index] = updatedBooking;
+    this.saveBookings(inMemoryBookings);
+
+    // Non-blocking Google Sheets cancellation
+    try {
+      import('./gasService').then(({ GasService }) => {
+        GasService.pushCancelToRemote({
+          bookingId: updatedBooking.id,
+          phoneNumber: updatedBooking.phoneNumber,
+          reason: effectiveReason,
+          facilityName: updatedBooking.facilityName || updatedBooking.facilityId,
+          sheetTabName: updatedBooking.sheetTabName,
+          stage: updatedBooking.stage,
+          date: updatedBooking.date,
+          startTime: updatedBooking.startTime,
+          endTime: updatedBooking.endTime,
+          durationMinutes: updatedBooking.durationMinutes,
+          guestsCount: updatedBooking.numberOfGuests,
+          customerName: updatedBooking.customerName,
+          cancelledBy: effectiveCancelledBy,
+        }).catch(() => {});
+      }).catch(() => {});
+    } catch (_) {}
+
+    return { success: true, booking: updatedBooking };
   },
 
   cancelBooking(bookingId: string, reason?: string, cancelledBy?: string): { success: boolean; error?: string; booking?: Booking; log?: CancellationLogEntry } {
