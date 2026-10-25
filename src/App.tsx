@@ -565,8 +565,6 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('tamimi_request_flush_queue', handleRequestFlush);
       window.removeEventListener('tamimi_navigate_facility', handleNavigateFacility);
-      if (initialSyncTimer1) clearTimeout(initialSyncTimer1);
-      if (initialSyncTimer2) clearTimeout(initialSyncTimer2);
       clearInterval(queueInterval);
       clearInterval(reconciliationInterval);
     };
