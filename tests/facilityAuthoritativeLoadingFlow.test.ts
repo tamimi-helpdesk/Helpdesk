@@ -108,4 +108,44 @@ describe('Facility Authoritative Loading Flow & Guard', () => {
     expect(result.success).toBe(false);
     expect(result.error).toBe('Invalid facility identifier');
   });
+
+  it('correctly extracts and verifies latest booking date and time for a facility', () => {
+    const b1: Booking = {
+      id: 'BK-TEST-1',
+      name: 'User 1',
+      phone: '0501111111',
+      facilityId: 'cinema',
+      facilityName: 'Cinema',
+      date: '2026-10-20',
+      startTime: '10:00',
+      endTime: '12:00',
+      slotIds: ['s1'],
+      status: 'CONFIRMED',
+      createdAt: '2026-10-20T08:00:00.000Z',
+    };
+
+    const b2: Booking = {
+      id: 'BK-TEST-2',
+      name: 'User 2',
+      phone: '0502222222',
+      facilityId: 'cinema',
+      facilityName: 'Cinema',
+      date: '2026-10-24',
+      startTime: '18:00',
+      endTime: '20:00',
+      slotIds: ['s2'],
+      status: 'CONFIRMED',
+      createdAt: '2026-10-23T14:30:00.000Z',
+    };
+
+    StorageService.setAuthoritativeServerBookings([b1, b2], 'cinema');
+
+    const check = StorageService.getLatestBookingForFacility('cinema');
+    expect(check.count).toBe(2);
+    expect(check.latestBooking).toBeDefined();
+    expect(check.latestBooking?.id).toBe('BK-TEST-2');
+    expect(check.latestDate).toBe('2026-10-24');
+    expect(check.latestTime).toBe('18:00');
+  });
 });
+

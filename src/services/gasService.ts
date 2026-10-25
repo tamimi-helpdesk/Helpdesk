@@ -887,8 +887,8 @@ export const GasService = {
             if (contentType.includes('application/json')) {
               const proxyData = await proxyRes.json();
               const list = proxyData?.data?.bookings || proxyData?.bookings;
-              if (Array.isArray(list) && list.length > 0) {
-                const merged = StorageService.mergeRemoteBookings(list);
+              if (Array.isArray(list)) {
+                const merged = list.length > 0 ? StorageService.mergeRemoteBookings(list) : [];
                 if (typeof window !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
                 }
@@ -905,7 +905,7 @@ export const GasService = {
         }
       }
 
-      // 2. Direct browser GET fallback
+      // 2. Direct browser GET fallback for the specific tab
       const url = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}action=getBookings&tab=${encodeURIComponent(targetParam)}&facility=${encodeURIComponent(targetParam)}&t=${Date.now()}`;
       const response = await fetch(url, {
         method: 'GET',
@@ -914,8 +914,8 @@ export const GasService = {
       if (response.ok) {
         const result = await response.json();
         const list = result?.bookings || (result?.data && result.data.bookings);
-        if (Array.isArray(list) && list.length > 0) {
-          const merged = StorageService.mergeRemoteBookings(list);
+        if (Array.isArray(list)) {
+          const merged = list.length > 0 ? StorageService.mergeRemoteBookings(list) : [];
           if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
           }
@@ -923,12 +923,11 @@ export const GasService = {
         }
       }
 
-      // If targeted tab fetch returned no list (older deployed Apps Script), seamlessly sync all
-      const fullRes = await this.syncWithRemote();
-      return { success: fullRes.success, count: fullRes.count };
-    } catch (e) {
-      console.warn('[GasService] syncFacilityBookings notice, falling back to syncWithRemote:', e);
-      return this.syncWithRemote();
+      // If specific tab returned success with 0 records
+      return { success: true, count: 0 };
+    } catch (e: any) {
+      console.warn(`[GasService] syncFacilityBookings notice for "${facilityTabOrName}":`, e);
+      return { success: false, count: 0, error: e?.message || 'Failed to sync facility sheet tab' };
     }
   },
 

@@ -2164,6 +2164,33 @@ export const StorageService = {
     return this.getAllBookings();
   },
 
+  getLatestBookingForFacility(facilityId: string): { latestBooking: Booking | null; latestDate: string | null; latestTime: string | null; count: number } {
+    this.init();
+    const resolved = resolveFacilityId(facilityId);
+    const facilityBookings = this.getAllBookings().filter((b) => {
+      if (!b || !b.id) return false;
+      return resolveFacilityId(b.facilityId || b.sheetTabName || b.facilityName) === resolved;
+    });
+
+    if (facilityBookings.length === 0) {
+      return { latestBooking: null, latestDate: null, latestTime: null, count: 0 };
+    }
+
+    const sorted = [...facilityBookings].sort((a, b) => {
+      const timeA = new Date(a.createdAt || `${a.date}T${a.startTime || '00:00'}`).getTime() || 0;
+      const timeB = new Date(b.createdAt || `${b.date}T${b.startTime || '00:00'}`).getTime() || 0;
+      return timeB - timeA;
+    });
+
+    const latest = sorted[0];
+    return {
+      latestBooking: latest,
+      latestDate: latest.date,
+      latestTime: latest.startTime || null,
+      count: facilityBookings.length,
+    };
+  },
+
   reconcileAuthoritativeBookings(bookings: Booking[]): Booking[] {
     return this.mergeRemoteBookings(bookings);
   },

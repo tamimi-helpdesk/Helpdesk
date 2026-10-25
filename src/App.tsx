@@ -211,6 +211,7 @@ export default function App() {
   const [facilitySyncError, setFacilitySyncError] = useState<string | null>(null);
 
   // When facility is clicked from any device/view, show loading screen, fetch authoritative server/database records, verify, then open
+  // When facility is clicked from any device/view, show loading screen, fetch authoritative server/database records & specific Google Sheet, verify date/time, then open
   const handleSelectFacility = useCallback(async (facilityId: string) => {
     // 0. Security Clearance Check: verify user has permission to access this facility
     if (!AuthService.isSuperAdmin() && !AuthService.canAccessFacility(facilityId)) {
@@ -222,32 +223,57 @@ export default function App() {
     const targetFac = facilities.find((f) => f.id === facilityId) || facilities[0];
     
     // 1. Show existing loading screen immediately and reset any previous error
+    // Facility remains strictly closed and blocked until fetch is complete and successful
     setFacilitySyncError(null);
     setIsFacilitySyncComplete(false);
     setSyncingFacilityId(facilityId);
     setSyncingFacilityName(targetFac.name);
     setIsFacilitySyncing(true);
-    ActionFeedback.startLoading(targetFac.name, `Fetching complete authoritative records for "${targetFac.name}"...`, facilityId);
+    ActionFeedback.startLoading(targetFac.name, `Fetching latest records for "${targetFac.name}" from Google Sheets & Database...`, facilityId);
 
-    // 2. Fetch authoritative records from server/database BEFORE opening facility:
+    // 2. Fetch authoritative records for ONLY this facility:
     // Strictly guarantees facility is NOT opened with stale local cache or partial data
     try {
-      const syncResult = await HubService.fetchFacilityAuthoritativeBookings(facilityId);
+      const gasCfg = GasService.getConfig();
+      const hasGas = Boolean(gasCfg.webAppUrl && gasCfg.webAppUrl.trim().startsWith('http'));
 
-      // Also trigger background Sheets sync if configured
-      GasService.syncFacility(facilityId, { forceFresh: true }).catch(() => {});
+      // Run parallel fetches for this specific facility: Hub/Server authoritative bookings + Facility-specific Google Sheet
+      const hubPromise = HubService.fetchFacilityAuthoritativeBookings(facilityId);
+      const gasPromise = hasGas
+        ? GasService.syncFacility(facilityId, { forceFresh: true })
+        : Promise.resolve({ success: true, count: 0 });
 
-      if (!syncResult.success) {
-        // Data fetch failed: DO NOT OPEN FACILITY! Show error & retry option
-        setFacilitySyncError(syncResult.error || `Unable to load latest booking records for ${targetFac.name} from server/database.`);
+      const [hubRes, gasRes] = await Promise.allSettled([hubPromise, gasPromise]);
+
+      const hubSuccess = hubRes.status === 'fulfilled' && hubRes.value.success;
+      const gasSuccess = gasRes.status === 'fulfilled' && gasRes.value.success;
+
+      // Fail condition: if neither source could provide authoritative records
+      if (!hubSuccess && hasGas && !gasSuccess) {
+        const hubErr = hubRes.status === 'fulfilled' ? hubRes.value.error : (hubRes.reason?.message || 'Server database unreachable');
+        const gasErr = gasRes.status === 'fulfilled' ? gasRes.value.error : (gasRes.reason?.message || 'Google Sheet unreachable');
+        setFacilitySyncError(`Failed to fetch records for ${targetFac.name}. Server: ${hubErr}. Google Sheet: ${gasErr}. Facility kept closed.`);
+        ActionFeedback.stopLoading();
+        return;
+      } else if (!hubSuccess && !hasGas) {
+        const hubErr = hubRes.status === 'fulfilled' ? hubRes.value.error : (hubRes.reason?.message || 'Server database unreachable');
+        setFacilitySyncError(hubErr || `Unable to load latest booking records for ${targetFac.name} from server.`);
         ActionFeedback.stopLoading();
         return;
       }
 
-      // 3. Authoritative data fetch verified and loaded into StorageService!
+      // 3. Verify latest booking date and time for this facility
+      const { latestBooking, latestDate, latestTime, count } = StorageService.getLatestBookingForFacility(facilityId);
+      if (latestBooking) {
+        console.log(`[Facility Flow] Verified ${count} records for "${targetFac.name}". Most recent booking Date="${latestDate}" Time="${latestTime || 'N/A'}" ID="${latestBooking.id}"`);
+      } else {
+        console.log(`[Facility Flow] Verified 0 active bookings for "${targetFac.name}". Slot schedule ready for new bookings.`);
+      }
+
+      // 4. Authoritative data verified and committed to state!
       setIsFacilitySyncComplete(true);
 
-      // Immediately route to booking screen - NO UNNECESSARY FIXED DELAY!
+      // Route to facility screen
       setActiveFacilityId(facilityId);
       setSelectedStage(targetFac.stages[0] || '');
       setSelectedSlotIds([]);
@@ -255,7 +281,7 @@ export default function App() {
       setRefreshTrigger((prev) => prev + 1);
       window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
 
-      // 4. Ensure real-time listener is actively connected so new bookings appear instantaneously
+      // 5. Keep real-time sync actively connected so new bookings from other computers appear live without refresh
       HubService.ensureConnected();
       CloudDatabaseService.initRealtimeSync();
 
@@ -428,51 +454,18 @@ export default function App() {
       };
     }
 
-    // Initial background sync from Google Sheets if configured
-    const cfg = GasService.getConfig();
-    let initialSyncTimer1: any = null;
-    let initialSyncTimer2: any = null;
+    // Strict requirement: Do NOT sync all facilities on login or page load.
+    // Dashboard and login load instantaneously with zero network delays!
+    setIsNetworkSyncing(false);
 
+    // Silent background flush of locally queued mutations if any exist
+    const cfg = GasService.getConfig();
     if (cfg.webAppUrl) {
-      // First immediately flush any pending bookings queued locally
       OfflineQueueService.flushQueue(GasService).then((res) => {
         if (res && res.successful > 0) {
           setRefreshTrigger((prev) => prev + 1);
         }
       }).catch(() => {});
-
-      const runSync = async (isFirst = false) => {
-        if (isFirst) {
-          setIsNetworkSyncing(true);
-          setNetworkSyncMessage('Syncing with Google Sheets & All Computers...');
-        }
-        try {
-          const res = await GasService.syncWithRemote();
-          if (res.success) {
-            setRefreshTrigger((prev) => prev + 1);
-            window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
-            if (isFirst) {
-              setNetworkSyncMessage('Connected: All bookings up to date with Google Sheets');
-              setTimeout(() => setIsNetworkSyncing(false), 2400);
-            }
-          } else if (isFirst) {
-            setIsNetworkSyncing(false);
-          }
-        } catch {
-          if (isFirst) setIsNetworkSyncing(false);
-        }
-      };
-
-      // 1. Immediate sync on page load/refresh (Computer B)
-      runSync(true);
-
-      // 2. High-priority follow-up sync at 5s (catches in-flight booking if Computer A booked right before refresh)
-      initialSyncTimer1 = setTimeout(() => runSync(false), 5000);
-
-      // 3. Second follow-up sync at 12s
-      initialSyncTimer2 = setTimeout(() => runSync(false), 12000);
-    } else {
-      setIsNetworkSyncing(false);
     }
 
     // Cloud Database (Firebase Firestore) Real-Time Synchronization across all computers:
@@ -498,17 +491,13 @@ export default function App() {
     window.addEventListener('tamimi_parcels_updated', handleCloudSync);
     window.addEventListener('tamimi_lost_found_updated', handleCloudSync);
 
-    // Window focus / visibility sync (pull fresh bookings if other users booked while user was away)
+    // Window focus / visibility: only refresh the actively selected facility (never bulk sync all)
     const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && activeFacilityId) {
+        HubService.fetchFacilityAuthoritativeBookings(activeFacilityId).catch(() => {});
         const currentCfg = GasService.getConfig();
         if (currentCfg.webAppUrl) {
-          GasService.syncWithRemote().then((res) => {
-            if (res.success) {
-              setRefreshTrigger((prev) => prev + 1);
-              window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
-            }
-          }).catch(() => {});
+          GasService.syncFacility(activeFacilityId).catch(() => {});
         }
       }
     };
@@ -538,14 +527,14 @@ export default function App() {
       }
     }, 30000);
 
-    // Periodic Google Sheets reconciliation (every 5 minutes, non-blocking background task)
+    // Periodic active facility reconciliation (every 5 minutes, non-blocking background task)
     let isReconciliationInProgress = false;
     const reconciliationInterval = setInterval(() => {
-      if (isReconciliationInProgress) return;
+      if (isReconciliationInProgress || !activeFacilityId) return;
       const currentCfg = GasService.getConfig();
       if (currentCfg.webAppUrl && (typeof navigator === 'undefined' || navigator.onLine)) {
         isReconciliationInProgress = true;
-        GasService.syncWithRemote().then((res) => {
+        GasService.syncFacility(activeFacilityId).then((res) => {
           if (res.success) {
             setRefreshTrigger((prev) => prev + 1);
           }
