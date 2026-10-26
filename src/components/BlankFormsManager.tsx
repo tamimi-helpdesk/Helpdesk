@@ -35,6 +35,8 @@ import { BlankFormFillModal } from './blank-forms/BlankFormFillModal';
 import { BlankFormPrintLayout } from './blank-forms/BlankFormPrintLayout';
 import { AddCustomFormModal } from './blank-forms/AddCustomFormModal';
 import { AutoFormSection } from './blank-forms/AutoFormSection';
+import { AttendanceSheetSection } from './blank-forms/attendance/AttendanceSheetSection';
+import { CalendarCheck } from 'lucide-react';
 import {
   getStoredCustomTemplates,
   deleteStoredCustomTemplate,
@@ -119,7 +121,9 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
     isBlank: boolean;
   } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<'TEMPLATES' | 'SAVED_DRAFTS' | 'AUTO_FORM'>('TEMPLATES');
+  const [activeTab, setActiveTab] = useState<
+    'TEMPLATES' | 'ATTENDANCE_SHEET' | 'SAVED_DRAFTS' | 'AUTO_FORM'
+  >('TEMPLATES');
 
   // Reload custom templates if updated
   const refreshCustomTemplates = () => {
@@ -295,6 +299,28 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
 
           <button
             type="button"
+            onClick={() => setActiveTab('ATTENDANCE_SHEET')}
+            className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-2 shrink-0 ${
+              activeTab === 'ATTENDANCE_SHEET'
+                ? 'bg-emerald-600 text-white shadow-md ring-2 ring-emerald-400/50'
+                : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100'
+            }`}
+          >
+            <CalendarCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Attendance Sheet</span>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded font-black tracking-wider ${
+                activeTab === 'ATTENDANCE_SHEET'
+                  ? 'bg-emerald-950/20 text-white border border-emerald-950/20'
+                  : 'bg-emerald-200/80 dark:bg-emerald-900/60 text-emerald-900 dark:text-emerald-200 border border-emerald-300/60'
+              }`}
+            >
+              Month 1–31
+            </span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('AUTO_FORM')}
             className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-2 shrink-0 ${
               activeTab === 'AUTO_FORM'
@@ -356,7 +382,9 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
         )}
       </div>
 
-      {activeTab === 'AUTO_FORM' ? (
+      {activeTab === 'ATTENDANCE_SHEET' ? (
+        <AttendanceSheetSection />
+      ) : activeTab === 'AUTO_FORM' ? (
         <AutoFormSection onSavedToDrafts={() => setActiveTab('SAVED_DRAFTS')} />
       ) : activeTab === 'TEMPLATES' ? (
         <>
@@ -455,6 +483,10 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
                   <button
                     type="button"
                     onClick={() => {
+                      if (template.id === 'TAFGA-FRM-ATTENDANCE-STRAIGHT') {
+                        setActiveTab('ATTENDANCE_SHEET');
+                        return;
+                      }
                       setActiveTemplate(template);
                       setActiveDraft(null);
                     }}
@@ -466,7 +498,13 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
 
                   <button
                     type="button"
-                    onClick={(e) => triggerQuickPrint(template, true, e)}
+                    onClick={(e) => {
+                      if (template.id === 'TAFGA-FRM-ATTENDANCE-STRAIGHT') {
+                        setActiveTab('ATTENDANCE_SHEET');
+                        return;
+                      }
+                      triggerQuickPrint(template, true, e);
+                    }}
                     className="py-2 px-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold flex items-center justify-center space-x-1 transition cursor-pointer"
                     title="Quick Print A4"
                   >

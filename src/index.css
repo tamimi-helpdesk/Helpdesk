@@ -814,4 +814,90 @@ html[data-theme-preset="obsidian-amoled"] .slot-widget-selected {
   }
 }
 
+/* Dedicated Landscape Printing Support for Attendance Sheets */
+#attendance-print-portal {
+  display: none;
+}
+
+@media print {
+  body.printing-attendance-mode {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  body.printing-attendance-mode > #root {
+    display: none !important;
+  }
+
+  body.printing-attendance-mode > *:not(#attendance-print-portal) {
+    display: none !important;
+  }
+
+  body.printing-attendance-mode #attendance-print-portal {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+
+  body.printing-attendance-mode .attendance-day-page {
+    width: 100% !important;
+    height: 198mm !important;
+    max-height: 198mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    display: block !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+  }
+
+  body.printing-attendance-mode .attendance-day-page:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  body.printing-official-doc-mode {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  body.printing-official-doc-mode > #root,
+  body.printing-official-doc-mode > *:not(#official-document-print-container) {
+    display: none !important;
+  }
+
+  body.printing-official-doc-mode #official-document-print-container {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+  }
+}
+
+#official-document-print-container {
+  display: none;
+}
+
+
+
 

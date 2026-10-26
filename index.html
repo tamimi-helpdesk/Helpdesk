@@ -13,13 +13,16 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <script>
-      // Suppress cross-origin and benign iframe error noise
+      // Suppress cross-origin, benign iframe error noise, and Firestore idle stream timeouts
       window.addEventListener('error', function(event) {
         var msg = event && event.message ? String(event.message) : '';
         if (
           msg === 'Script error.' ||
           msg.indexOf('ResizeObserver') !== -1 ||
-          msg.indexOf('failed to connect to websocket') !== -1
+          msg.indexOf('failed to connect to websocket') !== -1 ||
+          msg.indexOf('Disconnecting idle stream') !== -1 ||
+          msg.indexOf('Timed out waiting for new targets') !== -1 ||
+          msg.indexOf('GrpcConnection') !== -1
         ) {
           if (event.preventDefault) event.preventDefault();
           if (event.stopImmediatePropagation) event.stopImmediatePropagation();
@@ -30,12 +33,30 @@
         var reason = event && event.reason ? String(event.reason.message || event.reason) : '';
         if (
           reason.indexOf('ResizeObserver') !== -1 ||
-          reason.indexOf('failed to connect to websocket') !== -1
+          reason.indexOf('failed to connect to websocket') !== -1 ||
+          reason.indexOf('Disconnecting idle stream') !== -1 ||
+          reason.indexOf('Timed out waiting for new targets') !== -1 ||
+          reason.indexOf('GrpcConnection') !== -1
         ) {
           if (event.preventDefault) event.preventDefault();
           if (event.stopImmediatePropagation) event.stopImmediatePropagation();
         }
       });
+      // Suppress benign Firestore gRPC idle stream disconnection messages from console.error
+      var origError = console.error;
+      console.error = function() {
+        var str = Array.prototype.slice.call(arguments).map(function(a) {
+          return a && a.message ? String(a.message) : String(a);
+        }).join(' ');
+        if (
+          str.indexOf('Disconnecting idle stream') !== -1 ||
+          str.indexOf('Timed out waiting for new targets') !== -1 ||
+          (str.indexOf('@firebase/firestore') !== -1 && str.indexOf('CANCELLED') !== -1)
+        ) {
+          return;
+        }
+        origError.apply(console, arguments);
+      };
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

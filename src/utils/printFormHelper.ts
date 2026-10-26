@@ -220,34 +220,64 @@ export const printOfficialDocument = (
         }
       }
 
-      // Try opening standalone tab or direct print
+      // Direct, infallible in-DOM print with native window.print() & isolated hidden iframe
       const clone = preparePrintableClone(sourceElement);
       const printHtml = buildPrintHtml(clone.outerHTML, docTitle, orientation);
 
-      // 1. If preferPopup or fallback, open window
-      const popup = window.open(
-        '',
-        '_blank',
-        'width=1000,height=1100,menubar=yes,toolbar=yes,location=no,status=no'
-      );
-      if (popup) {
-        popup.document.open();
-        popup.document.write(printHtml);
-        popup.document.close();
-        setTimeout(() => {
-          popup.focus();
-          popup.print();
-          resolve(true);
-        }, 500);
-        return;
+      let printContainer = document.getElementById('official-document-print-container');
+      if (!printContainer) {
+        printContainer = document.createElement('div');
+        printContainer.id = 'official-document-print-container';
+        document.body.appendChild(printContainer);
+      }
+      printContainer.innerHTML = printHtml;
+      document.body.classList.add('printing-official-doc-mode');
+
+      // Isolated hidden iframe print trigger (works inside sandboxed iframes)
+      let hiddenFrame = document.getElementById('official-print-hidden-iframe') as HTMLIFrameElement | null;
+      if (!hiddenFrame) {
+        hiddenFrame = document.createElement('iframe');
+        hiddenFrame.id = 'official-print-hidden-iframe';
+        hiddenFrame.style.position = 'fixed';
+        hiddenFrame.style.right = '0';
+        hiddenFrame.style.bottom = '0';
+        hiddenFrame.style.width = '0';
+        hiddenFrame.style.height = '0';
+        hiddenFrame.style.border = '0';
+        hiddenFrame.style.opacity = '0';
+        hiddenFrame.style.pointerEvents = 'none';
+        document.body.appendChild(hiddenFrame);
       }
 
-      // 2. Direct fallback
-      window.print();
+      const frameDoc = hiddenFrame.contentWindow?.document || hiddenFrame.contentDocument;
+      if (frameDoc) {
+        frameDoc.open();
+        frameDoc.write(printHtml);
+        frameDoc.close();
+        setTimeout(() => {
+          try {
+            hiddenFrame?.contentWindow?.focus();
+            hiddenFrame?.contentWindow?.print();
+          } catch (err) {
+            window.print();
+          }
+        }, 250);
+      } else {
+        window.print();
+      }
+
+      const cleanup = () => {
+        document.body.classList.remove('printing-official-doc-mode');
+        if (printContainer) printContainer.innerHTML = '';
+      };
+      window.addEventListener('afterprint', cleanup, { once: true });
+      setTimeout(cleanup, 12000);
       resolve(true);
     } catch (e) {
       console.error('Print utility fallback to window.print():', e);
-      window.print();
+      try {
+        window.print();
+      } catch (_) {}
       resolve(true);
     }
   });

@@ -175,35 +175,27 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
   };
 
   // Bulletproof Direct Print with Multi-Strategy Fallback
-  const handlePrint = (blankPrint = isBlankMode, preferPopup = false) => {
+  const handlePrint = async (blankPrint = isBlankMode, preferPopup = false) => {
     setIsPrinting(true);
     setPrintMenuOpen(false);
-    setPrintNotice('Sending document to printer...');
+    setPrintNotice('Opening print dialog...');
 
     try {
-      // 1. Direct browser tab popup or print
-      openPrintableTab(
-        'printable-official-form',
-        `${template.code} - ${template.title}`,
-        isLandscape
-      );
-
-      // 2. Also trigger native window.print as immediate fallback
-      setTimeout(() => {
-        try {
-          window.print();
-        } catch (e) {
-          // ignore
-        }
-      }, 300);
+      await printOfficialDocument('printable-official-form', {
+        isLandscape,
+        title: `${template.code} - ${template.title}`,
+        preferPopup,
+      });
     } catch (e) {
       console.error('Print trigger error:', e);
-      window.print();
+      try {
+        window.print();
+      } catch (err) {}
     } finally {
       setTimeout(() => {
         setIsPrinting(false);
         setPrintNotice(null);
-      }, 2000);
+      }, 1500);
     }
   };
 

@@ -2,6 +2,29 @@ import { FormTemplateDefinition } from '../../types/blankForms';
 
 export const AUTHENTIC_COMPANY_TEMPLATES: FormTemplateDefinition[] = [
   {
+    id: 'TAFGA-FRM-ATTENDANCE-STRAIGHT',
+    code: 'TAFGA-FRM-ATT-01',
+    title: 'STRAIGHT DAILY ATTENDANCE SHEET (Full Month 1-31)',
+    category: 'RECEPTION_HELPDESK',
+    categoryLabel: 'Helpdesk & Accommodation',
+    description: 'Official Tamimi Global & Red Sea Global Straight Daily Attendance Sheet with full month batch printing (1-31 days), active duty roster, and vacation employee register.',
+    version: 'v4.0 (2026)',
+    department: 'Helpdesk/Accomodation',
+    docRefPrefix: 'TAFGA-ATT',
+    iconName: 'CalendarCheck',
+    accentColor: 'emerald',
+    headerFields: [
+      { name: 'date', label: 'Date', type: 'date', required: true },
+      { name: 'department', label: 'Department', type: 'text', defaultValue: 'HELPDESK/ACCOMODATION' },
+      { name: 'location', label: 'Location', type: 'text', defaultValue: 'AMAALA-Triple Bay Construction Village (Location #188)' },
+    ],
+    sampleData: {
+      date: '2026-10-26',
+      department: 'HELPDESK/ACCOMODATION',
+      location: 'AMAALA-Triple Bay Construction Village (Location #188)',
+    },
+  },
+  {
     id: 'COMMUNITY-MGMT-MOVE-IN-OUT',
     code: 'CM-MOVE-IN-OUT-01',
     title: 'Community Management - Move-In & Move-Out Form (From.docx)',

@@ -46,6 +46,7 @@ __export(server_exports, {
   requireAuth: () => requireAuth,
   resolveServerFacilityId: () => resolveServerFacilityId,
   serverAuditLogs: () => serverAuditLogs,
+  serverFirestoreDb: () => serverFirestoreDb,
   serverIsolationHistory: () => serverIsolationHistory,
   serverSessions: () => serverSessions,
   signSessionToken: () => signSessionToken,
@@ -826,6 +827,24 @@ function isResourceOrStageMatch(bookingStage, selectedStage, facilityOrId) {
 // server.ts
 var app = (0, import_express.default)();
 var PORT = process.env.PORT && process.env.PORT !== "8080" ? parseInt(process.env.PORT, 10) : 3e3;
+var origConsoleError = console.error;
+console.error = function(...args) {
+  const text = args.map((a) => a && typeof a === "object" && a.message ? String(a.message) : String(a)).join(" ");
+  if (text.includes("Disconnecting idle stream") || text.includes("Timed out waiting for new targets") || text.includes("GrpcConnection") || text.includes("@firebase/firestore") && text.includes("CANCELLED")) {
+    return;
+  }
+  origConsoleError.apply(console, args);
+};
+if (process.stderr && process.stderr.write) {
+  const origStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = function(chunk, ...rest) {
+    const str = String(chunk || "");
+    if (str.includes("Disconnecting idle stream") || str.includes("Timed out waiting for new targets") || str.includes("GrpcConnection") || str.includes("@firebase/firestore") && str.includes("CANCELLED")) {
+      return true;
+    }
+    return origStderrWrite(chunk, ...rest);
+  };
+}
 app.use(import_express.default.json({ limit: "10mb" }));
 app.use(import_express.default.urlencoded({ extended: true, limit: "10mb" }));
 app.use((req, res, next) => {
@@ -906,6 +925,66 @@ var hubState = {
   supportTickets: []
 };
 var serverIsolationHistory = [];
+var serverFirestoreDb = null;
+var serverDocFn = null;
+var serverSetDocFn = null;
+if (process.env.VITEST !== "true") {
+  (async () => {
+    try {
+      const configPath = import_path.default.join(process.cwd(), "firebase-applet-config.json");
+      if (import_fs.default.existsSync(configPath)) {
+        const firebaseConfig = JSON.parse(import_fs.default.readFileSync(configPath, "utf-8"));
+        const { initializeApp, getApps } = await import("firebase/app");
+        const { initializeFirestore, doc, setDoc, collection, getDocs, onSnapshot, setLogLevel } = await import("firebase/firestore");
+        try {
+          setLogLevel("silent");
+        } catch (_) {
+        }
+        serverDocFn = doc;
+        serverSetDocFn = setDoc;
+        const app2 = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
+        serverFirestoreDb = initializeFirestore(app2, {
+          ignoreUndefinedProperties: true
+        }, firebaseConfig.firestoreDatabaseId);
+        console.log("[Server] Cloud Firestore initialized with DB:", firebaseConfig.firestoreDatabaseId);
+        const snap = await getDocs(collection(serverFirestoreDb, "bookings"));
+        if (!snap.empty) {
+          const docs = [];
+          snap.forEach((d) => {
+            const data = d.data();
+            if (data && data.id) docs.push(data);
+          });
+          hubState.bookings = docs;
+          hubState.version += 1;
+          hubState.lastUpdated = (/* @__PURE__ */ new Date()).toISOString();
+          console.log(`[Server] Synced ${docs.length} authoritative bookings from Cloud Firestore.`);
+        }
+        onSnapshot(
+          collection(serverFirestoreDb, "bookings"),
+          (snap2) => {
+            if (!snap2 || snap2.empty) return;
+            const docs = [];
+            snap2.forEach((d) => {
+              const data = d.data();
+              if (data && data.id) docs.push(data);
+            });
+            hubState.bookings = docs;
+            hubState.version += 1;
+            hubState.lastUpdated = (/* @__PURE__ */ new Date()).toISOString();
+          },
+          (err) => {
+            const msg = String(err?.message || err || "");
+            if (!msg.includes("Disconnecting idle stream") && !msg.includes("Timed out waiting for new targets") && !msg.includes("CANCELLED") && !msg.includes("GrpcConnection")) {
+              console.warn("[Server] Firestore onSnapshot notice:", msg);
+            }
+          }
+        );
+      }
+    } catch (err) {
+      console.warn("[Server] Firestore setup notice:", err?.message || err);
+    }
+  })();
+}
 try {
   if (import_fs.default.existsSync(DB_HISTORY_FILE_PATH)) {
     const rawHist = import_fs.default.readFileSync(DB_HISTORY_FILE_PATH, "utf-8");
@@ -1191,6 +1270,17 @@ app.get("/api/hub/events", (req, res) => {
     sseClients.delete(client);
   });
 });
+app.post("/api/attendance/download-file", (req, res) => {
+  const { content, filename, mimeType } = req.body;
+  if (!content) {
+    return res.status(400).send("No content provided");
+  }
+  const safeFilename = String(filename || "attendance-sheet.html").replace(/[^a-zA-Z0-9_.-]/g, "_");
+  res.setHeader("Content-Type", `${mimeType || "text/html"}; charset=utf-8`);
+  res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.send(content);
+});
 app.get("/api/hub/version", (req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
   res.setHeader("Pragma", "no-cache");
@@ -1277,6 +1367,11 @@ app.post("/api/bookings", (req, res) => {
     hubState.lastUpdated = (/* @__PURE__ */ new Date()).toISOString();
     invalidateGasCache();
     await persistHubState();
+    if (serverFirestoreDb && serverSetDocFn && serverDocFn) {
+      serverSetDocFn(serverDocFn(serverFirestoreDb, "bookings", String(cleanItem.id)), cleanItem, { merge: true }).catch((err) => {
+        console.warn("[Server] Firestore booking write notice:", err?.message);
+      });
+    }
     broadcastHubEvent({
       type: "UPSERT",
       entity: "bookings",
@@ -1303,8 +1398,9 @@ app.delete("/api/bookings/:id", (req, res) => {
     const cleanId = String(id).toLowerCase().trim();
     const reason = req.body?.reason || req.query?.reason || "Cancelled via Portal";
     const now = Date.now();
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
     hubState.version += 1;
-    hubState.lastUpdated = (/* @__PURE__ */ new Date()).toISOString();
+    hubState.lastUpdated = nowIso;
     hubState.cancelledIds[cleanId] = now;
     let targetBooking = null;
     hubState.bookings = hubState.bookings.map((b) => {
@@ -1313,7 +1409,7 @@ app.delete("/api/bookings/:id", (req, res) => {
           ...b,
           status: "CANCELLED",
           cancellationReason: reason,
-          cancelledAt: (/* @__PURE__ */ new Date()).toISOString(),
+          cancelledAt: nowIso,
           cancelledBy: req.body?.cancelledBy || "Helpdesk"
         };
         return targetBooking;
@@ -1322,6 +1418,14 @@ app.delete("/api/bookings/:id", (req, res) => {
     });
     invalidateGasCache();
     await persistHubState();
+    if (serverFirestoreDb && serverSetDocFn && serverDocFn) {
+      const tombRef = serverDocFn(serverFirestoreDb, "tombstones", String(cleanId));
+      serverSetDocFn(tombRef, { id: cleanId, type: "CANCELLED", reason, timestamp: nowIso }, { merge: true }).catch(() => {
+      });
+      const bRef = serverDocFn(serverFirestoreDb, "bookings", String(cleanId));
+      serverSetDocFn(bRef, { id: cleanId, status: "CANCELLED", cancellationReason: reason, cancelledAt: nowIso }, { merge: true }).catch(() => {
+      });
+    }
     broadcastHubEvent({
       type: "CANCEL",
       entity: "bookings",
@@ -3349,6 +3453,26 @@ app.post("/api/green-api/get-group-data", async (req, res) => {
   }
   return res.status(404).json({ success: false, error: "Group data could not be retrieved from Green API." });
 });
+app.post("/api/attendance/download-file", (req, res) => {
+  const { content, filename = "TAFGA-Daily-Attendance-Sheet.html", mimeType = "text/html" } = req.body || {};
+  if (!content) {
+    return res.status(400).send("No content provided");
+  }
+  const cleanFilename = String(filename).replace(/[^a-zA-Z0-9_.-]/g, "_");
+  res.setHeader("Content-Type", `${mimeType}; charset=utf-8`);
+  res.setHeader("Content-Disposition", `attachment; filename="${cleanFilename}"`);
+  return res.send(content);
+});
+app.post("/api/attendance/download-csv", (req, res) => {
+  const { csvContent, filename = "TAFGA-Attendance-Roster.csv" } = req.body || {};
+  if (!csvContent) {
+    return res.status(400).send("No CSV content provided");
+  }
+  const cleanFilename = String(filename).replace(/[^a-zA-Z0-9_.-]/g, "_");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${cleanFilename}"`);
+  return res.send(csvContent);
+});
 app.post("/api/green-api/set-settings", async (req, res) => {
   const { instanceId, apiToken, apiUrl } = req.body || {};
   const cleanId = String(instanceId || "").trim();
@@ -4412,6 +4536,7 @@ if (!process.env.VITEST) {
   requireAuth,
   resolveServerFacilityId,
   serverAuditLogs,
+  serverFirestoreDb,
   serverIsolationHistory,
   serverSessions,
   signSessionToken,

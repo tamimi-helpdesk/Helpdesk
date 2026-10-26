@@ -11,3 +11,5 @@ tamimi_server_sessions.json
 tamimi_server_db.json.bak*
 *.tmp.*
 
+.aistudio/
+**/assets/aistudio/

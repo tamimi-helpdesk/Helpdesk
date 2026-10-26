@@ -23,6 +23,10 @@ import { Booking } from '../types';
 import { ToastService } from './toastService';
 import { SyncDiagnosticsService } from './syncDiagnosticsService';
 
+try {
+  setLogLevel('silent');
+} catch (_) {}
+
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
@@ -50,8 +54,15 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): FirestoreErrorInfo {
+  const errStr = error instanceof Error ? error.message : String(error);
+  const isIdleStreamDisconnect =
+    errStr.includes('Disconnecting idle stream') ||
+    errStr.includes('Timed out waiting for new targets') ||
+    errStr.includes('GrpcConnection') ||
+    errStr.includes('CANCELLED');
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errStr,
     authInfo: {
       userId: null,
       email: null,
@@ -63,7 +74,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path,
   };
-  console.warn(`[Firestore Error - ${operationType}] at ${path}:`, errInfo.error);
+
+  // Only warn if it's an actionable failure, not an internal transport idle stream reset
+  if (!isIdleStreamDisconnect) {
+    console.warn(`[Firestore Error - ${operationType}] at ${path}:`, errInfo.error);
+  }
   return errInfo;
 }
 
@@ -198,6 +213,7 @@ class FirebaseService {
 
       const firestoreSettings = {
         ignoreUndefinedProperties: true,
+        experimentalAutoDetectLongPolling: true,
       };
 
       if (FIREBASE_CONFIG.firestoreDatabaseId) {
@@ -1289,8 +1305,9 @@ class FirebaseService {
 
   /**
    * Scoped Real-time subscription to facility bookings:
-   * Attaches live Firestore listener on bookings and tombstones for this specific facility,
-   * updates StorageService and invokes onUpdate callback with fresh records.
+   * Leverages the persistent single-connection Firestore authoritative synchronizer
+   * without creating or tearing down ephemeral gRPC Listen targets, avoiding idle stream disconnects.
+   * Delivers immediate filtered facility records and reacts instantaneously to all local and remote changes.
    * Returns an unsubscribe cleanup function.
    */
   public subscribeToFacilityBookings(
@@ -1298,48 +1315,53 @@ class FirebaseService {
     onUpdate: (bookings: Booking[]) => void
   ): () => void {
     if (!this.db) this.init();
-    if (!this.db) return () => {};
+
+    // Ensure the single persistent authoritative Firestore stream is active
+    this.initRealtimeSync();
 
     const cleanFac = facilityId.toLowerCase().trim();
     const resolvedTargetId = StorageService.resolveFacilityId(facilityId) || cleanFac;
 
-    try {
-      const bookingsCol = collection(this.db, 'bookings');
-      const unsub = onSnapshot(
-        bookingsCol,
-        (snapshot) => {
-          if (!snapshot) return;
-
-          const allBookings: Booking[] = [];
-          const facilityBookings: Booking[] = [];
-
-          snapshot.forEach((d) => {
-            const b = d.data() as Booking;
-            if (b && b.id) {
-              allBookings.push(b);
-              const bFac = String(b.facilityId || b.sheetTabName || b.facilityName || '').toLowerCase().trim();
-              const bResolved = StorageService.resolveFacilityId(b.facilityId || b.sheetTabName || b.facilityName) || bFac;
-
-              if (bResolved === resolvedTargetId || bFac === cleanFac || bFac.includes(cleanFac) || cleanFac.includes(bFac)) {
-                facilityBookings.push(b);
-              }
-            }
-          });
-
-          // Reconcile into StorageService
-          StorageService.applyRemoteBookingsSnapshot(allBookings);
-          onUpdate(facilityBookings);
-        },
-        (error) => {
-          handleFirestoreError(error, OperationType.LIST, `bookings (facility: ${facilityId})`);
+    const filterFacilityBookings = (): Booking[] => {
+      const all = StorageService.getAllBookings();
+      const facilityBookings: Booking[] = [];
+      for (const b of all) {
+        if (!b || !b.id) continue;
+        const bFac = String(b.facilityId || b.sheetTabName || b.facilityName || '').toLowerCase().trim();
+        const bResolved = StorageService.resolveFacilityId(b.facilityId || b.sheetTabName || b.facilityName) || bFac;
+        if (bResolved === resolvedTargetId || bFac === cleanFac || bFac.includes(cleanFac) || cleanFac.includes(bFac)) {
+          facilityBookings.push(b);
         }
-      );
+      }
+      return facilityBookings;
+    };
 
-      return unsub;
-    } catch (err) {
-      console.warn('[FirebaseService] Facility real-time subscription error:', err);
-      return () => {};
+    // 1. Deliver current facility bookings immediately
+    try {
+      onUpdate(filterFacilityBookings());
+    } catch (e) {
+      console.warn('[FirebaseService] Initial facility update callback error:', e);
     }
+
+    // 2. Attach reactive event listener triggered by authoritative remote & local mutations
+    const updateHandler = () => {
+      try {
+        onUpdate(filterFacilityBookings());
+      } catch (e) {
+        console.warn('[FirebaseService] Reactive facility update error:', e);
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('tamimi_bookings_updated', updateHandler);
+    }
+
+    // 3. Clean up event listener without creating an abandoned gRPC target
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('tamimi_bookings_updated', updateHandler);
+      }
+    };
   }
 }
 

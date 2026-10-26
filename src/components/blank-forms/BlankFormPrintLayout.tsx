@@ -370,7 +370,7 @@ export const BlankFormPrintLayout: React.FC<BlankFormPrintLayoutProps> = ({
             {template.title}
           </h1>
           <div className="text-[10px] text-slate-600 font-bold uppercase tracking-widest mt-0.5">
-            Official Operational Protocol Record & Verification Document
+            Official Operational Document • Tamimi Global Co. Ltd.
           </div>
         </div>
 
@@ -378,17 +378,17 @@ export const BlankFormPrintLayout: React.FC<BlankFormPrintLayoutProps> = ({
         {isBlankMode && (
           <div className="mb-3 text-center print:hidden">
             <span className="bg-amber-100 border border-amber-300 text-amber-900 text-[10px] font-bold px-3 py-1 rounded-full">
-              📄 PRINTING 100% BLANK TEMPLATE (DESIGNED FOR HANDWRITING WITH PEN)
+              📄 PRINTING BLANK TEMPLATE (READY FOR HANDWRITING)
             </span>
           </div>
         )}
 
         {/* ========================================================================= */}
-        {/* SECTION 1: GENERAL PARTICULARS / METADATA GRID                            */}
+        {/* SECTION 1: PARTICULARS & INFORMATION                                      */}
         {/* ========================================================================= */}
         <div className="mb-4">
           <div className="bg-slate-900 text-white font-black text-[10px] uppercase px-3 py-1.5 flex items-center justify-between">
-            <span>SECTION 1: GENERAL INFORMATION & ADMINISTRATIVE PARTICULARS</span>
+            <span>SECTION 1: DETAILS &amp; PARTICULARS</span>
             <span className="text-[9px] font-normal text-slate-300">
               {isEditable && !isBlankMode ? '✏️ Editable In-Place' : 'Official Record'}
             </span>
@@ -1304,12 +1304,13 @@ export const BlankFormPrintLayout: React.FC<BlankFormPrintLayoutProps> = ({
         )}
 
         {/* ========================================================================= */}
-        {/* SECTION 3: FOOTER FIELDS / REMARKS / SCOPE OF WORK                        */}
+        {/* AUTHORIZATION & SIGNATURES SECTION                                        */}
         {/* ========================================================================= */}
-        {template.footerFields && template.footerFields.length > 0 && (
-          <div className="mb-4">
-            <div className="bg-slate-900 text-white font-black text-[10px] uppercase px-3 py-1.5 flex items-center justify-between">
-              <span>SECTION 3: SCOPE OF WORK, TECHNICAL NOTES & JUSTIFICATIONS</span>
+        {template.footerFields && template.footerFields.length > 0 ? (
+          <div className="mt-5 border-t-2 border-slate-900 pt-3">
+            <div className="bg-slate-900 text-white font-black text-[10px] uppercase px-3 py-1.5 flex items-center justify-between mb-2">
+              <span>AUTHORIZATION &amp; SIGNATURES</span>
+              <span className="text-[9px] font-normal text-slate-300">Official Verification</span>
             </div>
 
             <div className="grid grid-cols-4 gap-3 p-3 bg-slate-50 border-x border-b border-slate-400">
@@ -1334,74 +1335,71 @@ export const BlankFormPrintLayout: React.FC<BlankFormPrintLayoutProps> = ({
               })}
             </div>
           </div>
+        ) : (
+          <div className="mt-6 border-t-2 border-slate-900 pt-3">
+            <div className="text-[10px] font-black uppercase text-slate-700 mb-2 flex items-center justify-between">
+              <span>OFFICIAL CORPORATE VERIFICATION &amp; AUTHORIZATION SIGN-OFFS</span>
+              <span className="text-[9px] font-normal text-slate-500">Corporate Seal Required</span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              {/* Box 1 */}
+              <div className="border-2 border-slate-900 rounded p-2 text-center bg-slate-50/70 flex flex-col justify-between h-28">
+                <div className="text-[9px] font-black uppercase text-slate-800">
+                  1. INITIATED &amp; PREPARED BY
+                </div>
+                <div className="font-serif italic text-slate-950 text-sm font-bold">
+                  {isBlankMode
+                    ? ''
+                    : formData.applicantName ||
+                      formData.preparedBy ||
+                      formData.employeeName ||
+                      formData.supervisorName ||
+                      'Staff Member'}
+                </div>
+                <div className="border-t border-slate-700 pt-1 text-[8px] text-slate-600 font-bold uppercase">
+                  Initiator / Supervisor Signature &amp; Date
+                </div>
+              </div>
+
+              {/* Box 2 */}
+              <div className="border-2 border-slate-900 rounded p-2 text-center bg-slate-50/70 flex flex-col justify-between h-28">
+                <div className="text-[9px] font-black uppercase text-slate-800">
+                  2. VERIFIED BY DEPARTMENT HEAD
+                </div>
+                <div className="font-serif italic text-slate-950 text-sm font-bold">
+                  {isBlankMode
+                    ? ''
+                    : formData.deptHeadApproval ||
+                      formData.supervisorSign ||
+                      formData.deptManagerApproval ||
+                      'Eng. Salem Al-Zahrani'}
+                </div>
+                <div className="border-t border-slate-700 pt-1 text-[8px] text-slate-600 font-bold uppercase">
+                  Department Manager Stamp &amp; Sign
+                </div>
+              </div>
+
+              {/* Box 3 */}
+              <div className="border-2 border-slate-900 rounded p-2 text-center bg-slate-50/70 flex flex-col justify-between h-28">
+                <div className="text-[9px] font-black uppercase text-slate-800">
+                  3. CAMP OPERATIONS / GENERAL MANAGER
+                </div>
+                <div className="font-serif italic text-slate-950 text-sm font-bold">
+                  {isBlankMode
+                    ? ''
+                    : formData.procurementApproval ||
+                      formData.gmApproval ||
+                      formData.campDirectorSign ||
+                      'Eng. Khalid Al-Otaibi'}
+                </div>
+                <div className="border-t border-slate-700 pt-1 text-[8px] text-slate-600 font-bold uppercase">
+                  Director Approval &amp; Corporate Seal
+                </div>
+              </div>
+            </div>
+          </div>
         )}
-
-        {/* ========================================================================= */}
-        {/* SECTION 4: MULTI-TIER OFFICIAL AUTHORIZATION & SIGN-OFF BLOCKS            */}
-        {/* ========================================================================= */}
-        <div className="mt-6 border-t-2 border-slate-900 pt-3">
-          <div className="text-[10px] font-black uppercase text-slate-700 mb-2 flex items-center justify-between">
-            <span>SECTION 4: OFFICIAL CORPORATE VERIFICATION & AUTHORIZATION SIGN-OFFS</span>
-            <span className="text-[9px] font-normal text-slate-500">Corporate Seal Required</span>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            {/* Box 1 */}
-            <div className="border-2 border-slate-900 rounded p-2 text-center bg-slate-50/70 flex flex-col justify-between h-28">
-              <div className="text-[9px] font-black uppercase text-slate-800">
-                1. INITIATED & PREPARED BY
-              </div>
-              <div className="font-serif italic text-slate-950 text-sm font-bold">
-                {isBlankMode
-                  ? ''
-                  : formData.applicantName ||
-                    formData.preparedBy ||
-                    formData.employeeName ||
-                    formData.supervisorName ||
-                    'Staff Member'}
-              </div>
-              <div className="border-t border-slate-700 pt-1 text-[8px] text-slate-600 font-bold uppercase">
-                Initiator / Supervisor Signature & Date
-              </div>
-            </div>
-
-            {/* Box 2 */}
-            <div className="border-2 border-slate-900 rounded p-2 text-center bg-slate-50/70 flex flex-col justify-between h-28">
-              <div className="text-[9px] font-black uppercase text-slate-800">
-                2. VERIFIED BY DEPARTMENT HEAD
-              </div>
-              <div className="font-serif italic text-slate-950 text-sm font-bold">
-                {isBlankMode
-                  ? ''
-                  : formData.deptHeadApproval ||
-                    formData.supervisorSign ||
-                    formData.deptManagerApproval ||
-                    'Eng. Salem Al-Zahrani'}
-              </div>
-              <div className="border-t border-slate-700 pt-1 text-[8px] text-slate-600 font-bold uppercase">
-                Department Manager Stamp & Sign
-              </div>
-            </div>
-
-            {/* Box 3 */}
-            <div className="border-2 border-slate-900 rounded p-2 text-center bg-slate-50/70 flex flex-col justify-between h-28">
-              <div className="text-[9px] font-black uppercase text-slate-800">
-                3. CAMP OPERATIONS / GENERAL MANAGER
-              </div>
-              <div className="font-serif italic text-slate-950 text-sm font-bold">
-                {isBlankMode
-                  ? ''
-                  : formData.procurementApproval ||
-                    formData.gmApproval ||
-                    formData.campDirectorSign ||
-                    'Eng. Khalid Al-Otaibi'}
-              </div>
-              <div className="border-t border-slate-700 pt-1 text-[8px] text-slate-600 font-bold uppercase">
-                Director Approval & Corporate Seal
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* ========================================================================= */}

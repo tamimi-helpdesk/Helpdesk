@@ -11,6 +11,40 @@ import { isResourceOrStageMatch, getCanonicalResourceName } from './src/utils/re
 export const app = express();
 const PORT = process.env.PORT && process.env.PORT !== '8080' ? parseInt(process.env.PORT, 10) : 3000;
 
+// Suppress benign Firestore gRPC idle stream disconnection messages in Node.js server
+const origConsoleError = console.error;
+console.error = function (...args: any[]) {
+  const text = args
+    .map((a) => (a && typeof a === 'object' && a.message ? String(a.message) : String(a)))
+    .join(' ');
+  if (
+    text.includes('Disconnecting idle stream') ||
+    text.includes('Timed out waiting for new targets') ||
+    text.includes('GrpcConnection') ||
+    (text.includes('@firebase/firestore') && text.includes('CANCELLED'))
+  ) {
+    return;
+  }
+  origConsoleError.apply(console, args);
+};
+
+// Also filter process.stderr to prevent unhandled low-level gRPC stream timeout noise
+if (process.stderr && process.stderr.write) {
+  const origStderrWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = function (chunk: any, ...rest: any[]) {
+    const str = String(chunk || '');
+    if (
+      str.includes('Disconnecting idle stream') ||
+      str.includes('Timed out waiting for new targets') ||
+      str.includes('GrpcConnection') ||
+      (str.includes('@firebase/firestore') && str.includes('CANCELLED'))
+    ) {
+      return true;
+    }
+    return (origStderrWrite as any)(chunk, ...rest);
+  } as any;
+}
+
 
 // Request body limits to prevent DoS attacks
 app.use(express.json({ limit: '10mb' }));
@@ -144,13 +178,19 @@ if (process.env.VITEST !== 'true') {
       if (fs.existsSync(configPath)) {
         const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
         const { initializeApp, getApps } = await import('firebase/app');
-        const { initializeFirestore, doc, setDoc, collection, getDocs, onSnapshot } = await import('firebase/firestore');
+        const { initializeFirestore, doc, setDoc, collection, getDocs, onSnapshot, setLogLevel } = await import('firebase/firestore');
+
+        try {
+          setLogLevel('silent');
+        } catch (_) {}
 
         serverDocFn = doc;
         serverSetDocFn = setDoc;
 
         const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
-        serverFirestoreDb = initializeFirestore(app, {}, firebaseConfig.firestoreDatabaseId);
+        serverFirestoreDb = initializeFirestore(app, {
+          ignoreUndefinedProperties: true,
+        }, firebaseConfig.firestoreDatabaseId);
         console.log('[Server] Cloud Firestore initialized with DB:', firebaseConfig.firestoreDatabaseId);
 
         // Hydrate bookings from Cloud Firestore on boot
@@ -181,7 +221,17 @@ if (process.env.VITEST !== 'true') {
             hubState.version += 1;
             hubState.lastUpdated = new Date().toISOString();
           },
-          (err) => console.warn('[Server] Firestore onSnapshot warning:', err?.message)
+          (err: any) => {
+            const msg = String(err?.message || err || '');
+            if (
+              !msg.includes('Disconnecting idle stream') &&
+              !msg.includes('Timed out waiting for new targets') &&
+              !msg.includes('CANCELLED') &&
+              !msg.includes('GrpcConnection')
+            ) {
+              console.warn('[Server] Firestore onSnapshot notice:', msg);
+            }
+          }
         );
       }
     } catch (err: any) {
@@ -533,6 +583,19 @@ app.get('/api/hub/events', (req: Request, res: Response) => {
   req.on('close', () => {
     sseClients.delete(client);
   });
+});
+
+// Attendance Printable Document & Spreadsheet Direct Download (Bypasses iframe sandbox restrictions)
+app.post('/api/attendance/download-file', (req: Request, res: Response) => {
+  const { content, filename, mimeType } = req.body;
+  if (!content) {
+    return res.status(400).send('No content provided');
+  }
+  const safeFilename = String(filename || 'attendance-sheet.html').replace(/[^a-zA-Z0-9_.-]/g, '_');
+  res.setHeader('Content-Type', `${mimeType || 'text/html'}; charset=utf-8`);
+  res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.send(content);
 });
 
 // 1.5. Lightweight Version check endpoint (Ultra-fast polling without multi-megabyte payload)
@@ -3192,6 +3255,29 @@ app.post('/api/green-api/get-group-data', async (req: Request, res: Response) =>
   }
 
   return res.status(404).json({ success: false, error: 'Group data could not be retrieved from Green API.' });
+});
+
+// Dedicated Attendance File & CSV Download Proxy
+app.post('/api/attendance/download-file', (req: Request, res: Response) => {
+  const { content, filename = 'TAFGA-Daily-Attendance-Sheet.html', mimeType = 'text/html' } = req.body || {};
+  if (!content) {
+    return res.status(400).send('No content provided');
+  }
+  const cleanFilename = String(filename).replace(/[^a-zA-Z0-9_.-]/g, '_');
+  res.setHeader('Content-Type', `${mimeType}; charset=utf-8`);
+  res.setHeader('Content-Disposition', `attachment; filename="${cleanFilename}"`);
+  return res.send(content);
+});
+
+app.post('/api/attendance/download-csv', (req: Request, res: Response) => {
+  const { csvContent, filename = 'TAFGA-Attendance-Roster.csv' } = req.body || {};
+  if (!csvContent) {
+    return res.status(400).send('No CSV content provided');
+  }
+  const cleanFilename = String(filename).replace(/[^a-zA-Z0-9_.-]/g, '_');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${cleanFilename}"`);
+  return res.send(csvContent);
 });
 
 app.post('/api/green-api/set-settings', async (req: Request, res: Response) => {
