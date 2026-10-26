@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getFacilityGraphic } from './FacilityGraphics';
-import { RefreshCw, CheckCircle2, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { RefreshCw, CheckCircle2, AlertTriangle, ArrowLeft, HardDrive } from 'lucide-react';
 
 interface FacilitySyncTransitionOverlayProps {
   isOpen: boolean;
@@ -12,6 +12,7 @@ interface FacilitySyncTransitionOverlayProps {
   error?: string | null;
   onRetry?: () => void;
   onCancel?: () => void;
+  onOpenOfflineCache?: () => void;
 }
 
 export const FacilitySyncTransitionOverlay: React.FC<FacilitySyncTransitionOverlayProps> = ({
@@ -23,6 +24,7 @@ export const FacilitySyncTransitionOverlay: React.FC<FacilitySyncTransitionOverl
   error = null,
   onRetry,
   onCancel,
+  onOpenOfflineCache,
 }) => {
   if (!isOpen) return null;
 
@@ -134,23 +136,33 @@ export const FacilitySyncTransitionOverlay: React.FC<FacilitySyncTransitionOverl
                 <div className="p-2.5 rounded-xl bg-slate-950/90 border border-rose-900/60 text-[11px] text-rose-300 font-mono text-left break-words max-h-24 overflow-y-auto leading-relaxed shadow-inner">
                   {error}
                 </div>
-                {/* Action Buttons: Retry & Cancel */}
-                <div className="flex items-center gap-2 pt-1 w-full">
+                {/* Action Buttons: Cancel, Offline Cache, Retry */}
+                <div className="flex flex-col sm:flex-row items-center gap-2 pt-1 w-full">
                   {onCancel && (
                     <button
                       type="button"
                       onClick={onCancel}
-                      className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                      className="w-full sm:flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
                     >
                       <ArrowLeft className="w-3.5 h-3.5" />
                       <span>Return to Hub</span>
+                    </button>
+                  )}
+                  {onOpenOfflineCache && (
+                    <button
+                      type="button"
+                      onClick={onOpenOfflineCache}
+                      className="w-full sm:flex-1 py-2 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                    >
+                      <HardDrive className="w-3.5 h-3.5" />
+                      <span>Open with Offline Cache</span>
                     </button>
                   )}
                   {onRetry && (
                     <button
                       type="button"
                       onClick={onRetry}
-                      className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-rose-950/60"
+                      className="w-full sm:flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-rose-950/60"
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
                       <span>Retry Fetch</span>

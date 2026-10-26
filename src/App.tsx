@@ -233,6 +233,21 @@ export default function App() {
 
     const targetFac = facilities.find((f) => f.id === facilityId) || facilities[0];
     
+    // Check if this is a specialized non-booking standalone module (Blank Forms, Invoices, Announcements, etc.)
+    const isStandalone = HubService.NON_BOOKING_FACILITY_IDS.includes(facilityId.toLowerCase().trim());
+    if (isStandalone) {
+      setFacilitySyncError(null);
+      setIsFacilitySyncing(false);
+      setIsFacilitySyncComplete(true);
+      setActiveFacilityId(facilityId);
+      setSelectedStage(targetFac.stages[0] || '');
+      setSelectedSlotIds([]);
+      setCurrentView('booking');
+      setRefreshTrigger((prev) => prev + 1);
+      ActionFeedback.stopLoading();
+      return;
+    }
+
     // 1. Show existing loading screen immediately and reset any previous error
     // Facility remains strictly closed and blocked until fetch is complete and successful
     setFacilitySyncError(null);
@@ -248,6 +263,23 @@ export default function App() {
       const authRes = await HubService.fetchFacilityAuthoritativeBookings(facilityId);
 
       if (!authRes.success) {
+        const cached = StorageService.getBookingsForFacility(facilityId);
+        if (Array.isArray(cached)) {
+          console.warn(`[Facility Flow] Server sync unavailable for ${targetFac.name}. Falling back safely to local storage cache.`);
+          setFacilityBookings(cached);
+          setIsFacilitySyncComplete(true);
+          setActiveFacilityId(facilityId);
+          setSelectedStage(targetFac.stages[0] || '');
+          setSelectedSlotIds([]);
+          setCurrentView('booking');
+          setRefreshTrigger((prev) => prev + 1);
+          setIsFacilitySyncing(false);
+          setFacilitySyncError(null);
+          ActionFeedback.stopLoading();
+          ToastService.showWarning(`Server sync unavailable. Opened "${targetFac.name}" with local cache.`);
+          return;
+        }
+
         const errMsg = authRes.error || `Unable to load latest booking records for ${targetFac.name} from authoritative database.`;
         setFacilitySyncError(errMsg);
         setIsFacilitySyncComplete(false);
@@ -1268,6 +1300,23 @@ export default function App() {
         onRetry={() => {
           if (syncingFacilityId) {
             handleSelectFacility(syncingFacilityId);
+          }
+        }}
+        onOpenOfflineCache={() => {
+          if (syncingFacilityId) {
+            const targetFac = facilities.find((f) => f.id === syncingFacilityId) || facilities[0];
+            const cachedBookings = StorageService.getBookingsForFacility(syncingFacilityId);
+            setFacilityBookings(cachedBookings);
+            setFacilitySyncError(null);
+            setIsFacilitySyncing(false);
+            setIsFacilitySyncComplete(true);
+            setActiveFacilityId(syncingFacilityId);
+            setSelectedStage(targetFac.stages[0] || '');
+            setSelectedSlotIds([]);
+            setCurrentView('booking');
+            setRefreshTrigger((prev) => prev + 1);
+            ActionFeedback.stopLoading();
+            ToastService.showWarning(`Opened "${targetFac.name}" with local storage cache.`);
           }
         }}
         onCancel={() => {
