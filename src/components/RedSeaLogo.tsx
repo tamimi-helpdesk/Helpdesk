@@ -3,7 +3,7 @@ import { REDSEA_LOGO_DATA_URL } from '../data/redseaLogoBase64';
 
 export { REDSEA_LOGO_DATA_URL };
 
-export const REDSEA_SVG_MARKUP = `<svg width="140" height="46" viewBox="0 0 240 64" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:inline-block; vertical-align:middle; max-width:100%; height:auto;">
+export const REDSEA_SVG_MARKUP = `<svg width="240" height="70" viewBox="0 0 250 70" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:inline-block; vertical-align:middle; max-width:100%; height:auto;">
   <defs>
     <linearGradient id="rsgGoldComp" x1="20%" y1="10%" x2="80%" y2="90%">
       <stop offset="0%" stop-color="#D8B56B" />
@@ -12,7 +12,7 @@ export const REDSEA_SVG_MARKUP = `<svg width="140" height="46" viewBox="0 0 240 
       <stop offset="100%" stop-color="#A87F32" />
     </linearGradient>
   </defs>
-  <g transform="translate(4, 2) scale(0.3)" stroke="url(#rsgGoldComp)" stroke-linecap="round" stroke-linejoin="round">
+  <g transform="translate(6, 4) scale(0.36)" stroke="url(#rsgGoldComp)" stroke-linecap="round" stroke-linejoin="round">
     <path d="M 65 24 C 75 14, 90 12, 105 13 C 120 14, 138 20, 150 32" stroke-width="6.5" />
     <path d="M 48 38 C 60 26, 80 22, 98 25 C 114 28, 132 38, 142 50" stroke-width="6" />
     <path d="M 32 58 C 45 42, 68 38, 86 46 C 98 52, 106 66, 115 78 C 124 90, 134 98, 148 94 C 158 90, 166 78, 168 64" stroke-width="6.5" />
@@ -24,8 +24,8 @@ export const REDSEA_SVG_MARKUP = `<svg width="140" height="46" viewBox="0 0 240 
     <path d="M 160 48 C 172 62, 178 80, 176 100 C 174 120, 164 140, 150 156" stroke-width="6" />
     <path d="M 144 32 C 158 44, 168 62, 170 82" stroke-width="5.5" />
   </g>
-  <text x="74" y="27" font-family="Georgia, serif" font-size="19" font-weight="bold" fill="#0c2340" letter-spacing="1">Red Sea</text>
-  <text x="75" y="48" font-family="Arial, sans-serif" font-size="14" font-weight="600" fill="#a87f32" letter-spacing="3.5">GLOBAL</text>
+  <text x="88" y="32" font-family="Georgia, serif" font-size="22" font-weight="bold" fill="#0c2340" letter-spacing="1">Red Sea</text>
+  <text x="89" y="56" font-family="Arial, sans-serif" font-size="16" font-weight="600" fill="#a87f32" letter-spacing="4">GLOBAL</text>
 </svg>`;
 
 interface RedSeaLogoProps {
@@ -34,7 +34,7 @@ interface RedSeaLogoProps {
 }
 
 export const RedSeaLogo: React.FC<RedSeaLogoProps> = ({
-  className = 'h-10 sm:h-12 w-auto object-contain max-w-[140px]',
+  className = 'h-14 sm:h-16 md:h-18 lg:h-20 w-auto object-contain max-w-[240px]',
   height,
 }) => {
   const [hasError, setHasError] = useState(false);

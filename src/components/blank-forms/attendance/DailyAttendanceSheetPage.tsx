@@ -27,7 +27,6 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
 }) => {
   const staff = config.staffList || [];
   const vacation = config.vacationList || [];
-  // Only add extra blank rows if explicitly specified in config (defaults to 0 so 1-10 staff cleanly fill A4)
   const extraRowsCount = Math.max(0, config.extraBlankRows ?? 0);
   const blankRowsNeeded = extraRowsCount;
 
@@ -47,50 +46,51 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
       className={`attendance-day-page bg-white text-slate-900 mx-auto font-sans select-text ${
         isPrintMode
           ? 'w-full print:w-full print:m-0 print:p-0'
-          : 'w-full max-w-[1060px] p-4 sm:p-6 shadow-md border border-slate-300 rounded-xl mb-8'
+          : 'w-full max-w-[1260px] p-2 sm:p-4 shadow-md border border-slate-300 rounded-xl mb-6'
       }`}
       style={{
         pageBreakAfter: 'always',
         breakAfter: 'page',
       }}
     >
-      {/* Outer Table-style Container to exactly mirror the corporate Excel sheet border */}
+      {/* Outer Table-style Container: Black border around all 4 sides stays intact as requested */}
       <div
-        className="border-2 p-1.5 sm:p-2 bg-white flex flex-col justify-between min-h-[600px]"
+        className="border-2 px-2 sm:px-3 pt-6 sm:pt-8 pb-3 bg-white flex flex-col justify-between w-full box-border min-h-[680px]"
         style={{ borderColor: borderColor }}
       >
+        {/* Content shifted down from top into the previously empty space */}
         <div>
-          {/* Header Block: 3 columns (Tamimi Logo | Company Title & Project Location | Red Sea Global Logo) */}
-          <div className="border pb-1 mb-1" style={{ borderColor: borderColor }}>
-            <div className="grid grid-cols-12 items-center px-2 py-1.5 gap-2">
+          {/* Header Block: 3 columns (Tamimi Logo | Company Title & Project Location | Enlarged Red Sea Global Logo) */}
+          <div className="border pb-1 mb-1.5" style={{ borderColor: borderColor }}>
+            <div className="flex items-center justify-between px-2 py-1 gap-2">
               {/* Left: Tamimi Global Logo */}
-              <div className="col-span-3 sm:col-span-2 flex items-center justify-start pl-1">
+              <div className="w-36 sm:w-44 md:w-48 shrink-0 flex items-center justify-start pl-1">
                 <TamimiLogo size={58} />
               </div>
 
               {/* Middle: Titles */}
-              <div className="col-span-6 sm:col-span-8 text-center px-1" style={{ color: titleColor }}>
-                <div className="font-black text-xs sm:text-[14px] leading-tight tracking-wide uppercase">
+              <div className="flex-1 text-center px-1" style={{ color: titleColor }}>
+                <div className="font-black text-xs sm:text-[14px] md:text-[15px] leading-tight tracking-wide uppercase">
                   {config.companyName || 'TAMIMI GLOBAL COMPANY LTD.(TAFGA)'}
                 </div>
-                <div className="font-bold text-[11px] sm:text-[12px] leading-tight mt-0.5">
+                <div className="font-bold text-[10.5px] sm:text-[12px] md:text-[12.5px] leading-tight mt-0.5">
                   {config.locationName || 'AMAALA-Triple Bay Construction Village (Location #188)'}
                 </div>
-                <div className="font-extrabold text-[11px] sm:text-[13px] leading-tight tracking-wider uppercase mt-0.5">
+                <div className="font-extrabold text-[11px] sm:text-[13px] md:text-[13.5px] leading-tight tracking-wider uppercase mt-0.5">
                   {config.formTitle || 'STRAIGHT DAILY ATTENDANCE SHEET'}
                 </div>
               </div>
 
-              {/* Right: Red Sea Global Logo (Embedded high-res Base64 for 100% reliable print & rendering) */}
-              <div className="col-span-3 sm:col-span-2 flex items-center justify-end pr-1">
-                <RedSeaLogo className="h-10 sm:h-12 w-auto object-contain max-w-[140px]" />
+              {/* Right: Enlarged Red Sea Global Logo */}
+              <div className="w-44 sm:w-52 md:w-60 shrink-0 flex items-center justify-end pr-1">
+                <RedSeaLogo className="h-14 sm:h-16 md:h-17 w-auto object-contain max-w-[220px]" />
               </div>
             </div>
           </div>
 
           {/* Subheader Banner: Department on left, Date on right */}
           <div
-            className="border flex items-stretch justify-between font-bold text-xs uppercase px-2 py-1.5 mb-1"
+            className="border flex items-center justify-between font-bold text-[11px] sm:text-xs uppercase px-2.5 py-1 mb-1.5"
             style={{
               backgroundColor: subHeaderBg,
               color: headerTextColor,
@@ -115,7 +115,7 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
             </div>
           </div>
 
-          {/* Main Attendance Grid Table: Dynamically balanced row heights for 1-10 staff members */}
+          {/* Main Attendance Grid Table: Spans full width, comfortable rows filling down into the empty space */}
           <table
             className="w-full border-collapse border text-[10.5px] sm:text-[11px] text-black table-fixed"
             style={{ borderColor: borderColor }}
@@ -131,28 +131,28 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
               >
                 <th
                   rowSpan={2}
-                  className="border px-1 py-1 w-[38px] font-black text-center"
+                  className="border px-1 py-1 w-[4%] font-black text-center"
                   style={{ borderColor: borderColor }}
                 >
                   S. No.
                 </th>
                 <th
                   rowSpan={2}
-                  className="border px-2 py-1 w-[195px] text-center font-black"
+                  className="border px-2 py-1 w-[22%] text-center font-black"
                   style={{ borderColor: borderColor }}
                 >
                   Name
                 </th>
                 <th
                   rowSpan={2}
-                  className="border px-1.5 py-1 w-[72px] font-black text-center"
+                  className="border px-1 py-1 w-[7.5%] font-black text-center"
                   style={{ borderColor: borderColor }}
                 >
                   ID No.
                 </th>
                 <th
                   rowSpan={2}
-                  className="border px-2 py-1 w-[160px] text-center font-black"
+                  className="border px-2 py-1 w-[17%] text-center font-black"
                   style={{ borderColor: borderColor }}
                 >
                   Job Title
@@ -166,7 +166,7 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
                 </th>
                 <th
                   rowSpan={2}
-                  className="border px-1.5 py-1 w-[58px] font-black text-center"
+                  className="border px-1 py-1 w-[5.5%] font-black text-center"
                   style={{ borderColor: borderColor }}
                 >
                   O.T.
@@ -175,14 +175,14 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
                 </th>
                 <th
                   rowSpan={2}
-                  className="border px-1.5 py-1 w-[80px] font-black text-center"
+                  className="border px-1.5 py-1 w-[9%] font-black text-center"
                   style={{ borderColor: borderColor }}
                 >
                   REMARKS
                 </th>
               </tr>
 
-              {/* Row 2: Sub-columns for Timing (Widened Sign Columns: 95px) */}
+              {/* Row 2: Sub-columns for Timing */}
               <tr
                 className="text-center font-bold"
                 style={{
@@ -191,25 +191,25 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
                 }}
               >
                 <th
-                  className="border px-1 py-0.5 w-[60px] font-normal text-center text-[10px]"
+                  className="border px-1 py-0.5 w-[6.5%] font-normal text-center text-[10px]"
                   style={{ borderColor: borderColor }}
                 >
                   Time-in
                 </th>
                 <th
-                  className="border px-1 py-0.5 w-[95px] font-bold text-center text-[10px]"
+                  className="border px-1 py-0.5 w-[11%] font-bold text-center text-[10px]"
                   style={{ borderColor: borderColor }}
                 >
                   Sign
                 </th>
                 <th
-                  className="border px-1 py-0.5 w-[60px] font-normal text-center text-[10px]"
+                  className="border px-1 py-0.5 w-[6.5%] font-normal text-center text-[10px]"
                   style={{ borderColor: borderColor }}
                 >
                   Time- Out
                 </th>
                 <th
-                  className="border px-1 py-0.5 w-[95px] font-bold text-center text-[10px]"
+                  className="border px-1 py-0.5 w-[11%] font-bold text-center text-[10px]"
                   style={{ borderColor: borderColor }}
                 >
                   Sign
@@ -218,7 +218,7 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
             </thead>
 
             <tbody>
-              {/* Active Staff Members: Balanced height so 10 staff members comfortably fill the sheet */}
+              {/* Staff Rows: Height expanded so the table comfortably fills the lower space */}
               {staff.map((member, idx) => {
                 const rec = dayRecords[member.idNo] || {};
                 const timeInVal = rec.timeIn || '';
@@ -231,29 +231,29 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
                   <tr
                     key={`staff-${member.sNo || idx}-${member.idNo}`}
                     className={`hover:bg-slate-50 transition-colors ${
-                      isCompact ? 'h-7 sm:h-8' : 'h-8 sm:h-9'
+                      isCompact ? 'h-8.5 sm:h-9' : 'h-10 sm:h-11'
                     }`}
                   >
                     <td
-                      className="border px-1 py-1.5 text-center font-bold text-[11px]"
+                      className="border px-1 py-1 text-center font-bold text-[11px]"
                       style={{ borderColor: borderColor }}
                     >
                       {member.sNo || idx + 1}
                     </td>
                     <td
-                      className="border px-2 py-1.5 font-bold uppercase text-[10.5px]"
+                      className="border px-2 py-1 font-bold uppercase text-[10.5px] truncate"
                       style={{ borderColor: borderColor }}
                     >
                       {member.name}
                     </td>
                     <td
-                      className="border px-1 py-1.5 text-center font-semibold font-mono text-[10.5px]"
+                      className="border px-1 py-1 text-center font-semibold font-mono text-[10.5px]"
                       style={{ borderColor: borderColor }}
                     >
                       {member.idNo}
                     </td>
                     <td
-                      className="border px-2 py-1.5 font-bold uppercase text-[10px]"
+                      className="border px-2 py-1 font-bold uppercase text-[10px] truncate"
                       style={{ borderColor: borderColor }}
                     >
                       {member.jobTitle}
@@ -327,7 +327,7 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
                       )}
                     </td>
                     <td
-                      className="border px-1.5 py-1 text-left bg-white"
+                      className="border px-1.5 py-1 text-left bg-white text-[10px]"
                       style={{ borderColor: borderColor }}
                     >
                       {isInteractive && !isPrintMode ? (
@@ -348,39 +348,39 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
                 );
               })}
 
-              {/* Additional Configurable Blank Rows for Manual Handwriting (Only rendered if configured > 0) */}
+              {/* Extra blank rows if configured */}
               {Array.from({ length: blankRowsNeeded }).map((_, bIdx) => {
                 const currentSNo = staff.length + bIdx + 1;
                 return (
                   <tr
                     key={`blank-row-${bIdx}`}
-                    className={isCompact ? 'h-7 sm:h-8' : 'h-8 sm:h-9'}
+                    className={isCompact ? 'h-8.5 sm:h-9' : 'h-10 sm:h-11'}
                   >
                     <td
-                      className="border px-1 py-1.5 text-center font-bold text-[11px]"
+                      className="border px-1 py-1 text-center font-bold text-[11px]"
                       style={{ borderColor: borderColor }}
                     >
                       {currentSNo}
                     </td>
-                    <td className="border px-2 py-1.5" style={{ borderColor: borderColor }}>&nbsp;</td>
-                    <td className="border px-1 py-1.5 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
-                    <td className="border px-2 py-1.5" style={{ borderColor: borderColor }}>&nbsp;</td>
-                    <td className="border px-1 py-1.5 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
-                    <td className="border px-1 py-1.5 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
-                    <td className="border px-1 py-1.5 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
-                    <td className="border px-1 py-1.5 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
-                    <td className="border px-1 py-1.5 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
-                    <td className="border px-1.5 py-1.5 text-left" style={{ borderColor: borderColor }}>&nbsp;</td>
+                    <td className="border px-2 py-1" style={{ borderColor: borderColor }}>&nbsp;</td>
+                    <td className="border px-1 py-1 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
+                    <td className="border px-2 py-1" style={{ borderColor: borderColor }}>&nbsp;</td>
+                    <td className="border px-1 py-1 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
+                    <td className="border px-1 py-1 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
+                    <td className="border px-1 py-1 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
+                    <td className="border px-1 py-1 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
+                    <td className="border px-1 py-1 text-center" style={{ borderColor: borderColor }}>&nbsp;</td>
+                    <td className="border px-1.5 py-1 text-left" style={{ borderColor: borderColor }}>&nbsp;</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
 
-          {/* Secondary Table: EMPLOYEE ON VACATION */}
-          <div className="mt-4 mb-3 max-w-[580px]">
+          {/* Secondary Table: EMPLOYEE ON VACATION (Exact as shown in user's original photo) */}
+          <div className="mt-2.5 mb-2 max-w-[580px]">
             <table
-              className="w-full border-collapse border text-[10.5px] sm:text-[11px] text-black"
+              className="w-full border-collapse border text-[10px] sm:text-[10.5px] text-black"
               style={{ borderColor: borderColor }}
             >
               <thead>
@@ -393,7 +393,7 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
                 >
                   <th
                     colSpan={3}
-                    className="border px-2 py-1 text-center font-black uppercase text-[11px]"
+                    className="border px-2 py-0.5 text-center font-black uppercase text-[10.5px] tracking-wide"
                     style={{ borderColor: borderColor }}
                   >
                     EMPLOYEE ON VACATION
@@ -407,7 +407,7 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
                   }}
                 >
                   <th
-                    className="border px-2 py-0.5 text-center min-w-[200px]"
+                    className="border px-2 py-0.5 text-center min-w-[190px]"
                     style={{ borderColor: borderColor }}
                   >
                     NAME
@@ -419,7 +419,7 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
                     ID
                   </th>
                   <th
-                    className="border px-2 py-0.5 text-center min-w-[180px]"
+                    className="border px-2 py-0.5 text-center min-w-[170px]"
                     style={{ borderColor: borderColor }}
                   >
                     JOB
@@ -428,21 +428,21 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
               </thead>
               <tbody>
                 {vacation.map((vac, vIdx) => (
-                  <tr key={`vac-${vac.idNo || vIdx}`} className="h-7 sm:h-7.5">
+                  <tr key={`vac-${vac.idNo || vIdx}`} className="h-7.5 sm:h-8">
                     <td
-                      className="border px-2 py-1 font-bold uppercase text-[10.5px]"
+                      className="border px-2 py-1 font-bold uppercase text-[10px]"
                       style={{ borderColor: borderColor }}
                     >
                       {vac.name}
                     </td>
                     <td
-                      className="border px-1.5 py-1 text-center font-mono font-semibold text-[10.5px]"
+                      className="border px-1.5 py-1 text-center font-mono font-semibold text-[10px]"
                       style={{ borderColor: borderColor }}
                     >
                       {vac.idNo}
                     </td>
                     <td
-                      className="border px-2 py-1 font-bold uppercase text-[10px]"
+                      className="border px-2 py-1 font-bold uppercase text-[9.5px]"
                       style={{ borderColor: borderColor }}
                     >
                       {vac.jobTitle}
@@ -450,7 +450,7 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
                   </tr>
                 ))}
                 {vacation.length === 0 && (
-                  <tr>
+                  <tr className="h-7.5">
                     <td className="border px-2 py-1 text-slate-400 italic" style={{ borderColor: borderColor }}>None</td>
                     <td className="border px-1.5 py-1 text-center text-slate-400 italic" style={{ borderColor: borderColor }}>-</td>
                     <td className="border px-2 py-1 text-slate-400 italic" style={{ borderColor: borderColor }}>-</td>
@@ -461,17 +461,17 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
           </div>
         </div>
 
-        {/* Signatures Section: Anchored cleanly at bottom */}
+        {/* Bottom Signatures Section: Anchored at the bottom inside the black border */}
         <div
-          className="pt-6 pb-2 px-3 flex items-center justify-between font-bold text-xs mt-auto"
+          className="pt-6 pb-2 px-4 flex items-center justify-between font-bold text-xs mt-auto w-full"
           style={{ color: titleColor }}
         >
           <div className="flex items-center space-x-2">
-            <span className="font-extrabold uppercase tracking-wide">
+            <span className="font-extrabold uppercase tracking-wide whitespace-nowrap">
               {config.supervisorTitle || 'SUPERVISOR'} :
             </span>
             <span
-              className="w-56 border-b inline-block"
+              className="w-64 sm:w-72 md:w-80 border-b-2 inline-block"
               style={{ borderBottomColor: borderColor }}
             >
               &nbsp;
@@ -479,11 +479,11 @@ export const DailyAttendanceSheetPage: React.FC<DailyAttendanceSheetPageProps> =
           </div>
 
           <div className="flex items-center space-x-2">
-            <span className="font-extrabold uppercase tracking-wide">
+            <span className="font-extrabold uppercase tracking-wide whitespace-nowrap">
               {config.hodTitle || 'H.O.D'} :
             </span>
             <span
-              className="w-56 border-b inline-block"
+              className="w-64 sm:w-72 md:w-80 border-b-2 inline-block"
               style={{ borderBottomColor: borderColor }}
             >
               &nbsp;
