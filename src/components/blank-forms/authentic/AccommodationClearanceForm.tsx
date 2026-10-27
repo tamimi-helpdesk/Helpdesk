@@ -90,11 +90,15 @@ export const AccommodationClearanceForm: React.FC<AccommodationClearanceFormProp
     setShowResidentSuggestions(false);
   };
 
-  // Item status change helper
+  // Item status change helper (clicking an active option unchecks/toggles it off)
   const handleItemStatus = (itemIndex: number, status: 'YES' | 'NO' | 'NP') => {
     if (!onFieldChange) return;
     const currentStatuses = { ...(data.itemStatuses || {}) };
-    currentStatuses[itemIndex] = status;
+    if (currentStatuses[itemIndex] === status) {
+      delete currentStatuses[itemIndex];
+    } else {
+      currentStatuses[itemIndex] = status;
+    }
     onFieldChange('itemStatuses', currentStatuses);
   };
 

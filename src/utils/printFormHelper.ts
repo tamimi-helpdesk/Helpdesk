@@ -137,19 +137,50 @@ export const buildPrintHtml = (
             box-shadow: none !important;
             border: none !important;
           }
+          @media print {
+            .print-helper-bar {
+              display: none !important;
+            }
+          }
         </style>
       </head>
       <body>
+        <div class="print-helper-bar no-print" style="position: sticky; top: 0; background: #0f172a; color: #fff; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-family: ui-sans-serif, system-ui, sans-serif;">
+          <div>
+            <div style="font-weight: 700; font-size: 14px;">${docTitle}</div>
+            <div style="font-size: 11px; color: #94a3b8;">${orientation === 'landscape' ? 'A4 Landscape' : 'A4 Portrait'} • Official Document</div>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button onclick="window.focus(); window.print();" style="background: #2563eb; color: #ffffff; border: none; padding: 8px 18px; border-radius: 8px; font-weight: bold; font-size: 12px; cursor: pointer;">
+              🖨️ Click to Print (Ctrl+P)
+            </button>
+            <button onclick="window.close();" style="background: #334155; color: #cbd5e1; border: none; padding: 8px 12px; border-radius: 8px; font-size: 12px; cursor: pointer;">
+              Close
+            </button>
+          </div>
+        </div>
         <div class="a4-print-wrapper">
           ${cloneHtml}
         </div>
+        <script>
+          window.addEventListener('load', function() {
+            setTimeout(function() {
+              try {
+                window.focus();
+                window.print();
+              } catch (e) {
+                console.warn('Auto print trigger error:', e);
+              }
+            }, 300);
+          });
+        </script>
       </body>
     </html>
   `;
 };
 
 /**
- * Open form in a clean standalone printable browser tab and trigger print immediately
+ * Open form in a clean standalone printable browser tab and trigger print immediately via Blob URL
  */
 export const openPrintableTab = (
   elementId = 'printable-official-form',
@@ -158,6 +189,7 @@ export const openPrintableTab = (
 ) => {
   const sourceElement = document.getElementById(elementId);
   if (!sourceElement) {
+    window.focus();
     window.print();
     return;
   }
@@ -169,23 +201,32 @@ export const openPrintableTab = (
     isLandscape ? 'landscape' : 'portrait'
   );
 
-  const printWindow = window.open('', '_blank');
-  if (printWindow) {
-    printWindow.document.open();
-    printWindow.document.write(printHtml);
-    printWindow.document.close();
+  try {
+    const blob = new Blob([printHtml], { type: 'text/html;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+
     setTimeout(() => {
-      printWindow.focus();
-      printWindow.print();
-    }, 400);
-  } else {
-    // Popup was blocked, trigger window.print()
+      try {
+        link.remove();
+        URL.revokeObjectURL(blobUrl);
+      } catch (_) {}
+    }, 15000);
+  } catch (e) {
+    console.warn('Blob link print failed, falling back to window.print():', e);
+    window.focus();
     window.print();
   }
 };
 
 /**
- * Direct print trigger that handles both iframe printing and browser fallback
+ * Direct print trigger that handles native browser print dialog reliably in Chrome
  */
 export const printOfficialDocument = (
   elementId = 'printable-official-form',
@@ -195,6 +236,7 @@ export const printOfficialDocument = (
     try {
       const sourceElement = document.getElementById(elementId);
       if (!sourceElement) {
+        window.focus();
         window.print();
         resolve(true);
         return;
@@ -220,9 +262,14 @@ export const printOfficialDocument = (
         }
       }
 
-      // Direct, infallible in-DOM print with native window.print() & isolated hidden iframe
+      if (preferPopup) {
+        openPrintableTab(elementId, docTitle, orientation === 'landscape');
+        resolve(true);
+        return;
+      }
+
+      // Clone the printable element with high-contrast text and values preserved
       const clone = preparePrintableClone(sourceElement);
-      const printHtml = buildPrintHtml(clone.outerHTML, docTitle, orientation);
 
       let printContainer = document.getElementById('official-document-print-container');
       if (!printContainer) {
@@ -230,52 +277,60 @@ export const printOfficialDocument = (
         printContainer.id = 'official-document-print-container';
         document.body.appendChild(printContainer);
       }
-      printContainer.innerHTML = printHtml;
+      printContainer.innerHTML = '';
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'a4-print-wrapper';
+      wrapper.appendChild(clone);
+      printContainer.appendChild(wrapper);
+
+      // Inject dynamic page orientation style
+      let styleTag = document.getElementById('official-document-print-style') as HTMLStyleElement | null;
+      if (!styleTag) {
+        styleTag = document.createElement('style');
+        styleTag.id = 'official-document-print-style';
+        document.head.appendChild(styleTag);
+      }
+      styleTag.innerHTML = `
+        @media print {
+          @page {
+            size: ${orientation === 'landscape' ? 'A4 landscape' : 'A4 portrait'} !important;
+            margin: ${orientation === 'landscape' ? '5mm 8mm' : '8mm 10mm'} !important;
+          }
+        }
+      `;
+
       document.body.classList.add('printing-official-doc-mode');
 
-      // Isolated hidden iframe print trigger (works inside sandboxed iframes)
-      let hiddenFrame = document.getElementById('official-print-hidden-iframe') as HTMLIFrameElement | null;
-      if (!hiddenFrame) {
-        hiddenFrame = document.createElement('iframe');
-        hiddenFrame.id = 'official-print-hidden-iframe';
-        hiddenFrame.style.position = 'fixed';
-        hiddenFrame.style.right = '0';
-        hiddenFrame.style.bottom = '0';
-        hiddenFrame.style.width = '0';
-        hiddenFrame.style.height = '0';
-        hiddenFrame.style.border = '0';
-        hiddenFrame.style.opacity = '0';
-        hiddenFrame.style.pointerEvents = 'none';
-        document.body.appendChild(hiddenFrame);
-      }
-
-      const frameDoc = hiddenFrame.contentWindow?.document || hiddenFrame.contentDocument;
-      if (frameDoc) {
-        frameDoc.open();
-        frameDoc.write(printHtml);
-        frameDoc.close();
-        setTimeout(() => {
-          try {
-            hiddenFrame?.contentWindow?.focus();
-            hiddenFrame?.contentWindow?.print();
-          } catch (err) {
-            window.print();
-          }
-        }, 250);
-      } else {
-        window.print();
+      const originalTitle = document.title;
+      if (docTitle) {
+        document.title = docTitle;
       }
 
       const cleanup = () => {
         document.body.classList.remove('printing-official-doc-mode');
         if (printContainer) printContainer.innerHTML = '';
+        document.title = originalTitle;
       };
+
       window.addEventListener('afterprint', cleanup, { once: true });
-      setTimeout(cleanup, 12000);
-      resolve(true);
+      setTimeout(cleanup, 4000);
+
+      // Directly trigger native browser print dialog!
+      setTimeout(() => {
+        try {
+          window.focus();
+          window.print();
+        } catch (err) {
+          console.warn('Native window.print() exception, opening fallback tab:', err);
+          openPrintableTab(elementId, docTitle, orientation === 'landscape');
+        }
+        resolve(true);
+      }, 50);
     } catch (e) {
-      console.error('Print utility fallback to window.print():', e);
+      console.error('Print utility fallback to direct window.print():', e);
       try {
+        window.focus();
         window.print();
       } catch (_) {}
       resolve(true);

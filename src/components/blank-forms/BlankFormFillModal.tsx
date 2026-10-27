@@ -127,7 +127,7 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
 
   // Clear Form Fields
   const handleClearForm = () => {
-    const emptyData: Record<string, string> = {};
+    const emptyData: Record<string, any> = {};
     template.headerFields.forEach((f) => {
       emptyData[f.name] = '';
     });
@@ -136,9 +136,13 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
         emptyData[f.name] = '';
       });
     }
+    emptyData['itemStatuses'] = {};
+    emptyData['ratings'] = {};
+    emptyData['items'] = [];
     setFormData(emptyData);
     setAttendanceRows([]);
     setMaterialRows([]);
+    setClearanceRows([]);
     setGatePassRows([]);
     setCustomRows([]);
   };
@@ -181,6 +185,11 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
     setPrintMenuOpen(false);
     setPrintNotice('Opening print dialog...');
 
+    if (blankPrint !== isBlankMode) {
+      setIsBlankMode(blankPrint);
+      await new Promise((r) => setTimeout(r, 60));
+    }
+
     try {
       await printOfficialDocument('printable-official-form', {
         isLandscape,
@@ -190,6 +199,7 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
     } catch (e) {
       console.error('Print trigger error:', e);
       try {
+        window.focus();
         window.print();
       } catch (err) {}
     } finally {
