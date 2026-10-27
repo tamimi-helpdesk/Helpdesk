@@ -214,6 +214,10 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
   const filteredTemplates = allTemplates.filter((tpl) => {
     if (selectedCategory === 'CUSTOM_ONLY') {
       if (!tpl.isCustomUploaded) return false;
+    } else if (selectedCategory === 'CLEARANCE') {
+      if (tpl.category !== 'CLEARANCE' && !tpl.id.includes('CLEARANCE')) return false;
+    } else if (selectedCategory === 'OPERATIONS') {
+      if (tpl.category !== 'OPERATIONS' && !tpl.id.includes('CLEARANCE')) return false;
     } else if (selectedCategory !== 'ALL') {
       if (tpl.category !== selectedCategory) return false;
     }
@@ -269,7 +273,7 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
     {
       id: 'CLEARANCE',
       label: 'Clearance & Exit',
-      count: allTemplates.filter((t) => t.category === 'CLEARANCE').length,
+      count: allTemplates.filter((t) => t.category === 'CLEARANCE' || t.id.includes('CLEARANCE')).length,
     },
     {
       id: 'LEGAL_COMPLIANCE',

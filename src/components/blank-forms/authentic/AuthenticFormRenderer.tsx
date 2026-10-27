@@ -13,6 +13,10 @@ import { OutGoingPermissionForm } from './OutGoingPermissionForm';
 import { LostAndFoundForm } from './LostAndFoundForm';
 import { CustomerSatisfactionForm } from './CustomerSatisfactionForm';
 import { LinenPickDropForm } from './LinenPickDropForm';
+import {
+  AccommodationClearanceWorkerForm,
+  AccommodationClearanceSeniorForm,
+} from './AccommodationClearanceForm';
 
 interface AuthenticFormRendererProps {
   template: FormTemplateDefinition;
@@ -66,6 +70,10 @@ export const AuthenticFormRenderer: React.FC<AuthenticFormRendererProps> = ({
       return <CustomerSatisfactionForm {...commonProps} />;
     case 'TAFGA-FRM-13-LINEN-PICK':
       return <LinenPickDropForm {...commonProps} />;
+    case 'TAFGA-FRM-14-CLEARANCE-WORKER':
+      return <AccommodationClearanceWorkerForm {...commonProps} />;
+    case 'TAFGA-FRM-15-CLEARANCE-SENIOR':
+      return <AccommodationClearanceSeniorForm {...commonProps} />;
     default:
       return null;
   }

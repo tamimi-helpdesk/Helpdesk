@@ -152,6 +152,7 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
       title: template.title,
       docRef,
       applicant:
+        formData.residentName ||
         formData.applicantName ||
         formData.employeeName ||
         formData.preparedBy ||
