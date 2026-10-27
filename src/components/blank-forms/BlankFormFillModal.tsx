@@ -26,7 +26,11 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
-import { printOfficialDocument, openPrintableTab } from '../../utils/printFormHelper';
+import {
+  printOfficialDocument,
+  openPrintableTab,
+  downloadPrintableHtml,
+} from '../../utils/printFormHelper';
 import { exportFormToCsv } from '../../utils/exportFormToExcel';
 
 interface BlankFormFillModalProps {
@@ -179,23 +183,23 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
     setTimeout(() => setSaveToast(false), 2500);
   };
 
-  // Bulletproof Direct Print with Multi-Strategy Fallback
-  const handlePrint = async (blankPrint = isBlankMode, preferPopup = false) => {
+  // Bulletproof Direct Print with Multi-Strategy Fallback (uses Blob URL tab so Chrome print always triggers)
+  const handlePrint = async (blankPrint = isBlankMode) => {
     setIsPrinting(true);
     setPrintMenuOpen(false);
-    setPrintNotice('Opening print dialog...');
+    setPrintNotice('Opening Chrome print dialog...');
 
     if (blankPrint !== isBlankMode) {
       setIsBlankMode(blankPrint);
-      await new Promise((r) => setTimeout(r, 60));
+      await new Promise((r) => setTimeout(r, 80));
     }
 
     try {
-      await printOfficialDocument('printable-official-form', {
-        isLandscape,
-        title: `${template.code} - ${template.title}`,
-        preferPopup,
-      });
+      openPrintableTab(
+        'printable-official-form',
+        `${template.code} - ${template.title}`,
+        isLandscape
+      );
     } catch (e) {
       console.error('Print trigger error:', e);
       try {
@@ -206,7 +210,7 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
       setTimeout(() => {
         setIsPrinting(false);
         setPrintNotice(null);
-      }, 1500);
+      }, 800);
     }
   };
 
@@ -214,6 +218,16 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
   const handleOpenPrintTab = () => {
     setPrintMenuOpen(false);
     openPrintableTab(
+      'printable-official-form',
+      `${template.code} - ${template.title}`,
+      isLandscape
+    );
+  };
+
+  // Download Standalone HTML file ready for offline double-click & print
+  const handleDownloadHtml = () => {
+    setPrintMenuOpen(false);
+    downloadPrintableHtml(
       'printable-official-form',
       `${template.code} - ${template.title}`,
       isLandscape
@@ -320,13 +334,13 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
               <div className="inline-flex rounded-lg shadow-sm">
                 <button
                   type="button"
-                  onClick={() => handlePrint(isBlankMode, false)}
+                  onClick={() => handlePrint(isBlankMode)}
                   disabled={isPrinting}
-                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-l-lg text-xs font-bold flex items-center space-x-1.5 shadow-md transition cursor-pointer disabled:opacity-50"
-                  title="Print Official Document"
+                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-l-lg text-xs font-bold flex items-center space-x-1.5 shadow-md transition cursor-pointer disabled:opacity-50"
+                  title="Print Official Document in Chrome"
                 >
                   <Printer className="w-4 h-4" />
-                  <span>{isPrinting ? 'Printing...' : 'Print Form'}</span>
+                  <span>{isPrinting ? 'Opening Print...' : 'Print Form'}</span>
                 </button>
                 <button
                   type="button"
@@ -340,18 +354,18 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
 
               {/* Print Dropdown Menu */}
               {printMenuOpen && (
-                <div className="absolute right-0 mt-1 w-56 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 py-1.5 text-slate-800 dark:text-slate-200 text-xs">
+                <div className="absolute right-0 mt-1 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 py-1.5 text-slate-800 dark:text-slate-200 text-xs">
                   <button
                     type="button"
-                    onClick={() => handlePrint(false, false)}
+                    onClick={() => handlePrint(false)}
                     className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center space-x-2 font-medium cursor-pointer"
                   >
                     <Printer className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Print Filled Form (A4)</span>
+                    <span>Print Filled Form (Chrome)</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => handlePrint(true, false)}
+                    onClick={() => handlePrint(true)}
                     className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center space-x-2 font-medium cursor-pointer"
                   >
                     <FileText className="w-3.5 h-3.5 text-amber-600" />
@@ -363,7 +377,15 @@ export const BlankFormFillModal: React.FC<BlankFormFillModalProps> = ({
                     className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center space-x-2 font-medium cursor-pointer border-t border-slate-100 dark:border-slate-800"
                   >
                     <ExternalLink className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Open Standalone Clean Tab</span>
+                    <span>Open Standalone Print Tab</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadHtml}
+                    className="w-full px-3 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center space-x-2 font-medium cursor-pointer border-t border-slate-100 dark:border-slate-800"
+                  >
+                    <Download className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Download Offline Print File (.html)</span>
                   </button>
                 </div>
               )}

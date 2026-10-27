@@ -95,6 +95,7 @@ export const buildPrintHtml = (
           * {
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
+            color-adjust: exact !important;
             box-sizing: border-box !important;
           }
           html, body {
@@ -108,6 +109,42 @@ export const buildPrintHtml = (
           .no-print, [data-no-print="true"], button.print\\:hidden, button {
             display: none !important;
           }
+          /* High-Contrast Clear Table & Layout Utilities */
+          table {
+            border-collapse: collapse !important;
+            width: 100% !important;
+            margin: 0 !important;
+          }
+          th, td {
+            border: 1px solid #000000 !important;
+            padding: 4px 6px !important;
+            vertical-align: middle !important;
+          }
+          .bg-\\[\\#4882b8\\] {
+            background-color: #4882b8 !important;
+            color: #ffffff !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .text-white { color: #ffffff !important; }
+          .text-slate-900 { color: #0f172a !important; }
+          .text-slate-950 { color: #020617 !important; }
+          .text-emerald-700 { color: #047857 !important; font-weight: 900 !important; }
+          .text-rose-700 { color: #be123c !important; font-weight: 900 !important; }
+          .text-amber-700 { color: #b45309 !important; font-weight: 900 !important; }
+          .text-center { text-align: center !important; }
+          .text-left { text-align: left !important; }
+          .text-right { text-align: right !important; }
+          .font-bold { font-weight: 700 !important; }
+          .font-semibold { font-weight: 600 !important; }
+          .uppercase { text-transform: uppercase !important; }
+          .flex { display: flex !important; }
+          .items-center { align-items: center !important; }
+          .justify-between { justify-content: space-between !important; }
+          .justify-start { justify-content: flex-start !important; }
+          .justify-end { justify-content: flex-end !important; }
+          .w-full { width: 100% !important; }
+          .min-h-\\[1050px\\] { min-height: 1000px !important; }
           input, textarea, select {
             border: none !important;
             background: transparent !important;
@@ -122,18 +159,11 @@ export const buildPrintHtml = (
           input::placeholder, textarea::placeholder {
             color: transparent !important;
           }
-          table {
-            border-collapse: collapse !important;
-            width: 100% !important;
-          }
-          th, td {
-            border-color: #000000 !important;
-          }
           .a4-print-wrapper {
             width: 100% !important;
             max-width: ${orientation === 'landscape' ? '1120px' : '840px'} !important;
             margin: 0 auto !important;
-            padding: 0 !important;
+            padding: ${orientation === 'landscape' ? '8px 12px' : '14px 18px'} !important;
             box-shadow: none !important;
             border: none !important;
           }
@@ -145,17 +175,17 @@ export const buildPrintHtml = (
         </style>
       </head>
       <body>
-        <div class="print-helper-bar no-print" style="position: sticky; top: 0; background: #0f172a; color: #fff; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-family: ui-sans-serif, system-ui, sans-serif;">
+        <div class="print-helper-bar no-print" style="position: sticky; top: 0; background: #0f172a; color: #fff; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.15); font-family: ui-sans-serif, system-ui, sans-serif;">
           <div>
-            <div style="font-weight: 700; font-size: 14px;">${docTitle}</div>
+            <div style="font-weight: 700; font-size: 14px;">TAMIMI GLOBAL COMPANY LTD. — ${docTitle}</div>
             <div style="font-size: 11px; color: #94a3b8;">${orientation === 'landscape' ? 'A4 Landscape' : 'A4 Portrait'} • Official Document</div>
           </div>
           <div style="display: flex; gap: 8px;">
-            <button onclick="window.focus(); window.print();" style="background: #2563eb; color: #ffffff; border: none; padding: 8px 18px; border-radius: 8px; font-weight: bold; font-size: 12px; cursor: pointer;">
-              🖨️ Click to Print (Ctrl+P)
+            <button onclick="window.focus(); window.print();" style="background: #10b981; color: #ffffff; border: none; padding: 8px 18px; border-radius: 8px; font-weight: bold; font-size: 12px; cursor: pointer;">
+              🖨️ Click to Print Now (Ctrl+P)
             </button>
-            <button onclick="window.close();" style="background: #334155; color: #cbd5e1; border: none; padding: 8px 12px; border-radius: 8px; font-size: 12px; cursor: pointer;">
-              Close
+            <button onclick="window.close();" style="background: #334155; color: #cbd5e1; border: none; padding: 8px 14px; border-radius: 8px; font-size: 12px; cursor: pointer;">
+              ✕ Close
             </button>
           </div>
         </div>
@@ -177,6 +207,44 @@ export const buildPrintHtml = (
       </body>
     </html>
   `;
+};
+
+/**
+ * Downloads a standalone offline HTML file ready to double-click and print in Chrome or any browser
+ */
+export const downloadPrintableHtml = (
+  elementId = 'printable-official-form',
+  docTitle = 'Official Form - Printable View',
+  isLandscape = false
+) => {
+  const sourceElement = document.getElementById(elementId);
+  if (!sourceElement) return;
+
+  const clone = preparePrintableClone(sourceElement);
+  const printHtml = buildPrintHtml(
+    clone.outerHTML,
+    docTitle,
+    isLandscape ? 'landscape' : 'portrait'
+  );
+
+  const filename = `${docTitle.replace(/[^A-Za-z0-9_-]/g, '_')}.html`;
+  try {
+    const blob = new Blob([printHtml], { type: 'text/html;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => {
+      try {
+        link.remove();
+        URL.revokeObjectURL(blobUrl);
+      } catch (_) {}
+    }, 4000);
+  } catch (e) {
+    console.warn('Download HTML error:', e);
+  }
 };
 
 /**
@@ -225,6 +293,14 @@ export const openPrintableTab = (
   }
 };
 
+export const isRunningInIframe = (): boolean => {
+  try {
+    return window.self !== window.top;
+  } catch (e) {
+    return true;
+  }
+};
+
 /**
  * Direct print trigger that handles native browser print dialog reliably in Chrome
  */
@@ -244,7 +320,7 @@ export const printOfficialDocument = (
 
       let orientation: 'portrait' | 'landscape' = 'portrait';
       let docTitle = 'TAFGA Official Form';
-      let preferPopup = false;
+      let preferPopup = true; // Default to true so Chrome top-level tab is opened reliably
 
       if (typeof optionsOrOrientation === 'string') {
         orientation = optionsOrOrientation;
@@ -257,12 +333,14 @@ export const printOfficialDocument = (
         if (optionsOrOrientation.title) {
           docTitle = optionsOrOrientation.title;
         }
-        if (optionsOrOrientation.preferPopup) {
-          preferPopup = true;
+        if (optionsOrOrientation.preferPopup !== undefined) {
+          preferPopup = optionsOrOrientation.preferPopup;
         }
       }
 
-      if (preferPopup) {
+      // If running inside an iframe (like AI Studio or web embeds), Chrome blocks in-iframe window.print()
+      // Opening a standalone Blob URL tab bypasses all iframe sandbox restrictions 100% reliably!
+      if (preferPopup || isRunningInIframe()) {
         openPrintableTab(elementId, docTitle, orientation === 'landscape');
         resolve(true);
         return;
