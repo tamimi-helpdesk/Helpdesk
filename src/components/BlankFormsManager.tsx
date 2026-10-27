@@ -108,6 +108,12 @@ export const BlankFormsManager: React.FC<BlankFormsManagerProps> = ({ onRefresh 
     window.addEventListener('blank_forms_updated', handleUpdate);
     window.addEventListener('tamimi_blank_from_updated', handleUpdate);
     window.addEventListener('storage', handleUpdate);
+    BlankFromService.init().then((rows) => {
+      if (rows && rows.length > 0) {
+        setResidentCount(rows.length);
+      }
+    });
+
     return () => {
       window.removeEventListener('blank_forms_updated', handleUpdate);
       window.removeEventListener('tamimi_blank_from_updated', handleUpdate);

@@ -47,6 +47,7 @@ import { ExcelImportSettings, ExcelImportSettingsService } from '../../services/
 import { ExcelImportSettingsModal } from './ExcelImportSettingsModal';
 import { ExcelImportPreviewModal, ExcelImportScanResult } from './ExcelImportPreviewModal';
 import { AddEmployeeModal } from './AddEmployeeModal';
+import { CloudDatabaseSyncModal } from './CloudDatabaseSyncModal';
 import redseaLogo from '../../assets/images/redsea-cm-logo.jpeg';
 
 interface AutoFormSectionProps {
@@ -108,6 +109,9 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
   const [showOnlyCustom, setShowOnlyCustom] = useState(false);
   const [isAddEmployeeModalOpen, setIsAddEmployeeModalOpen] = useState(false);
   const [isSyncingToSheet, setIsSyncingToSheet] = useState(false);
+  const [isCloudSyncModalOpen, setIsCloudSyncModalOpen] = useState(false);
+  const [showCloudNotice, setShowCloudNotice] = useState(true);
+  const [isQuickSyncing, setIsQuickSyncing] = useState(false);
 
   const excelUploadRef = useRef<HTMLInputElement>(null);
 
@@ -413,13 +417,27 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
 
   // Download master Excel file
   const handleDownloadMasterExcel = () => {
-    const a = document.createElement('a');
-    a.href = './Management Allocation History.xlsx';
-    a.download = 'Management Allocation History.xlsx';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    ToastService.hub('Downloaded Management Allocation History.xlsx');
+    BlankFromService.exportFullDatabaseToExcel();
+    ToastService.hub(`Exported full ${rows.length.toLocaleString()} resident records to Excel!`);
+  };
+
+  const handleQuickCloudPush = async () => {
+    if (isQuickSyncing) return;
+    setIsQuickSyncing(true);
+    try {
+      const res = await BlankFromService.pushCatalogToCloud();
+      if (res.success) {
+        confetti({ particleCount: 70, spread: 80 });
+        ToastService.hub(res.message);
+        setShowCloudNotice(false);
+      } else {
+        ToastService.warn(res.message);
+      }
+    } catch (err: any) {
+      ToastService.warn(`Cloud push failed: ${err?.message || 'Error'}`);
+    } finally {
+      setIsQuickSyncing(false);
+    }
   };
 
   // Strict Incremental Excel Import: Collects ONLY brand new unique records, skips duplicates
@@ -739,13 +757,73 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
             type="button"
             onClick={handleDownloadMasterExcel}
             className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
-            title="Download Management Allocation History.xlsx"
+            title="Download full resident database as Excel (.xlsx)"
           >
             <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
             <span>Excel Data</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => setIsCloudSyncModalOpen(true)}
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-95 text-white text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
+            title="Multi-Workstation Database Synchronization & Global Cloud Storage"
+          >
+            <Cloud className="w-3.5 h-3.5" />
+            <span>Cloud Sync</span>
+          </button>
         </div>
       </div>
+
+      {/* Multi-Workstation Cloud Sync Banner */}
+      {showCloudNotice && (
+        <div className="bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-emerald-500/10 border border-blue-200 dark:border-blue-800 rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+              <Cloud className="w-5 h-5 text-blue-600 animate-pulse" />
+            </div>
+            <div>
+              <h4 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white flex flex-wrap items-center gap-2">
+                <span>Multi-Workstation Cloud Sync (সব কম্পিউটারে ৩,৪০৪ ডাটা সিঙ্ক)</span>
+                <span className="text-[10px] bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded font-black">
+                  {rows.length.toLocaleString()} LOCAL RECORDS
+                </span>
+              </h4>
+              <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 max-w-3xl leading-relaxed">
+                আপনার এই কম্পিউটারের <strong>{rows.length.toLocaleString()}</strong> জন রেসিডেন্টের ডাটা অন্যান্য সকল কম্পিউটারে স্বয়ংক্রিয়ভাবে পাঠাতে <strong>'Sync to Cloud'</strong> বাটনে একবার ক্লিক করুন। ক্লাউডে সেভ হয়ে গেলে বাকি সব কম্পিউটারগুলো ওপেন করলেই স্বয়ংক্রিয়ভাবে সম্পূর্ণ ডাটাবেজ পেয়ে যাবে।
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end">
+            <button
+              type="button"
+              onClick={handleQuickCloudPush}
+              disabled={isQuickSyncing}
+              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-50"
+              title="Push records to Cloud Firestore"
+            >
+              <Upload className={`w-3.5 h-3.5 ${isQuickSyncing ? 'animate-bounce' : ''}`} />
+              <span>{isQuickSyncing ? 'Syncing...' : 'Sync to Cloud (ক্লাউডে সেভ করুন)'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsCloudSyncModalOpen(true)}
+              className="px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-50 transition"
+              title="Open Cloud Settings"
+            >
+              Options
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowCloudNotice(false)}
+              className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              title="Dismiss notice"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Selected Resident & Form Action Panel (Replaces the giant 850px preview) */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
@@ -1750,6 +1828,17 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
         isOpen={isAddEmployeeModalOpen}
         onClose={() => setIsAddEmployeeModalOpen(false)}
         onSave={handleSaveSingleEmployee}
+      />
+
+      {/* MODAL: Multi-Workstation Cloud Database Sync Modal */}
+      <CloudDatabaseSyncModal
+        isOpen={isCloudSyncModalOpen}
+        onClose={() => setIsCloudSyncModalOpen(false)}
+        localCount={rows.length}
+        onDatabaseUpdated={() => {
+          const updated = BlankFromService.getRows();
+          setRows(updated);
+        }}
       />
 
       {/* HIDDEN PRINTABLE CONTAINER FOR BROWSER PRINT (WINDOW.PRINT()) */}

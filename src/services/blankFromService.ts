@@ -2,6 +2,8 @@ import * as XLSX from 'xlsx';
 import { BlankFromRow, INITIAL_BLANK_FROM_ROWS, EMPTY_BLANK_FROM_ROW } from '../data/initialBlankFromData';
 import { GasService } from './gasService';
 import { ExcelImportSettings, ExcelImportSettingsService } from './excelImportSettingsService';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { CloudDatabaseService } from './firebaseService';
 
 const STORAGE_KEY = 'tamimi_blank_from_sheet_cache_v2';
 const GSHEET_URL_KEY = 'tamimi_blank_from_gsheet_url_v2';
@@ -291,6 +293,7 @@ export class BlankFromService {
         this.setCachedRowsAndIndex(merged);
         this.isInitialized = true;
         LargeDatasetStorage.saveAll(merged).catch(() => {});
+        this.autoHydrateFromCloudIfAvailable().catch(() => {});
         return merged;
       }
 
@@ -304,6 +307,7 @@ export class BlankFromService {
             this.setCachedRowsAndIndex(merged);
             this.isInitialized = true;
             LargeDatasetStorage.saveAll(merged).catch(() => {});
+            this.autoHydrateFromCloudIfAvailable().catch(() => {});
             return merged;
           }
         }
@@ -317,6 +321,7 @@ export class BlankFromService {
     this.setCachedRowsAndIndex(masterMerged);
     this.isInitialized = true;
     LargeDatasetStorage.saveAll(masterMerged).catch(() => {});
+    this.autoHydrateFromCloudIfAvailable().catch(() => {});
     return this.cachedRows || [];
   }
 
@@ -1648,5 +1653,299 @@ export class BlankFromService {
   public static resetToDefaultRows(): BlankFromRow[] {
     this.saveRows([...INITIAL_BLANK_FROM_ROWS]);
     return [...INITIAL_BLANK_FROM_ROWS];
+  }
+
+  /**
+   * Pushes the entire active resident database to Cloud Firestore
+   * in chunked batches (400 items per chunk) into 'blank_form_residents_catalog'.
+   * Makes the complete dataset (e.g. 3,404 records) globally available across all computers.
+   */
+  public static async pushCatalogToCloud(
+    onProgress?: (current: number, total: number, message: string) => void
+  ): Promise<{ success: boolean; message: string; count: number }> {
+    const db = CloudDatabaseService.getDb();
+    if (!db) {
+      return { success: false, message: 'Cloud database connection is currently unavailable.', count: 0 };
+    }
+
+    const rows = this.getRows();
+    if (!rows || rows.length === 0) {
+      return { success: false, message: 'No resident records available to push.', count: 0 };
+    }
+
+    try {
+      const CHUNK_SIZE = 400;
+      const totalChunks = Math.ceil(rows.length / CHUNK_SIZE);
+
+      if (onProgress) onProgress(0, totalChunks, `Preparing ${rows.length.toLocaleString()} records for cloud upload...`);
+
+      const cleanRecordForFirestore = (rec: any): any => {
+        if (!rec || typeof rec !== 'object') return rec;
+        const clean: Record<string, any> = {};
+        for (const [k, v] of Object.entries(rec)) {
+          if (v !== undefined) {
+            clean[k] = v;
+          }
+        }
+        return clean;
+      };
+
+      for (let i = 0; i < totalChunks; i++) {
+        const chunkSlice = rows.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        const cleanedChunk = chunkSlice.map(cleanRecordForFirestore);
+        const chunkRef = doc(db, 'blank_form_residents_catalog', `chunk_${i}`);
+        await setDoc(chunkRef, {
+          chunkIndex: i,
+          recordsCount: cleanedChunk.length,
+          records: cleanedChunk,
+          updatedAt: new Date().toISOString(),
+        });
+        if (onProgress) {
+          onProgress(
+            i + 1,
+            totalChunks,
+            `Uploaded chunk ${i + 1} of ${totalChunks} (${Math.min((i + 1) * CHUNK_SIZE, rows.length).toLocaleString()}/${rows.length.toLocaleString()} records)...`
+          );
+        }
+      }
+
+      // Write master metadata document
+      const metaRef = doc(db, 'blank_form_residents_catalog', 'meta');
+      await setDoc(metaRef, {
+        totalRecords: rows.length,
+        chunksCount: totalChunks,
+        chunkSize: CHUNK_SIZE,
+        updatedAt: new Date().toISOString(),
+        version: Date.now(),
+        lastSyncDevice: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 50) : 'Workstation',
+      });
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('tamimi_blank_from_cloud_synced_at', new Date().toISOString());
+        localStorage.setItem('tamimi_blank_from_cloud_count', String(rows.length));
+      }
+
+      return {
+        success: true,
+        message: `Successfully uploaded ${rows.length.toLocaleString()} resident records to Cloud! All other computers will now sync automatically.`,
+        count: rows.length,
+      };
+    } catch (err: any) {
+      console.error('pushCatalogToCloud error:', err);
+      return {
+        success: false,
+        message: `Cloud upload failed: ${err?.message || 'Network error'}`,
+        count: 0,
+      };
+    }
+  }
+
+  /**
+   * Inspects Cloud Firestore metadata to check remote record count and last sync date.
+   */
+  public static async getCloudCatalogMeta(): Promise<{ totalRecords: number; updatedAt?: string; chunksCount: number } | null> {
+    try {
+      const db = CloudDatabaseService.getDb();
+      if (!db) return null;
+      const metaRef = doc(db, 'blank_form_residents_catalog', 'meta');
+      const metaSnap = await getDoc(metaRef);
+      if (!metaSnap.exists()) return null;
+      const data = metaSnap.data();
+      return {
+        totalRecords: Number(data.totalRecords) || 0,
+        updatedAt: data.updatedAt,
+        chunksCount: Number(data.chunksCount) || 0,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Fetches the entire resident database from Cloud Firestore,
+   * reassembles chunks, and hydrates local IndexedDB + memory cache.
+   */
+  public static async fetchCatalogFromCloud(
+    onProgress?: (current: number, total: number, message: string) => void
+  ): Promise<{ success: boolean; message: string; count: number; rows?: BlankFromRow[] }> {
+    const db = CloudDatabaseService.getDb();
+    if (!db) {
+      return { success: false, message: 'Cloud database connection is currently unavailable.', count: 0 };
+    }
+
+    try {
+      const metaRef = doc(db, 'blank_form_residents_catalog', 'meta');
+      const metaSnap = await getDoc(metaRef);
+      if (!metaSnap.exists()) {
+        return {
+          success: false,
+          message: 'No resident dataset has been published to the Cloud yet. Please push from the primary workstation first.',
+          count: 0,
+        };
+      }
+
+      const meta = metaSnap.data();
+      const chunksCount = Number(meta.chunksCount) || 0;
+      const totalExpected = Number(meta.totalRecords) || 0;
+
+      if (chunksCount <= 0 || totalExpected <= 0) {
+        return { success: false, message: 'Cloud catalog is empty.', count: 0 };
+      }
+
+      if (onProgress) onProgress(0, chunksCount, `Downloading ${totalExpected.toLocaleString()} records from Cloud...`);
+
+      const assembled: BlankFromRow[] = [];
+      for (let i = 0; i < chunksCount; i++) {
+        const chunkRef = doc(db, 'blank_form_residents_catalog', `chunk_${i}`);
+        const snap = await getDoc(chunkRef);
+        if (snap.exists()) {
+          const cData = snap.data();
+          if (Array.isArray(cData.records)) {
+            assembled.push(...cData.records);
+          }
+        }
+        if (onProgress) {
+          onProgress(i + 1, chunksCount, `Downloaded chunk ${i + 1} of ${chunksCount} (${assembled.length.toLocaleString()} records)...`);
+        }
+      }
+
+      if (assembled.length > 0) {
+        this.saveRows(assembled);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('tamimi_blank_from_cloud_synced_at', meta.updatedAt || new Date().toISOString());
+          localStorage.setItem('tamimi_blank_from_cloud_count', String(assembled.length));
+          window.dispatchEvent(new CustomEvent('tamimi_blank_from_updated'));
+        }
+        return {
+          success: true,
+          message: `Successfully loaded ${assembled.length.toLocaleString()} resident records from Cloud!`,
+          count: assembled.length,
+          rows: assembled,
+        };
+      }
+
+      return { success: false, message: 'Failed to read records from Cloud.', count: 0 };
+    } catch (err: any) {
+      console.error('fetchCatalogFromCloud error:', err);
+      return {
+        success: false,
+        message: `Cloud download failed: ${err?.message || 'Network error'}`,
+        count: 0,
+      };
+    }
+  }
+
+  /**
+   * Automatically inspects Cloud Firestore in the background on startup.
+   * If Cloud has more records than this computer's local database (e.g. 3,404 vs 1,223),
+   * seamlessly hydrates the local IndexedDB and notifies UI.
+   */
+  public static async autoHydrateFromCloudIfAvailable(): Promise<void> {
+    if (typeof window === 'undefined') return;
+    try {
+      const db = CloudDatabaseService.getDb();
+      if (!db) return;
+
+      const metaRef = doc(db, 'blank_form_residents_catalog', 'meta');
+      const metaSnap = await getDoc(metaRef);
+      if (!metaSnap.exists()) return;
+
+      const meta = metaSnap.data();
+      const cloudCount = Number(meta.totalRecords) || 0;
+      const currentLocal = this.cachedRows?.length || 0;
+
+      // If Cloud has more records than local, or if local is just baseline (< 1500) and Cloud has > 1500
+      if (cloudCount > 0 && cloudCount > currentLocal) {
+        console.log(`[Cloud Auto-Hydrate] Upgrading local records (${currentLocal}) to Cloud catalog (${cloudCount})...`);
+        await this.fetchCatalogFromCloud();
+      }
+    } catch (e) {
+      console.warn('[Cloud Auto-Hydrate] Check skipped:', e);
+    }
+  }
+
+  /**
+   * Exports the entire active database (all 3,404 records) to a clean Excel spreadsheet
+   */
+  public static exportFullDatabaseToExcel(): void {
+    const rows = this.getRows();
+    if (!rows || rows.length === 0) return;
+
+    const dataToExport = rows.map((r, idx) => ({
+      'S.No': idx + 1,
+      'Employment ID': r.employmentId || '',
+      'Name': r.name || '',
+      'Building No': r.buildingNo || r.house || '',
+      'Unit No': r.unitNo || r.room || '',
+      'Unit Serial No': r.unitSerialNo || r.unit || '',
+      'Property Type': r.propertyType || '',
+      'Contract Type': r.contractType || '',
+      'Status': r.status || '',
+      'ID / Iqama': r.idIqama || '',
+      'Passport': r.passport || '',
+      'Mobile': r.mobile || '',
+      'Company': r.company || '',
+      'Department': r.department || '',
+      'Designation': r.designation || '',
+      'Nationality': r.nationality || '',
+      'Move In Date': r.moveInDate || '',
+      'Move Out Date': r.moveOutDate || '',
+      'Emergency Mobile': r.emergencyMobile || '',
+      'Emergency Name': r.emergencyName || '',
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Residents Database');
+    XLSX.writeFile(wb, `Management_Allocation_Residents_${rows.length}_Records.xlsx`);
+  }
+
+  /**
+   * Exports full resident database as an offline JSON backup file
+   */
+  public static exportDatabaseJson(): void {
+    const rows = this.getRows();
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      totalRecords: rows.length,
+      records: rows,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tamimi_blank_forms_database_${rows.length}_residents.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  /**
+   * Restores database from a previously exported JSON backup file
+   */
+  public static async importDatabaseJson(file: File): Promise<{ success: boolean; count: number; message: string }> {
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const incoming: BlankFromRow[] = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.records)
+        ? parsed.records
+        : [];
+
+      if (!incoming || incoming.length === 0) {
+        return { success: false, count: 0, message: 'No valid records found in JSON file.' };
+      }
+
+      this.saveRows(incoming);
+      return {
+        success: true,
+        count: incoming.length,
+        message: `Successfully imported ${incoming.length.toLocaleString()} resident records from backup file.`,
+      };
+    } catch (err: any) {
+      return { success: false, count: 0, message: `Could not parse JSON file: ${err?.message || 'Invalid format'}` };
+    }
   }
 }
