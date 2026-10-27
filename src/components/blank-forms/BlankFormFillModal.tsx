@@ -23,6 +23,7 @@ import {
   ZoomOut,
   Maximize2,
   Info,
+  Download,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';

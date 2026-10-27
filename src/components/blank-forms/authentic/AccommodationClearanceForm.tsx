@@ -72,20 +72,20 @@ export const AccommodationClearanceForm: React.FC<AccommodationClearanceFormProp
       setShowResidentSuggestions(false);
       return;
     }
-    const matches = BlankFromService.search({ query: val }).slice(0, 5);
+    const matches = BlankFromService.searchRows(val).slice(0, 5);
     setResidentResults(matches);
     setShowResidentSuggestions(matches.length > 0);
   };
 
   const handleSelectResident = (res: BlankFromRow) => {
     if (!onFieldChange) return;
-    onFieldChange('residentName', res.residentName || '');
-    onFieldChange('companyId', res.employmentId || res.nationalIdIqama || '');
+    onFieldChange('residentName', res.name || '');
+    onFieldChange('companyId', res.employmentId || res.idIqama || '');
     onFieldChange('contactNumber', res.mobile || '');
     onFieldChange('companyName', res.company || 'Red Sea Global');
-    onFieldChange('buildingNo', res.buildingNo || '');
-    onFieldChange('roomNo', res.unitNo || '');
-    onFieldChange('floorNo', res.floorNo || '1');
+    onFieldChange('buildingNo', res.buildingNo || res.house || '');
+    onFieldChange('roomNo', res.unitNo || res.room || '');
+    onFieldChange('floorNo', res.floor || '1');
     setResidentQuery('');
     setShowResidentSuggestions(false);
   };
@@ -170,9 +170,9 @@ export const AccommodationClearanceForm: React.FC<AccommodationClearanceFormProp
                       onClick={() => handleSelectResident(res)}
                       className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-slate-100 cursor-pointer flex flex-col"
                     >
-                      <span className="font-bold text-slate-900">{res.residentName}</span>
+                      <span className="font-bold text-slate-900">{res.name}</span>
                       <span className="text-[10px] text-slate-500">
-                        ID: {res.employmentId} | Room: {res.unitNo} ({res.buildingNo})
+                        ID: {res.employmentId} | Room: {res.unitNo || res.room} ({res.buildingNo || res.house})
                       </span>
                     </button>
                   ))}
