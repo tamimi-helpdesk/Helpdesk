@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { TamimiLogo } from './TamimiLogo';
 import { AuthService } from '../services/authService';
+import receptionBg from '../assets/images/reception_cartoon_banner_1788373756489.jpg';
 
 interface LoginPageProps {
   onLoginSuccess: () => void;
@@ -105,21 +106,27 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     lockoutMin > 0 ? `${lockoutMin}m ${lockoutSecRem}s` : `${lockoutSecRem}s`;
 
   return (
-    <div className="min-h-screen w-full flex flex-col justify-between bg-slate-900 text-slate-100 transition-colors duration-300 relative overflow-hidden font-sans">
-      {/* Sleek, professional geometric gradient background (zero cartoon clutter) */}
-      <div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(14,116,144,0.3),rgba(255,255,255,0))] dark:bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(2,132,199,0.2),rgba(0,0,0,0))] pointer-events-none" />
+    <div className="min-h-screen w-full flex flex-col justify-between bg-slate-950 text-slate-100 transition-colors duration-300 relative overflow-hidden font-sans">
+      {/* High-Resolution Reception & Helpdesk Background Image */}
+      <div
+        className="absolute inset-0 z-0 bg-cover bg-center bg-no-repeat transition-all duration-700 transform scale-105"
+        style={{ backgroundImage: `url(${receptionBg})` }}
+      />
+      {/* Ambient Gradient & Frosted Overlay for high-end cinematic feel and crystal-clear contrast */}
+      <div className="absolute inset-0 z-0 bg-slate-950/65 dark:bg-slate-950/80 backdrop-blur-[2px] pointer-events-none" />
+      <div className="absolute inset-0 z-0 bg-gradient-to-t from-slate-950 via-slate-950/50 to-slate-950/85 pointer-events-none" />
       <div className="absolute inset-0 z-0 opacity-15 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:28px_28px] pointer-events-none" />
 
       {/* Top Header Bar */}
       <header className="relative z-10 w-full max-w-7xl mx-auto px-4 sm:px-8 py-5 flex items-center justify-between">
         <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-2 px-3.5 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700/80 backdrop-blur-md shadow-xs">
+          <div className="flex items-center space-x-2 px-3.5 py-1.5 rounded-xl bg-slate-900/85 border border-slate-700/80 backdrop-blur-md shadow-lg">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-xs font-bold tracking-wider text-slate-200 uppercase">
               TAMIMI GLOBAL COMPANY LTD. (TAFGA)
             </span>
           </div>
-          <span className="hidden md:inline-block text-xs font-medium text-slate-400">
+          <span className="hidden md:inline-block text-xs font-medium text-slate-300 bg-slate-900/70 border border-slate-700/60 px-3 py-1 rounded-xl backdrop-blur-md shadow-xs">
             Triple Bay Village #188 • Operations Portal
           </span>
         </div>
@@ -129,7 +136,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           type="button"
           onClick={toggleTheme}
           aria-label="Toggle Theme"
-          className="flex items-center space-x-2 px-3.5 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700/80 text-slate-200 text-xs font-bold shadow-xs transition cursor-pointer"
+          className="flex items-center space-x-2 px-3.5 py-1.5 rounded-xl bg-slate-900/85 hover:bg-slate-800/90 border border-slate-700/80 text-slate-200 text-xs font-bold shadow-lg backdrop-blur-md transition cursor-pointer"
         >
           {theme === 'dark' || theme === 'amoled' ? (
             <>
@@ -147,7 +154,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
       {/* Main Centered Login Section: Crisp, Clean, Enterprise Professional */}
       <main className="relative z-10 flex-1 flex items-center justify-center p-4 sm:p-6 py-10">
-        <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 space-y-5 text-slate-900 dark:text-white">
+        <div className="w-full max-w-md bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl border border-slate-200/90 dark:border-slate-800/90 rounded-3xl shadow-2xl p-6 sm:p-8 space-y-5 text-slate-900 dark:text-white">
           
           {/* Logo & Portal Branding */}
           <div className="flex flex-col items-center text-center">
@@ -332,8 +339,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       </main>
 
       {/* Corporate Page Footer */}
-      <footer className="relative z-10 w-full py-4 text-center text-xs text-slate-400 dark:text-slate-500">
-        <div className="flex items-center justify-center space-x-2 max-w-fit mx-auto">
+      <footer className="relative z-10 w-full py-4 text-center text-xs text-slate-300 dark:text-slate-400">
+        <div className="flex items-center justify-center space-x-2 max-w-fit mx-auto px-4 py-1.5 rounded-full bg-slate-900/75 border border-slate-800/80 backdrop-blur-md shadow-sm">
           <span>Official Portal</span>
           <span>·</span>
           <span>Tamimi Global Company Ltd. (TAFGA)</span>
