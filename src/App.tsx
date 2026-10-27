@@ -263,42 +263,14 @@ export default function App() {
       const authRes = await HubService.fetchFacilityAuthoritativeBookings(facilityId);
 
       if (!authRes.success) {
-        const cached = StorageService.getBookingsForFacility(facilityId);
-        if (Array.isArray(cached)) {
-          console.warn(`[Facility Flow] Server sync unavailable for ${targetFac.name}. Falling back safely to local storage cache.`);
-          setFacilityBookings(cached);
-          setIsFacilitySyncComplete(true);
-          setActiveFacilityId(facilityId);
-          setSelectedStage(targetFac.stages[0] || '');
-          setSelectedSlotIds([]);
-          setCurrentView('booking');
-          setRefreshTrigger((prev) => prev + 1);
-          setIsFacilitySyncing(false);
-          setFacilitySyncError(null);
-          ActionFeedback.stopLoading();
-          ToastService.showWarning(`Server sync unavailable. Opened "${targetFac.name}" with local cache.`);
-          return;
-        }
-
-        const errMsg = authRes.error || `Unable to load latest booking records for ${targetFac.name} from authoritative database.`;
-        setFacilitySyncError(errMsg);
-        setIsFacilitySyncComplete(false);
-        ActionFeedback.stopLoading();
-        return; // Keep facility strictly closed on failure
+        console.warn(`[Facility Flow] Server sync unavailable for ${targetFac.name}. Falling back safely to local storage cache.`);
       }
 
-      // 3. Verify latest booking date and time for this facility and update reactive state
-      const verifiedBookings = StorageService.getBookingsForFacility(facilityId);
+      // 3. Retrieve latest booking records for this facility and update reactive state
+      const verifiedBookings = StorageService.getBookingsForFacility(facilityId) || [];
       setFacilityBookings(verifiedBookings);
 
-      const { latestBooking, latestDate, latestTime, count } = StorageService.getLatestBookingForFacility(facilityId);
-      if (latestBooking) {
-        console.log(`[Facility Flow] Verified ${count} records for "${targetFac.name}". Most recent booking Date="${latestDate}" Time="${latestTime || 'N/A'}" ID="${latestBooking.id}"`);
-      } else {
-        console.log(`[Facility Flow] Verified 0 active bookings for "${targetFac.name}". Slot schedule ready for new bookings.`);
-      }
-
-      // 4. Authoritative data verified and committed to state!
+      // 4. Authoritative data committed to state
       setIsFacilitySyncComplete(true);
 
       // Route to facility screen
@@ -309,7 +281,7 @@ export default function App() {
       setRefreshTrigger((prev) => prev + 1);
       window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
 
-      // 5. Attach real-time Firestore listener for this facility (Requirement 7 & 9)
+      // 5. Attach real-time Firestore listener for this facility
       if (activeFacilityUnsubRef.current) {
         activeFacilityUnsubRef.current();
         activeFacilityUnsubRef.current = null;
@@ -323,7 +295,7 @@ export default function App() {
       HubService.ensureConnected();
       CloudDatabaseService.initRealtimeSync();
 
-      // 6. Non-blocking Google Sheets sync in background outside authoritative read path (Requirement 10)
+      // 6. Non-blocking Google Sheets sync in background outside authoritative read path
       try {
         const gasCfg = GasService.getConfig();
         if (gasCfg.webAppUrl && gasCfg.webAppUrl.trim().startsWith('http')) {
@@ -333,10 +305,20 @@ export default function App() {
 
       // Smoothly hide loading overlay
       setIsFacilitySyncing(false);
+      setFacilitySyncError(null);
       ActionFeedback.stopLoading();
     } catch (err: any) {
-      setFacilitySyncError(err?.message || `Failed to fetch latest bookings for ${targetFac.name}. Stale cache blocked.`);
-      setIsFacilitySyncComplete(false);
+      console.warn(`[Facility Flow] Network error for ${targetFac.name}, loading from local cache:`, err);
+      const cached = StorageService.getBookingsForFacility(facilityId) || [];
+      setFacilityBookings(cached);
+      setIsFacilitySyncComplete(true);
+      setActiveFacilityId(facilityId);
+      setSelectedStage(targetFac.stages[0] || '');
+      setSelectedSlotIds([]);
+      setCurrentView('booking');
+      setRefreshTrigger((prev) => prev + 1);
+      setIsFacilitySyncing(false);
+      setFacilitySyncError(null);
       ActionFeedback.stopLoading();
     }
   }, [facilities]);

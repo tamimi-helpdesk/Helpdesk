@@ -1,5 +1,5 @@
 import type { Facility, Booking } from '../types.ts';
-import { FACILITIES } from '../data/facilities';
+import { FACILITIES } from '../data/facilities.ts';
 
 export interface CanonicalResource {
   facilityId: string;

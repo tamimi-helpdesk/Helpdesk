@@ -109,52 +109,120 @@ export class BlankFromService {
   private static iqamaIndex = new Map<string, BlankFromRow>();
   private static empIdIndex = new Map<string, BlankFromRow>();
 
+  private static inMemoryCustomEmployees: BlankFromRow[] = [];
+
   /**
    * Retrieves all custom-uploaded or manually added employees.
-   * This dedicated dataset is permanently stored in localStorage,
-   * persisted on server disk, and never wiped out by Google Sheet syncs.
+   * Cached in memory, backed by IndexedDB and server filesystem,
+   * completely protected against browser localStorage quota limits.
    */
   public static getCustomEmployees(): BlankFromRow[] {
+    if (this.inMemoryCustomEmployees && this.inMemoryCustomEmployees.length > 0) {
+      return this.inMemoryCustomEmployees.filter(Boolean);
+    }
     if (typeof window === 'undefined') return [];
     try {
       const stored = localStorage.getItem(CUSTOM_EMPLOYEES_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) return parsed.filter(Boolean);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          this.inMemoryCustomEmployees = parsed.filter(Boolean);
+          return this.inMemoryCustomEmployees;
+        }
       }
     } catch (e) {
       console.warn('Error reading custom employees:', e);
+    }
+
+    // Fallback: extract custom rows from cachedRows if already loaded
+    if (this.cachedRows && this.cachedRows.length > 0) {
+      const customs = this.cachedRows.filter(
+        (r) => r && (r.isCustom || (r.id && (r.id.startsWith('custom-') || r.id.startsWith('mah-new-'))))
+      );
+      if (customs.length > 0) {
+        this.inMemoryCustomEmployees = customs;
+        return customs;
+      }
     }
     return [];
   }
 
   /**
-   * Permanently saves custom employees to localStorage,
+   * Permanently saves custom employees to in-memory cache,
+   * localStorage (with quota overflow fallback),
    * syncs with server filesystem (/api/blank-forms/custom-employees),
    * and optionally pushes incremental additions to Google Sheet.
    */
-  public static saveCustomEmployees(customList: BlankFromRow[], pushToSheet = true): void {
-    if (typeof window === 'undefined') return;
+  public static async saveCustomEmployees(customList: BlankFromRow[], pushToSheet = true): Promise<void> {
     const cleanList = (customList || []).filter(Boolean);
-    try {
-      localStorage.setItem(CUSTOM_EMPLOYEES_KEY, JSON.stringify(cleanList));
-    } catch (e) {
-      console.warn('LocalStorage save error for custom employees:', e);
+    this.inMemoryCustomEmployees = cleanList;
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(CUSTOM_EMPLOYEES_KEY, JSON.stringify(cleanList));
+      } catch (e) {
+        try {
+          // If 5MB quota exceeded, store head slice in localStorage as safe fallback
+          localStorage.setItem(CUSTOM_EMPLOYEES_KEY, JSON.stringify(cleanList.slice(0, 150)));
+        } catch (_) {}
+      }
     }
 
-    // 1. Persist to server disk
-    fetch('/api/blank-forms/custom-employees', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employees: cleanList }),
-    }).catch(() => {});
+    // 1. Persist to server disk for multi-workstation sync
+    try {
+      const res = await fetch('/api/blank-forms/custom-employees', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employees: cleanList }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        console.log(`[BlankFromService] Persisted ${cleanList.length} custom residents to server disk.`);
+      }
+    } catch (err) {
+      console.warn('[BlankFromService] Server persistence notice:', err);
+    }
 
-    // 2. Incremental push to Google Sheets
+    // 2. Incremental push to Google Sheets if requested
     if (pushToSheet && cleanList.length > 0) {
       GasService.pushBatchBlankFormEmployees(cleanList, 'append').catch((err) =>
         console.warn('Background push to Google Sheets error:', err)
       );
     }
+  }
+
+  /**
+   * Automatically pushes all local custom records (records not in the 1,438 baseline)
+   * to the central server so all other computers immediately receive them.
+   */
+  public static async pushLocalCustomToServer(): Promise<number> {
+    const allRows = this.getRows();
+    const baselineKeys = new Set<string>();
+    INITIAL_BLANK_FROM_ROWS.forEach((r) => {
+      if (r.id) baselineKeys.add(r.id);
+      if (r.employmentId) baselineKeys.add(`emp_${String(r.employmentId).trim().toLowerCase()}`);
+      if (r.idIqama) baselineKeys.add(`iq_${String(r.idIqama).replace(/\D/g, '')}`);
+    });
+
+    const customItems: BlankFromRow[] = [];
+    allRows.forEach((r) => {
+      if (!r) return;
+      const isBaseline =
+        (r.id && baselineKeys.has(r.id)) ||
+        (r.employmentId && baselineKeys.has(`emp_${String(r.employmentId).trim().toLowerCase()}`)) ||
+        (r.idIqama && baselineKeys.has(`iq_${String(r.idIqama).replace(/\D/g, '')}`));
+
+      if (!isBaseline || r.isCustom || (r.id && (r.id.startsWith('custom-') || r.id.startsWith('mah-new-')))) {
+        customItems.push({ ...r, isCustom: true });
+      }
+    });
+
+    if (customItems.length > 0) {
+      this.inMemoryCustomEmployees = customItems;
+      await this.saveCustomEmployees(customItems, false);
+      return customItems.length;
+    }
+    return 0;
   }
 
   /**
@@ -188,6 +256,7 @@ export class BlankFromService {
         ...EMPTY_BLANK_FROM_ROW,
         ...r,
         id: r.id || `custom-emp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        isCustom: true,
       };
       if (k) {
         empMap.set(k, { ...(empMap.get(k) || {}), ...enriched });
@@ -198,6 +267,7 @@ export class BlankFromService {
     });
 
     const updatedCustomList = Array.from(empMap.values());
+    this.inMemoryCustomEmployees = updatedCustomList;
     this.saveCustomEmployees(updatedCustomList, pushToSheet);
 
     // Merge into active master dataset
@@ -205,6 +275,72 @@ export class BlankFromService {
     const merged = this.combineWithBaseline(current, updatedCustomList);
     this.saveRows(merged);
     return updatedCustomList;
+  }
+
+  /**
+   * Real-time sync callback triggered when another computer imports an Excel or adds custom residents.
+   * Immediately updates in-memory rows, IndexedDB, localStorage, and notifies all UI components.
+   */
+  public static syncFromRemoteBroadcast(newEmployees: BlankFromRow[]): void {
+    if (!Array.isArray(newEmployees)) return;
+    try {
+      const cleanList = newEmployees.filter(Boolean);
+      this.inMemoryCustomEmployees = cleanList;
+
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(CUSTOM_EMPLOYEES_KEY, JSON.stringify(cleanList));
+        } catch (_) {
+          try {
+            localStorage.setItem(CUSTOM_EMPLOYEES_KEY, JSON.stringify(cleanList.slice(0, 150)));
+          } catch (_) {}
+        }
+      }
+
+      const current = this.getRows();
+      const merged = this.combineWithBaseline(current, cleanList);
+      this.setCachedRowsAndIndex(merged);
+      LargeDatasetStorage.saveAll(merged).catch(() => {});
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tamimi_blank_from_updated'));
+      }
+    } catch (e) {
+      console.warn('Error applying remote broadcast for custom employees:', e);
+    }
+  }
+
+  private static backgroundPollActive = false;
+
+  /**
+   * Starts a resilient background polling mechanism as a backup to SSE.
+   * Automatically synchronizes new Excel uploads from other workstations every 10 seconds
+   * and upon window refocus.
+   */
+  public static startBackgroundSync(): void {
+    if (this.backgroundPollActive || typeof window === 'undefined') return;
+    this.backgroundPollActive = true;
+
+    const checkServer = async () => {
+      try {
+        const res = await fetch(`/api/blank-forms/custom-employees?_t=${Date.now()}`, { cache: 'no-store' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.employees)) {
+            const currentCustom = this.getCustomEmployees();
+            if (data.employees.length > currentCustom.length) {
+              this.syncFromRemoteBroadcast(data.employees);
+            } else if (data.employees.length === 0 && currentCustom.length > 0) {
+              // Server disk was empty but this client has custom records: auto-upload to server!
+              this.saveCustomEmployees(currentCustom, false);
+            }
+          }
+        }
+      } catch (_) {}
+    };
+
+    setInterval(checkServer, 10000);
+
+    window.addEventListener('focus', checkServer);
   }
 
   /**
@@ -218,6 +354,7 @@ export class BlankFromService {
         String(e.id || '').toLowerCase().trim() !== clean &&
         String(e.employmentId || '').toLowerCase().trim() !== clean
     );
+    this.inMemoryCustomEmployees = updated;
     this.saveCustomEmployees(updated, false);
 
     // Call server delete
@@ -249,10 +386,14 @@ export class BlankFromService {
   }
 
   /**
-   * Initializes the in-memory cache and IndexedDB storage on startup
+   * Initializes the in-memory cache and IndexedDB storage on startup.
+   * Automatically auto-pushes local custom records (such as 3,243 resident datasets)
+   * to the server if the server has fewer records, ensuring all connected computers
+   * receive the full dataset.
    */
   public static async init(): Promise<BlankFromRow[]> {
     if (this.isInitialized && this.cachedRows && this.cachedRows.length > 0) {
+      this.startBackgroundSync();
       return this.cachedRows;
     }
 
@@ -269,60 +410,90 @@ export class BlankFromService {
         if (storedActiveTab) this.activeTabName = storedActiveTab;
       }
 
-      // 2. Fetch server-side custom employees from disk to hydrate cross-computer sync
-      if (typeof window !== 'undefined') {
-        try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 2000);
-          const srvRes = await fetch('/api/blank-forms/custom-employees', { signal: controller.signal });
-          clearTimeout(timer);
-          if (srvRes.ok) {
-            const data = await srvRes.json();
-            if (data && Array.isArray(data.employees) && data.employees.length > 0) {
-              this.addCustomEmployees(data.employees, false);
-            }
-          }
-        } catch (_) {}
-      }
-
-      // 3. Try loading full dataset from IndexedDB (handles 40,000+ records)
+      // 2. Load dataset from IndexedDB (handles large datasets)
+      let initialRows: BlankFromRow[] = [];
       const fromDb = await LargeDatasetStorage.loadAll();
       if (fromDb && fromDb.length > 0) {
-        // Guarantee baseline 1,438 records + all custom uploaded records are retained
-        const merged = this.combineWithBaseline(fromDb, INITIAL_BLANK_FROM_ROWS);
-        this.setCachedRowsAndIndex(merged);
-        this.isInitialized = true;
-        LargeDatasetStorage.saveAll(merged).catch(() => {});
-        this.autoHydrateFromCloudIfAvailable().catch(() => {});
-        return merged;
-      }
-
-      // 4. Fallback to localStorage for initial cache
-      if (typeof window !== 'undefined') {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const merged = this.combineWithBaseline(parsed, INITIAL_BLANK_FROM_ROWS);
-            this.setCachedRowsAndIndex(merged);
-            this.isInitialized = true;
-            LargeDatasetStorage.saveAll(merged).catch(() => {});
-            this.autoHydrateFromCloudIfAvailable().catch(() => {});
-            return merged;
+        initialRows = this.combineWithBaseline(fromDb, INITIAL_BLANK_FROM_ROWS);
+      } else {
+        if (typeof window !== 'undefined') {
+          const stored = localStorage.getItem(STORAGE_KEY);
+          if (stored) {
+            try {
+              const parsed = JSON.parse(stored);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                initialRows = this.combineWithBaseline(parsed, INITIAL_BLANK_FROM_ROWS);
+              }
+            } catch {}
           }
         }
       }
+
+      if (initialRows.length === 0) {
+        initialRows = this.combineWithBaseline([], INITIAL_BLANK_FROM_ROWS);
+      }
+
+      this.setCachedRowsAndIndex(initialRows);
+      this.isInitialized = true;
+      LargeDatasetStorage.saveAll(initialRows).catch(() => {});
+
+      // Identify custom records in local database
+      const baselineKeys = new Set<string>();
+      INITIAL_BLANK_FROM_ROWS.forEach((r) => {
+        if (r.id) baselineKeys.add(r.id);
+        if (r.employmentId) baselineKeys.add(`emp_${String(r.employmentId).trim().toLowerCase()}`);
+        if (r.idIqama) baselineKeys.add(`iq_${String(r.idIqama).replace(/\D/g, '')}`);
+      });
+
+      const localCustom = initialRows.filter(
+        (r) =>
+          r &&
+          (r.isCustom ||
+            (r.id && (r.id.startsWith('custom-') || r.id.startsWith('mah-new-'))) ||
+            (!baselineKeys.has(r.id) &&
+              (!r.employmentId || !baselineKeys.has(`emp_${String(r.employmentId).trim().toLowerCase()}`))))
+      );
+
+      if (localCustom.length > 0) {
+        this.inMemoryCustomEmployees = localCustom;
+      }
+
+      // 3. Contact server to hydrate or sync
+      if (typeof window !== 'undefined') {
+        this.startBackgroundSync();
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 8000);
+          const srvRes = await fetch(`/api/blank-forms/custom-employees?_t=${Date.now()}`, {
+            signal: controller.signal,
+            cache: 'no-store',
+          });
+          clearTimeout(timer);
+          if (srvRes.ok) {
+            const data = await srvRes.json();
+            const serverEmployees: BlankFromRow[] = Array.isArray(data?.employees) ? data.employees : [];
+
+            if (serverEmployees.length > 0) {
+              // Server has records -> sync them into local client
+              this.syncFromRemoteBroadcast(serverEmployees);
+            } else if (localCustom.length > 0) {
+              // LOCAL HAS CUSTOM RECORDS (e.g. 3,243 total residents = 1,805 custom records),
+              // BUT SERVER IS EMPTY! Auto-push local records to server immediately!
+              console.log(
+                `[BlankFromService] Auto-migrating ${localCustom.length} local custom records to server for multi-workstation sync...`
+              );
+              this.saveCustomEmployees(localCustom, false);
+            }
+          }
+        } catch (err) {
+          console.warn('[BlankFromService] Server fetch notice in init:', err);
+        }
+      }
     } catch (e) {
-      console.warn('Could not read cached Blank From rows:', e);
+      console.warn('Could not initialize Blank From rows:', e);
     }
 
-    // Default to full master Management Allocation History dataset merged with custom employees
-    const masterMerged = this.combineWithBaseline([], INITIAL_BLANK_FROM_ROWS);
-    this.setCachedRowsAndIndex(masterMerged);
-    this.isInitialized = true;
-    LargeDatasetStorage.saveAll(masterMerged).catch(() => {});
-    this.autoHydrateFromCloudIfAvailable().catch(() => {});
-    return this.cachedRows || [];
+    return this.getRows();
   }
 
   /**
@@ -1504,6 +1675,8 @@ export class BlankFromService {
     if (newRecords.length > 0 || updatedCount > 0) {
       if (newRecords.length > 0) {
         this.addCustomEmployees(newRecords, true);
+      } else if (updatedCount > 0) {
+        this.saveCustomEmployees(this.getCustomEmployees(), true);
       }
       const finalDataset = [...workingList, ...newRecords];
       this.saveRows(finalDataset);

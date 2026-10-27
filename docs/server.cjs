@@ -1075,6 +1075,19 @@ try {
         supportTickets: Array.isArray(parsed.supportTickets) ? parsed.supportTickets : []
       };
       console.log(`[Hub] Loaded persisted server database (v${hubState.version}) with ${hubState.bookings.length} bookings, ${hubState.isolationRooms.length} active rooms, ${Object.keys(hubState.deletedIds).length} tombstones.`);
+      try {
+        const customEmpPath = import_path.default.join(process.cwd(), "tamimi_custom_employees.json");
+        if (import_fs.default.existsSync(customEmpPath)) {
+          const rawCust = import_fs.default.readFileSync(customEmpPath, "utf-8");
+          const parsedCust = JSON.parse(rawCust);
+          if (Array.isArray(parsedCust) && parsedCust.length > 0) {
+            hubState.blankForms = parsedCust;
+            console.log(`[Hub] Hydrated ${parsedCust.length} custom residents/employees into blankForms hubState.`);
+          }
+        }
+      } catch (cErr) {
+        console.warn("[Hub] Notice reading tamimi_custom_employees.json on boot:", cErr);
+      }
     }
   }
 } catch (err) {
@@ -3226,14 +3239,18 @@ app.get("/api/blank-forms/custom-employees", (req, res) => {
     if (import_fs.default.existsSync(CUSTOM_EMPLOYEES_FILE_PATH)) {
       const raw = import_fs.default.readFileSync(CUSTOM_EMPLOYEES_FILE_PATH, "utf-8");
       const employees = JSON.parse(raw);
-      return res.json({ success: true, employees: Array.isArray(employees) ? employees : [] });
+      const list = Array.isArray(employees) ? employees : [];
+      return res.json({ success: true, count: list.length, employees: list, serverVersion: hubState.version });
     }
-    return res.json({ success: true, employees: [] });
+    if (Array.isArray(hubState.blankForms) && hubState.blankForms.length > 0) {
+      return res.json({ success: true, count: hubState.blankForms.length, employees: hubState.blankForms, serverVersion: hubState.version });
+    }
+    return res.json({ success: true, count: 0, employees: [], serverVersion: hubState.version });
   } catch (err) {
-    return res.status(500).json({ success: false, error: err.message, employees: [] });
+    return res.status(500).json({ success: false, error: err.message, employees: [], serverVersion: hubState.version });
   }
 });
-app.post("/api/blank-forms/custom-employees", (req, res) => {
+app.post("/api/blank-forms/custom-employees", async (req, res) => {
   try {
     const { employees = [] } = req.body || {};
     if (!Array.isArray(employees)) {
@@ -3247,6 +3264,9 @@ app.post("/api/blank-forms/custom-employees", (req, res) => {
       } catch (_) {
         existing = [];
       }
+    }
+    if (existing.length === 0 && Array.isArray(hubState.blankForms) && hubState.blankForms.length > 0) {
+      existing = [...hubState.blankForms];
     }
     const getNormalizedKey = (e) => {
       if (!e) return "";
@@ -3269,7 +3289,29 @@ app.post("/api/blank-forms/custom-employees", (req, res) => {
     });
     const merged = Array.from(empMap.values());
     import_fs.default.writeFileSync(CUSTOM_EMPLOYEES_FILE_PATH, JSON.stringify(merged, null, 2), "utf-8");
-    return res.json({ success: true, count: merged.length, employees: merged });
+    hubState.blankForms = merged;
+    hubState.version = (hubState.version || 0) + 1;
+    hubState.lastUpdated = (/* @__PURE__ */ new Date()).toISOString();
+    persistHubState();
+    broadcastHubEvent({
+      type: "BLANK_FORMS_UPDATED",
+      entity: "blankForms",
+      version: hubState.version,
+      payload: { count: merged.length, employees: merged }
+    });
+    console.log(`[Server] Saved & broadcasted ${merged.length} custom residents/employees across workstations (v${hubState.version}).`);
+    if (serverFirestoreDb && serverDocFn && serverSetDocFn) {
+      try {
+        serverSetDocFn(
+          serverDocFn(serverFirestoreDb, "systemMeta", "custom_employees"),
+          { count: merged.length, updatedAt: hubState.lastUpdated, employees: merged },
+          { merge: true }
+        ).catch(() => {
+        });
+      } catch (_) {
+      }
+    }
+    return res.json({ success: true, count: merged.length, employees: merged, serverVersion: hubState.version });
   } catch (err) {
     console.error("[Server] Error saving custom employees:", err);
     return res.status(500).json({ success: false, error: err.message });
@@ -3279,20 +3321,31 @@ app.delete("/api/blank-forms/custom-employees/:id", (req, res) => {
   try {
     const rawId = String(req.params.id || "").toLowerCase().trim();
     if (!rawId) return res.status(400).json({ success: false, error: "ID required" });
+    let existing = [];
     if (import_fs.default.existsSync(CUSTOM_EMPLOYEES_FILE_PATH)) {
       try {
-        const existing = JSON.parse(import_fs.default.readFileSync(CUSTOM_EMPLOYEES_FILE_PATH, "utf-8"));
-        if (Array.isArray(existing)) {
-          const filtered = existing.filter(
-            (e) => String(e.id || "").toLowerCase().trim() !== rawId && String(e.employmentId || "").toLowerCase().trim() !== rawId
-          );
-          import_fs.default.writeFileSync(CUSTOM_EMPLOYEES_FILE_PATH, JSON.stringify(filtered, null, 2), "utf-8");
-          return res.json({ success: true, count: filtered.length, employees: filtered });
-        }
+        existing = JSON.parse(import_fs.default.readFileSync(CUSTOM_EMPLOYEES_FILE_PATH, "utf-8"));
       } catch (_) {
       }
     }
-    return res.json({ success: true, count: 0, employees: [] });
+    if (!Array.isArray(existing) || existing.length === 0) {
+      existing = Array.isArray(hubState.blankForms) ? hubState.blankForms : [];
+    }
+    const filtered = existing.filter(
+      (e) => String(e.id || "").toLowerCase().trim() !== rawId && String(e.employmentId || "").toLowerCase().trim() !== rawId
+    );
+    import_fs.default.writeFileSync(CUSTOM_EMPLOYEES_FILE_PATH, JSON.stringify(filtered, null, 2), "utf-8");
+    hubState.blankForms = filtered;
+    hubState.version = (hubState.version || 0) + 1;
+    hubState.lastUpdated = (/* @__PURE__ */ new Date()).toISOString();
+    persistHubState();
+    broadcastHubEvent({
+      type: "BLANK_FORMS_UPDATED",
+      entity: "blankForms",
+      version: hubState.version,
+      payload: { count: filtered.length, employees: filtered }
+    });
+    return res.json({ success: true, count: filtered.length, employees: filtered });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }

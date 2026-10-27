@@ -26,9 +26,18 @@ export const FacilitySyncTransitionOverlay: React.FC<FacilitySyncTransitionOverl
   onCancel,
   onOpenOfflineCache,
 }) => {
-  if (!isOpen) return null;
-
   const hasError = Boolean(error);
+
+  React.useEffect(() => {
+    if (hasError && onOpenOfflineCache) {
+      const timer = setTimeout(() => {
+        onOpenOfflineCache();
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [hasError, onOpenOfflineCache]);
+
+  if (!isOpen) return null;
 
   return (
     <AnimatePresence>

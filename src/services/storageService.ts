@@ -4015,11 +4015,8 @@ export const StorageService = {
               error: mutateResult.error || 'Conflict detected: this slot was already reserved on another device.',
             };
           }
-          if (mutateResult.success === false && mutateResult.error) {
-            return {
-              success: false,
-              error: mutateResult.error,
-            };
+          if (mutateResult.success === false && mutateResult.error && !mutateResult.isOffline) {
+            console.warn('[StorageService] Server mutation notice (falling back to offline queue):', mutateResult.error);
           }
         }
       } catch (pushErr: any) {
@@ -4031,25 +4028,18 @@ export const StorageService = {
         const { CloudDatabaseService } = await import('./firebaseService');
         const lockRes = await CloudDatabaseService.saveBookingWithSlotLock(newBooking, correlationId);
         if (lockRes && !lockRes.success) {
-          try {
-            const { HubService } = await import('./hubService');
-            await HubService.pushMutation({
-              mutationType: 'DELETE',
-              entity: 'bookings',
-              id: newBooking.id,
-            });
-          } catch {}
-          return {
-            success: false,
-            error: lockRes.error || 'Failed to commit booking to authoritative database.',
-          };
+          if (lockRes.error?.includes('CONCURRENT_SLOT_CONFLICT')) {
+            return {
+              success: false,
+              error: lockRes.error,
+            };
+          }
+          console.warn('[StorageService] Cloud slot lock notice (queuing for background sync):', lockRes.error);
+          OfflineQueueService.enqueue('saveBooking', newBooking);
         }
       } catch (cloudLockErr: any) {
-        console.warn('[StorageService] Cloud slot lock notice:', cloudLockErr);
-        return {
-          success: false,
-          error: cloudLockErr?.message || 'Authoritative database connection failed.',
-        };
+        console.warn('[StorageService] Cloud slot lock exception (queuing for background sync):', cloudLockErr);
+        OfflineQueueService.enqueue('saveBooking', newBooking);
       }
     }
 

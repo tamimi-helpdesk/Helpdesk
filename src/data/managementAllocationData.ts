@@ -1,4 +1,4 @@
-import { BlankFromRow } from "./initialBlankFromData";
+import type { BlankFromRow } from "./initialBlankFromData.ts";
 
 export const MANAGEMENT_ALLOCATION_RECORDS: BlankFromRow[] = [
   {
