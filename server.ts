@@ -202,10 +202,17 @@ if (process.env.VITEST !== 'true') {
             const data = d.data();
             if (data && data.id) docs.push(data);
           });
-          hubState.bookings = docs;
+          const mergedMap = new Map<string, any>();
+          (hubState.bookings || []).forEach((b) => {
+            if (b && b.id) mergedMap.set(String(b.id).toLowerCase().trim(), b);
+          });
+          docs.forEach((d) => {
+            if (d && d.id) mergedMap.set(String(d.id).toLowerCase().trim(), d);
+          });
+          hubState.bookings = Array.from(mergedMap.values());
           hubState.version += 1;
           hubState.lastUpdated = new Date().toISOString();
-          console.log(`[Server] Synced ${docs.length} authoritative bookings from Cloud Firestore.`);
+          console.log(`[Server] Synced and merged ${hubState.bookings.length} authoritative bookings with Cloud Firestore.`);
         }
 
         // Live multi-instance Firestore onSnapshot listener

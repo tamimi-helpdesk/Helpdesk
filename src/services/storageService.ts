@@ -1004,6 +1004,25 @@ export const StorageService = {
     } catch (e) {
       console.warn('Error attempting IndexedDB overflow recovery:', e);
     }
+
+    // If still empty (fresh terminal / browser session), load authoritative pre-seeded database
+    if (inMemoryBookings.length === 0 && typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch('/data/tamimi_initial_db.json');
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.bookings) && data.bookings.length > 0) {
+            const cleaned = data.bookings
+              .filter((item: any) => item && typeof item === 'object' && item.id !== 'Booking ID' && item.date !== 'Date')
+              .map((item: any, idx: number) => sanitizeBooking(item, idx));
+            inMemoryBookings = deduplicateBookings(cleaned);
+            safeSetLocalStorage(STORAGE_KEY, JSON.stringify(inMemoryBookings));
+            notifyBookingsChanged();
+            return true;
+          }
+        }
+      } catch (_) {}
+    }
     return false;
   },
 
@@ -2579,7 +2598,16 @@ export const StorageService = {
         }
       });
 
-      inMemoryBookings = deduplicateBookings([...deduplicatedServer, ...pendingOfflineBookings]);
+      if (deduplicatedServer.length === 0 && inMemoryBookings.length > 0 && !options?.forceZero) {
+        console.warn('[StorageService] Protected existing in-memory bookings from unverified empty server response.');
+      } else {
+        const retained = inMemoryBookings.filter((b) => {
+          if (!b || !b.id) return false;
+          const k = b.id.toLowerCase().trim();
+          return !serverIdSet.has(k) && !deletedIds.has(k) && !isIdDeleted(k);
+        });
+        inMemoryBookings = deduplicateBookings([...deduplicatedServer, ...pendingOfflineBookings, ...retained]);
+      }
     }
 
     try {
@@ -4035,11 +4063,23 @@ export const StorageService = {
             };
           }
           console.warn('[StorageService] Cloud slot lock notice (queuing for background sync):', lockRes.error);
-          OfflineQueueService.enqueue('saveBooking', newBooking);
+          OfflineQueueService.enqueue({
+            targetId: newBooking.id,
+            action: 'saveBooking',
+            facilityName: newBooking.facilityName || newBooking.facilityId || 'Facility Booking',
+            description: `Booking for ${newBooking.customerName || 'Guest'} (${newBooking.startTime} - ${newBooking.endTime})`,
+            payload: newBooking,
+          });
         }
       } catch (cloudLockErr: any) {
         console.warn('[StorageService] Cloud slot lock exception (queuing for background sync):', cloudLockErr);
-        OfflineQueueService.enqueue('saveBooking', newBooking);
+        OfflineQueueService.enqueue({
+          targetId: newBooking.id,
+          action: 'saveBooking',
+          facilityName: newBooking.facilityName || newBooking.facilityId || 'Facility Booking',
+          description: `Booking for ${newBooking.customerName || 'Guest'} (${newBooking.startTime} - ${newBooking.endTime})`,
+          payload: newBooking,
+        });
       }
     }
 

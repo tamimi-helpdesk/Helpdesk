@@ -530,7 +530,7 @@ export class HubService {
   }
 
   // Authoritative Server-First Booking Save (Requirement 5: Ensure authoritative persistence to server)
-  public static async saveBookingAuthoritative(booking: any): Promise<{ success: boolean; booking?: any; conflict?: boolean; error?: string }> {
+  public static async saveBookingAuthoritative(booking: any): Promise<{ success: boolean; booking?: any; conflict?: boolean; error?: string; isOffline?: boolean }> {
     try {
       const headers = this.getAuthHeaders();
       const res = await fetch('/api/bookings', {

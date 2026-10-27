@@ -447,6 +447,10 @@ export default function App() {
 
     // Trigger local refresh handler
     const handleLocalRefresh = () => {
+      if (activeFacilityId) {
+        const fresh = StorageService.getBookingsForFacility(activeFacilityId) || [];
+        setFacilityBookings(fresh);
+      }
       setRefreshTrigger((prev) => prev + 1);
     };
 
@@ -505,6 +509,9 @@ export default function App() {
       CloudDatabaseService.autoHydrateIfEmpty().then((hydrated) => {
         if (hydrated) {
           console.info('Disaster Recovery: System state auto-hydrated from Firebase Cloud Firestore.');
+          if (activeFacilityId) {
+            setFacilityBookings(StorageService.getBookingsForFacility(activeFacilityId) || []);
+          }
           setRefreshTrigger((prev) => prev + 1);
         }
       });
@@ -598,6 +605,47 @@ export default function App() {
       clearInterval(reconciliationInterval);
     };
   }, []);
+
+  // Post-Authentication Instant Hydration: Whenever user authenticates or switches facility
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    StorageService.init();
+    StorageService.recoverFromIndexedDBIfNeeded().then((rec) => {
+      if (rec) setRefreshTrigger((prev) => prev + 1);
+    });
+
+    const hydrateInstantBookings = async () => {
+      setIsAuthoritativeLoading(true);
+      try {
+        await HubService.fetchAuthoritativeBookings();
+        if (activeFacilityId) {
+          const fresh = StorageService.getBookingsForFacility(activeFacilityId) || [];
+          setFacilityBookings(fresh);
+        }
+        setRefreshTrigger((prev) => prev + 1);
+        window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
+      } catch (err) {
+        console.warn('[App] Post-login authoritative fetch error:', err);
+      } finally {
+        setIsAuthoritativeLoading(false);
+      }
+
+      // Cloud Firestore Disaster Recovery auto-hydration check
+      try {
+        const hydrated = await CloudDatabaseService.autoHydrateIfEmpty();
+        if (hydrated) {
+          if (activeFacilityId) {
+            setFacilityBookings(StorageService.getBookingsForFacility(activeFacilityId) || []);
+          }
+          setRefreshTrigger((prev) => prev + 1);
+          window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
+        }
+      } catch (_) {}
+    };
+
+    hydrateInstantBookings();
+  }, [isAuthenticated, activeFacilityId]);
 
   // Update selected stage if active facility changes
   useEffect(() => {
@@ -761,8 +809,21 @@ export default function App() {
   const handleSyncGas = async () => {
     setIsSyncing(true);
     try {
+      // 1. Immediately refresh authoritative bookings from server (<100ms) so user sees updated data right away
+      HubService.fetchAuthoritativeBookings().then(() => {
+        if (activeFacilityId) {
+          setFacilityBookings(StorageService.getBookingsForFacility(activeFacilityId) || []);
+        }
+        setRefreshTrigger((prev) => prev + 1);
+        window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
+      }).catch(() => {});
+
+      // 2. Sync with remote Google Sheets across all tabs
       const res = await GasService.syncWithRemote(true);
       if (res.success) {
+        if (activeFacilityId) {
+          setFacilityBookings(StorageService.getBookingsForFacility(activeFacilityId) || []);
+        }
         setRefreshTrigger((prev) => prev + 1);
         window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
       }
@@ -785,8 +846,15 @@ export default function App() {
       <LoginPage
         onLoginSuccess={() => {
           setIsAuthenticated(true);
-          // Automatically sync the whole system with Google Sheets upon login
-          handleSyncGas();
+          // Instant authoritative hydration: Load local and server bookings immediately (<50ms)
+          StorageService.init();
+          HubService.fetchAuthoritativeBookings().then(() => {
+            if (activeFacilityId) {
+              setFacilityBookings(StorageService.getBookingsForFacility(activeFacilityId) || []);
+            }
+            setRefreshTrigger((prev) => prev + 1);
+            window.dispatchEvent(new CustomEvent('tamimi_bookings_updated'));
+          }).catch(() => {});
         }}
         theme={theme}
         toggleTheme={toggleTheme}
@@ -918,6 +986,7 @@ export default function App() {
           <FacilityShowcaseHub
             facilities={facilities}
             selectedDate={selectedDate}
+            refreshTrigger={refreshTrigger}
             onSelectFacility={(facilityId) => {
               handleSelectFacility(facilityId);
             }}

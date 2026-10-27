@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   Clock,
   ArrowRight,
@@ -28,6 +28,7 @@ interface FacilityShowcaseHubProps {
   onSelectFacility: (facilityId: string) => void;
   onOpenSearch?: () => void;
   onOpenAdminModal?: () => void;
+  refreshTrigger?: number;
 }
 
 const FACILITY_ACCENT_CLASSES: Record<
@@ -263,6 +264,7 @@ export const FacilityShowcaseHub: React.FC<FacilityShowcaseHubProps> = ({
   onSelectFacility,
   onOpenSearch,
   onOpenAdminModal,
+  refreshTrigger = 0,
 }) => {
   const isSuperAdmin = AuthService.isSuperAdmin();
   const currentUsername = AuthService.getUsername();
@@ -271,6 +273,29 @@ export const FacilityShowcaseHub: React.FC<FacilityShowcaseHubProps> = ({
     if (isSuperAdmin) return facilities.map((f) => f.id);
     return AuthService.getUserAssignedFacilityIds();
   }, [facilities, isSuperAdmin]);
+
+  const [internalRefresh, setInternalRefresh] = useState(0);
+
+  // Re-calculate facility statistics whenever bookings or camp entities update
+  useEffect(() => {
+    const handleUpdate = () => {
+      setInternalRefresh((prev) => prev + 1);
+    };
+    window.addEventListener('tamimi_bookings_updated', handleUpdate);
+    window.addEventListener('tamimi_isolation_updated', handleUpdate);
+    window.addEventListener('tamimi_handover_updated', handleUpdate);
+    window.addEventListener('tamimi_parcels_updated', handleUpdate);
+    window.addEventListener('tamimi_lost_found_updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('tamimi_bookings_updated', handleUpdate);
+      window.removeEventListener('tamimi_isolation_updated', handleUpdate);
+      window.removeEventListener('tamimi_handover_updated', handleUpdate);
+      window.removeEventListener('tamimi_parcels_updated', handleUpdate);
+      window.removeEventListener('tamimi_lost_found_updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
 
   const [scopeFilter, setScopeFilter] = useState<'all' | 'assigned'>('all');
   const [deniedModal, setDeniedModal] = useState<{
@@ -358,6 +383,7 @@ export const FacilityShowcaseHub: React.FC<FacilityShowcaseHubProps> = ({
 
   // Calculate real-time availability for each facility
   const facilityStats = useMemo(() => {
+    StorageService.init();
     const stats: Record<string, { available: number; booked: number; total: number }> = {};
 
     facilities.forEach((fac) => {
@@ -372,7 +398,7 @@ export const FacilityShowcaseHub: React.FC<FacilityShowcaseHubProps> = ({
     });
 
     return stats;
-  }, [facilities, selectedDate]);
+  }, [facilities, selectedDate, internalRefresh, refreshTrigger]);
 
   return (
     <div className="w-full flex-1 flex flex-col min-h-0 h-full animate-in fade-in duration-300">
