@@ -177,7 +177,7 @@ export const CloudDatabaseSyncModal: React.FC<CloudDatabaseSyncModalProps> = ({
                 Multi-Workstation Database Synchronization
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                সব কম্পিউটার ও ওয়ার্কস্টেশনে ৩,৪০৪ জন রেসিডেন্টের ডাটা এক ক্লিকে সিঙ্ক করুন
+                Synchronize 3,404 resident records across all computers and workstations in one click.
               </p>
             </div>
           </div>
@@ -211,8 +211,8 @@ export const CloudDatabaseSyncModal: React.FC<CloudDatabaseSyncModalProps> = ({
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {localCount >= 3400
-                  ? '✓ আপনার এই কম্পিউটারে সম্পূর্ণ ৩,৪০৪ ডাটাবেজ রয়েছে।'
-                  : '⚠️ এই কম্পিউটারে কিছু রেকর্ড মিসিং রয়েছে।'}
+                  ? '✓ Complete database of 3,404 records present on this workstation.'
+                  : '⚠️ Some records may be missing on this local workstation.'}
               </p>
             </div>
 
@@ -242,7 +242,7 @@ export const CloudDatabaseSyncModal: React.FC<CloudDatabaseSyncModalProps> = ({
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {cloudMeta
                   ? `Last Synced: ${formatDate(cloudMeta.updatedAt)}`
-                  : 'ক্লাউডে এখনও ডাটা পাঠানো হয়নি।'}
+                  : 'No records synced to cloud yet.'}
               </p>
             </div>
           </div>
@@ -262,12 +262,12 @@ export const CloudDatabaseSyncModal: React.FC<CloudDatabaseSyncModalProps> = ({
             </div>
           )}
 
-          {/* Action 1: Push from Primary PC (Recommended for 3,404 records computer) */}
+          {/* Action 1: Push from Primary PC */}
           <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <span>১. এই কম্পিউটার থেকে ক্লাউডে পাঠান (Push to Cloud)</span>
+                  <span>1. Upload Local Database to Cloud (Push)</span>
                   {localCount >= 3400 && (
                     <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
                       Recommended
@@ -275,7 +275,7 @@ export const CloudDatabaseSyncModal: React.FC<CloudDatabaseSyncModalProps> = ({
                   )}
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                  যে কম্পিউটারে আপনি এক্সেল আপলোড করে ৩,৪০৪ টি রেকর্ড তৈরি করেছেন, সেই কম্পিউটার থেকে এই বাটনে ক্লিক করুন। এটি সম্পূর্ণ ৩,৪০৪ টি রেকর্ড ক্লাউডে জমা করবে এবং অন্য সব কম্পিউটার স্বয়ংক্রিয়ভাবে ডাটাগুলো পেয়ে যাবে।
+                  Upload all 3,404 resident records from this workstation to Cloud Firestore so every other computer and team member receives the full dataset instantly.
                 </p>
               </div>
             </div>
@@ -289,20 +289,20 @@ export const CloudDatabaseSyncModal: React.FC<CloudDatabaseSyncModalProps> = ({
               <Upload className="w-4 h-4" />
               <span>
                 {isSyncing && syncDirection === 'push'
-                  ? 'ক্লাউডে আপলোড হচ্ছে...'
+                  ? 'Uploading to cloud...'
                   : `Upload Local Database to Cloud (${localCount.toLocaleString()} Records)`}
               </span>
             </button>
           </div>
 
-          {/* Action 2: Pull from Cloud (For other workstations) */}
+          {/* Action 2: Pull from Cloud */}
           <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
             <div>
               <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                ২. ক্লাউড থেকে ডাটা ডাউনলোড করুন (Pull from Cloud)
+                2. Download Database from Cloud (Pull)
               </h4>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
-                অন্যান্য যে কম্পিউটারগুলোতে ১,২২৩ টি রেকর্ড দেখাচ্ছে, সেগুলোতে এই বাটনে ক্লিক করলে মুহূর্তেই ক্লাউড থেকে সম্পূর্ণ ৩,৪০৪ টি রেকর্ড লোড হয়ে যাবে।
+                Click this on any workstation that is missing records to immediately fetch and synchronize the complete 3,404 resident directory.
               </p>
             </div>
 
@@ -315,7 +315,7 @@ export const CloudDatabaseSyncModal: React.FC<CloudDatabaseSyncModalProps> = ({
               <Download className="w-4 h-4" />
               <span>
                 {isSyncing && syncDirection === 'pull'
-                  ? 'ক্লাউড থেকে ডাউনলোড হচ্ছে...'
+                  ? 'Downloading from cloud...'
                   : `Fetch Database from Cloud (${cloudMeta ? cloudMeta.totalRecords.toLocaleString() : '3,404'} Records)`}
               </span>
             </button>
@@ -326,10 +326,10 @@ export const CloudDatabaseSyncModal: React.FC<CloudDatabaseSyncModalProps> = ({
             <div>
               <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                 <Database className="w-4 h-4 text-blue-600" />
-                <span>অফলাইন ব্যাকআপ ও ফাইল এক্সপোর্ট / ইমপোর্ট</span>
+                <span>Offline Backup &amp; File Export / Import</span>
               </h4>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                কোনো কম্পিউটার ইন্টারনেট ছাড়াই থাকলে বা ফাইল হিসেবে সংরক্ষণ করতে চাইলে নিচের অপশনগুলো ব্যবহার করুন:
+                Use these options if working in an offline environment or backing up as standard Excel files:
               </p>
             </div>
 

@@ -104,8 +104,8 @@ export const ExcelImportPreviewModal: React.FC<ExcelImportPreviewModalProps> = (
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 {result.newUniqueCount > 0
-                  ? `চিহ্নিত নতুন ${result.newUniqueCount} টি ইউনিক ডাটা ডাটাবেসে সেভ করার জন্য প্রস্তুত।`
-                  : 'এই এক্সেল ফাইলের সব ডাটা আগেই সেভ করা রয়েছে, কোনো ডুপ্লিকেট যুক্ত হবে না।'}
+                  ? `Identified ${result.newUniqueCount.toLocaleString()} new unique resident records ready to import.`
+                  : 'All records in this file already exist in the database. 0 duplicates will be added.'}
               </p>
             </div>
           </div>

@@ -97,7 +97,7 @@ export const ExcelImportSettingsModal: React.FC<ExcelImportSettingsModalProps> =
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                স্মার্ট ইউনিক ডাটা সেটিংস: একই এক্সেল আবার আপলোড করলে শুধু নতুন ডাটাগুলো স্বয়ংক্রিয়ভাবে সেভ হবে।
+                Smart Deduplication: Re-uploading the same Excel workbook will safely extract and insert only new records.
               </p>
             </div>
           </div>
@@ -132,7 +132,7 @@ export const ExcelImportSettingsModal: React.FC<ExcelImportSettingsModalProps> =
         <div className="space-y-2.5">
           <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center space-x-1.5 uppercase tracking-wider">
             <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span>1. Import Deduplication Mode (ইম্পোর্ট মোড)</span>
+            <span>1. Import Deduplication Mode</span>
           </label>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -161,7 +161,7 @@ export const ExcelImportSettingsModal: React.FC<ExcelImportSettingsModalProps> =
                 </span>
               </div>
               <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                (সুপারিশকৃত) ইতিমধ্যে ডাটাবেসে থাকা কোনো ডাটা পুনরায় যোগ হবে না। শুধু সম্পূর্ণ নতুন ইউনিক ১০-২০টি ডাটা সংগ্রহ ও সেভ করবে।
+                (Recommended) Existing database records will never be duplicated. Only newly discovered unique resident rows will be imported and saved.
               </p>
               <span className="inline-block mt-2 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/60 px-2 py-0.5 rounded-md">
                 Recommended &amp; Zero Duplicates
@@ -193,7 +193,7 @@ export const ExcelImportSettingsModal: React.FC<ExcelImportSettingsModalProps> =
                 </span>
               </div>
               <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-                আগের কোনো রেসিডেন্টের মোবাইল নম্বর বা রুম পরিবর্তন হলে তা স্বয়ংক্রিয়ভাবে আপডেট করবে এবং নতুন রেসিডেন্ট যোগ করবে।
+                Automatically updates phone numbers, room relocations, or details for existing residents while inserting any new records.
               </p>
               <span className="inline-block mt-2 text-[10px] font-bold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/60 px-2 py-0.5 rounded-md">
                 Smart In-Place Update
@@ -206,10 +206,10 @@ export const ExcelImportSettingsModal: React.FC<ExcelImportSettingsModalProps> =
         <div className="space-y-2.5">
           <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center space-x-1.5 uppercase tracking-wider">
             <UserCheck className="w-4 h-4 text-blue-600" />
-            <span>2. Unique Key Matching Criteria (ইউনিক ফিল্ড নির্বাচন)</span>
+            <span>2. Unique Key Matching Criteria</span>
           </label>
           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-            নিচের যে কোনো একটি ফিল্ড মিলে গেলেই সিস্টেম রেকর্ডটিকে ইতিমধ্যে সংরক্ষিত হিসেবে চিহ্নিত করবে এবং ডুপ্লিকেট হিসেবে স্কিপ করবে:
+            If any checked field matches an existing record, the system identifies it as existing and skips duplicate creation:
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
@@ -363,7 +363,7 @@ export const ExcelImportSettingsModal: React.FC<ExcelImportSettingsModalProps> =
         <div className="space-y-2.5">
           <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center space-x-1.5 uppercase tracking-wider">
             <FileSpreadsheet className="w-4 h-4 text-blue-600" />
-            <span>3. Advanced Workbook Options (অ্যাডভান্সড অপশন)</span>
+            <span>3. Advanced Workbook Options</span>
           </label>
 
           <div className="space-y-2 text-xs">
@@ -371,10 +371,10 @@ export const ExcelImportSettingsModal: React.FC<ExcelImportSettingsModalProps> =
             <label className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 flex items-center justify-between cursor-pointer">
               <div>
                 <span className="font-bold text-slate-900 dark:text-white block">
-                  Scan All Sheets in Workbook (সবগুলো এক্সেল শীট স্ক্যান করুন)
+                  Scan All Sheets in Workbook
                 </span>
                 <span className="text-[11px] text-slate-500">
-                  মাল্টি-শীট এক্সেল ফাইলের সমস্ত ট্যাব স্ক্যান করে ডাটা সংগ্রহ করবে।
+                  Scans and aggregates resident records across every sheet tab in the uploaded Excel workbook.
                 </span>
               </div>
               <input
@@ -389,10 +389,10 @@ export const ExcelImportSettingsModal: React.FC<ExcelImportSettingsModalProps> =
             <label className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 flex items-center justify-between cursor-pointer">
               <div>
                 <span className="font-bold text-slate-900 dark:text-white block">
-                  Interactive Review Before Saving (সেভ করার আগে প্রিভিউ দেখুন)
+                  Interactive Review Before Saving
                 </span>
                 <span className="text-[11px] text-slate-500">
-                  কতগুলো ডুপ্লিকেট স্কিপ হলো এবং কোন ১০-২০টি নতুন ডাটা পাওয়া গেল তা প্রিভিউ মডালে দেখাবে।
+                  Displays a review modal showing exactly which duplicates were skipped and which new records will be added.
                 </span>
               </div>
               <input
@@ -410,7 +410,7 @@ export const ExcelImportSettingsModal: React.FC<ExcelImportSettingsModalProps> =
                   Smart Building &amp; Room Parser (e.g. D01-106)
                 </span>
                 <span className="text-[11px] text-slate-500">
-                  রুম নম্বরে "D01-106" থাকলে স্বয়ংক্রিয়ভাবে Building: D01 এবং Room: 106 এ বিভক্ত করবে।
+                  When room strings look like &ldquo;D01-106&rdquo;, automatically decomposes them into Building: D01 and Room: 106.
                 </span>
               </div>
               <input
@@ -449,7 +449,7 @@ export const ExcelImportSettingsModal: React.FC<ExcelImportSettingsModalProps> =
               className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center space-x-2 shadow-sm transition active:scale-95 cursor-pointer"
             >
               <Save className="w-4 h-4" />
-              <span>Save Settings (সেটিংস সংরক্ষণ করুন)</span>
+              <span>Save Settings</span>
             </button>
           </div>
         </div>

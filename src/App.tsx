@@ -1049,7 +1049,7 @@ export default function App() {
                   <div className="flex items-center justify-between gap-3 rounded-2xl border border-sky-500/30 bg-sky-500/10 dark:bg-sky-950/40 px-4 py-3 text-sky-900 dark:text-sky-100 text-xs sm:text-sm font-semibold shadow-sm animate-pulse">
                     <div className="flex items-center gap-2.5">
                       <RefreshCw className="w-4 h-4 animate-spin text-sky-600 dark:text-sky-400 shrink-0" />
-                      <span>সর্বশেষ বুকিং লোড হচ্ছে... (Loading latest authoritative bookings from server)</span>
+                      <span>Loading latest authoritative bookings from server...</span>
                     </div>
                     <span className="text-[10px] bg-sky-600 text-white font-mono px-2 py-0.5 rounded-full uppercase tracking-wider font-bold">
                       Direct Server Sync

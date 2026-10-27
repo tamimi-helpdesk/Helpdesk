@@ -647,39 +647,36 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
       />
 
       {/* Top Header Card (Clean, Executive UI) */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800">
-              Auto Form Portal
-            </span>
+            <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
+              From.docx Auto-Fill Generator
+            </h2>
             <button
               type="button"
               onClick={handleManualSyncCheck}
               disabled={isSyncingServer}
-              className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 hover:bg-emerald-100/80 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/50 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800 flex items-center gap-1.5 transition cursor-pointer active:scale-95"
+              className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 hover:bg-emerald-100/70 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-200/70 dark:border-emerald-800/60 flex items-center gap-1.5 transition cursor-pointer active:scale-95"
               title="Click to check and force sync with central server"
             >
-              <span className={`w-2 h-2 rounded-full ${isSyncingServer ? 'bg-amber-500 animate-spin' : 'bg-emerald-500 animate-pulse'}`} />
-              <span>{rows.length.toLocaleString()} Residents • Auto-Synced Across Workstations</span>
-              <RefreshCw className={`w-3 h-3 ml-0.5 text-emerald-600 dark:text-emerald-400 ${isSyncingServer ? 'animate-spin' : ''}`} />
+              <span className={`w-1.5 h-1.5 rounded-full ${isSyncingServer ? 'bg-amber-500 animate-spin' : 'bg-emerald-500 animate-pulse'}`} />
+              <span>{rows.length.toLocaleString()} Residents Synced</span>
+              <RefreshCw className={`w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400 ${isSyncingServer ? 'animate-spin' : ''}`} />
             </button>
           </div>
-          <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
-            From.docx Auto-Fill Generator
-          </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
             Select any resident to auto-fill the official Move-In & Move-Out Form (From.docx) with instant Word download and print.
           </p>
         </div>
 
-        {/* Clean, Non-Duplicated Action Buttons */}
+        {/* Clean, Unified Action Buttons */}
         <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => excelUploadRef.current?.click()}
-            className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
-            title="Import an Excel (.xlsx / .csv) file to add new unique residents and sync to all computers"
+            className="h-9 px-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 dark:text-slate-900 active:scale-95 text-white text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
+            title="Import an Excel (.xlsx / .csv) file to add new unique residents and sync to all workstations"
           >
             <Upload className="w-3.5 h-3.5" />
             <span>Import Excel</span>
@@ -688,7 +685,7 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
           <button
             type="button"
             onClick={() => setIsAddEmployeeModalOpen(true)}
-            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
+            className="h-9 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
             title="Manually add a new resident record"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -698,41 +695,41 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
           <button
             type="button"
             onClick={handleDownloadMasterExcel}
-            className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
+            className="h-9 px-3 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium flex items-center space-x-1.5 transition active:scale-95 cursor-pointer"
             title="Export full resident directory to Excel (.xlsx)"
           >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+            <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
             <span>Export Excel</span>
           </button>
 
           <button
             type="button"
             onClick={handleDownloadBlankFromDocx}
-            className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center space-x-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
+            className="h-9 px-3 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium flex items-center space-x-1.5 transition active:scale-95 cursor-pointer"
             title="Download blank From.docx template"
           >
-            <FileText className="w-3.5 h-3.5 text-blue-600" />
+            <FileText className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
             <span>Blank Template</span>
           </button>
 
           <button
             type="button"
             onClick={() => setIsSettingsModalOpen(true)}
-            className="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 transition active:scale-95 cursor-pointer shadow-2xs"
+            className="h-9 w-9 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center transition active:scale-95 cursor-pointer"
             title="Configure Deduplication Settings"
           >
-            <Sliders className="w-4 h-4" />
+            <Sliders className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {/* Selected Resident & Form Action Panel (Replaces the giant 850px preview) */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+      {/* Selected Resident & Form Action Panel */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
         {selectedRow ? (
-          <div>
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 dark:bg-blue-950/60 dark:border-blue-800 text-blue-700 dark:text-blue-300 font-black text-sm flex items-center justify-center shrink-0 shadow-2xs">
+          <div className="space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3.5 border-b border-slate-100 dark:border-slate-800">
+              <div className="flex items-center space-x-3.5">
+                <div className="w-11 h-11 rounded-xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-sm flex items-center justify-center shrink-0 shadow-2xs tracking-wide">
                   {(formValues.name || 'EM').trim().slice(0, 2).toUpperCase()}
                 </div>
                 <div>
@@ -740,19 +737,19 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
                     <h3 className="text-base font-bold text-slate-900 dark:text-white">
                       {formValues.name || 'Unnamed Resident'}
                     </h3>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800">
+                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                       ID: {formValues.employmentId || 'N/A'}
                     </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
+                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                       Bldg {formValues.buildingNo || formValues.house || 'N/A'} • Unit {formValues.unitNo || formValues.room || 'N/A'}
                     </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700">
+                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                       {formValues.propertyType || 'Executive'}
                     </span>
                   </div>
-                  <span className="text-xs text-slate-500 dark:text-slate-400 block pt-0.5">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                     {formValues.designation || formValues.department || 'Operations'} • {formValues.company || 'Red Sea Global'}
-                  </span>
+                  </p>
                 </div>
               </div>
 
@@ -762,96 +759,96 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
                   type="button"
                   onClick={handleDownloadWordDocx}
                   disabled={isDownloadingDocx}
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs flex items-center space-x-2 shadow-xs transition cursor-pointer disabled:opacity-50"
+                  className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-semibold text-xs flex items-center space-x-2 shadow-xs transition cursor-pointer disabled:opacity-50"
                   title="Download populated From.docx with exact employee information"
                 >
-                  <Download className="w-4 h-4" />
+                  <Download className="w-3.5 h-3.5" />
                   <span>{isDownloadingDocx ? 'Generating...' : 'Download Form (.docx)'}</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={handlePrint}
-                  className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-semibold text-xs flex items-center space-x-1.5 transition cursor-pointer shadow-2xs"
+                  className="h-9 px-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-medium text-xs flex items-center space-x-1.5 transition cursor-pointer"
                   title="Print official Move-In & Move-Out Form"
                 >
-                  <Printer className="w-3.5 h-3.5" />
+                  <Printer className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                   <span>Print Form</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setIsPreviewModalOpen(true)}
-                  className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-semibold text-xs flex items-center space-x-1.5 transition cursor-pointer shadow-2xs"
+                  className="h-9 px-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-medium text-xs flex items-center space-x-1.5 transition cursor-pointer"
                   title="Preview official From.docx layout on demand"
                 >
-                  <Eye className="w-3.5 h-3.5 text-blue-600" />
+                  <Eye className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                   <span>Preview</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={handleSaveToDrafts}
-                  className="px-3 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-semibold text-xs flex items-center space-x-1.5 transition cursor-pointer"
+                  className="h-9 px-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-medium text-xs flex items-center space-x-1.5 transition cursor-pointer"
                   title="Save record to draft portal"
                 >
-                  <Save className="w-3.5 h-3.5 text-emerald-600" />
+                  <Save className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                   <span>Save Draft</span>
                 </button>
               </div>
             </div>
 
-            {/* Form Fields Summary Grid (Clean & Light) */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 pt-3 text-xs">
-              <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
-                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 block">Building No:</span>
-                <strong className="text-slate-900 dark:text-slate-100 truncate block">
+            {/* Unified Sleek Information Strip */}
+            <div className="bg-slate-50/70 dark:bg-slate-800/40 rounded-xl p-3 border border-slate-200/70 dark:border-slate-800 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+              <div className="space-y-0.5">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Building</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
                   {formValues.buildingNo || formValues.house || 'N/A'}
-                </strong>
+                </span>
               </div>
 
-              <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
-                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 block">Unit / Room No:</span>
-                <strong className="text-blue-700 dark:text-blue-400 truncate block">
+              <div className="space-y-0.5">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Unit / Room</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
                   {formValues.unitNo || formValues.room || 'N/A'}
-                </strong>
+                </span>
               </div>
 
-              <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
-                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 block">Unit Serial No:</span>
-                <strong className="text-slate-900 dark:text-slate-100 truncate block">
+              <div className="space-y-0.5">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Unit Serial No</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
                   {formValues.unitSerialNo || 'N/A'}
-                </strong>
+                </span>
               </div>
 
-              <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
-                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 block">National ID / Iqama:</span>
-                <strong className="text-slate-900 dark:text-slate-100 truncate block">
+              <div className="space-y-0.5">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">National ID / Iqama</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
                   {formValues.idIqama || 'N/A'}
-                </strong>
+                </span>
               </div>
 
-              <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
-                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 block">Mobile No:</span>
-                <strong className="text-slate-900 dark:text-slate-100 truncate block">
+              <div className="space-y-0.5">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Mobile</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
                   {formValues.mobile || 'N/A'}
-                </strong>
+                </span>
               </div>
 
-              <div className="bg-slate-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
-                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 block">Check-In / Out:</span>
-                <strong className="text-slate-900 dark:text-slate-100 truncate block">
+              <div className="space-y-0.5">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Stay Dates</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
                   {formValues.moveInDate || '8/24/2026'} - {formValues.moveOutDate || '8/26/2026'}
-                </strong>
+                </span>
               </div>
             </div>
 
             {/* Optional Collapsible Field Customizer */}
-            <div className="pt-2">
+            <div className="pt-1">
               <button
                 type="button"
                 onClick={() => setIsEditingFields(!isEditingFields)}
-                className="text-xs font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400 flex items-center gap-1.5 cursor-pointer"
+                className="text-xs font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 inline-flex items-center gap-1.5 transition cursor-pointer"
               >
                 <Edit3 className="w-3.5 h-3.5" />
                 <span>{isEditingFields ? 'Hide Field Customizer' : 'Customize Form Fields Before Downloading (Optional)'}</span>
@@ -946,15 +943,15 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
         )}
       </div>
 
-      {/* EXCEL-LIKE MULTI-TIER FILTERING & SEARCH TOOLBAR */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs space-y-3">
+      {/* Directory Filters & Search Toolbar */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 shadow-xs space-y-3">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <SlidersHorizontal className="w-4 h-4 text-blue-600 shrink-0" />
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
-              Filters & Search
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+              Directory Filters
             </h3>
-            <span className="text-[11px] font-mono text-slate-500 font-semibold bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
+            <span className="text-[11px] text-slate-500 font-medium bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
               {filteredResults.length.toLocaleString()} matching
             </span>
           </div>
@@ -964,9 +961,9 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
             <button
               type="button"
               onClick={handleResetFilters}
-              className="text-xs font-bold text-blue-600 hover:text-blue-700 dark:text-blue-400 flex items-center space-x-1 cursor-pointer"
+              className="text-xs font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 flex items-center space-x-1 cursor-pointer transition"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
+              <RotateCcw className="w-3 h-3" />
               <span>Reset Filters</span>
             </button>
           )}
@@ -974,17 +971,17 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
 
         {/* The Filter Grid: Building -> Unit -> Category -> Text Search */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5">
-          {/* 1. Building Filter Dropdown */}
+          {/* Building Filter Dropdown */}
           <div className="lg:col-span-3 space-y-1">
-            <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-              <Building className="w-3.5 h-3.5 text-blue-600" />
-              <span>1. Filter Building</span>
+            <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+              <Building className="w-3 h-3 text-slate-400" />
+              <span>Building</span>
             </label>
             <div className="relative">
               <select
                 value={selectedBuilding}
                 onChange={(e) => handleBuildingChange(e.target.value)}
-                className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
               >
                 <option value="ALL">All Buildings ({buildingOptions.length} bldgs / {rows.length} total)</option>
                 {buildingOptions.map((b) => (
@@ -996,11 +993,11 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
             </div>
           </div>
 
-          {/* 2. Unit Filter Dropdown (Cascading!) */}
+          {/* Unit Filter Dropdown (Cascading) */}
           <div className="lg:col-span-3 space-y-1">
-            <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5 text-emerald-600" />
-              <span>2. Filter Unit / Room</span>
+            <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+              <Layers className="w-3 h-3 text-slate-400" />
+              <span>Unit / Room</span>
             </label>
             <div className="relative">
               <select
@@ -1009,7 +1006,7 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
                   setSelectedUnit(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
               >
                 <option value="ALL">
                   {selectedBuilding !== 'ALL'
@@ -1025,11 +1022,11 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
             </div>
           </div>
 
-          {/* 3. Category Filter */}
+          {/* Property Type Filter */}
           <div className="lg:col-span-2 space-y-1">
-            <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-              <Filter className="w-3.5 h-3.5 text-amber-600" />
-              <span>3. Property Type</span>
+            <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+              <Filter className="w-3 h-3 text-slate-400" />
+              <span>Property Type</span>
             </label>
             <select
               value={categoryFilter}
@@ -1037,7 +1034,7 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
                 setCategoryFilter(e.target.value as any);
                 setCurrentPage(1);
               }}
-              className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
             >
               <option value="ALL">All Categories</option>
               <option value="Executive">Executive</option>
@@ -1047,20 +1044,20 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
             </select>
           </div>
 
-          {/* 4. Live Free-text Search Input */}
+          {/* Quick Search Input */}
           <div className="lg:col-span-4 space-y-1">
-            <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-              <Search className="w-3.5 h-3.5 text-blue-600" />
-              <span>4. Search Resident / ID / Phone</span>
+            <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+              <Search className="w-3 h-3 text-slate-400" />
+              <span>Quick Search</span>
             </label>
             <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search name, ID, Iqama, passport, mobile..."
-                className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full pl-8 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
               />
               {searchQuery && (
                 <button
@@ -1078,15 +1075,15 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
         {/* Active Filter Chips */}
         {isFilterActive && (
           <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-800 text-[11px]">
-            <span className="text-slate-400 font-semibold mr-1">Active Filters:</span>
+            <span className="text-slate-400 font-medium mr-1">Active Filters:</span>
 
             {selectedBuilding !== 'ALL' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-blue-50 text-blue-800 border border-blue-200 font-semibold">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
                 Building: {selectedBuilding}
                 <button
                   type="button"
                   onClick={() => handleBuildingChange('ALL')}
-                  className="hover:text-blue-950 cursor-pointer ml-1 font-bold"
+                  className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
                 >
                   ✕
                 </button>
@@ -1094,12 +1091,12 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
             )}
 
             {selectedUnit !== 'ALL' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
                 Unit: {selectedUnit}
                 <button
                   type="button"
                   onClick={() => setSelectedUnit('ALL')}
-                  className="hover:text-emerald-950 cursor-pointer ml-1 font-bold"
+                  className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
                 >
                   ✕
                 </button>
@@ -1107,12 +1104,12 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
             )}
 
             {categoryFilter !== 'ALL' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
                 Category: {categoryFilter}
                 <button
                   type="button"
                   onClick={() => setCategoryFilter('ALL')}
-                  className="hover:text-amber-950 cursor-pointer ml-1 font-bold"
+                  className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
                 >
                   ✕
                 </button>
@@ -1120,12 +1117,12 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
             )}
 
             {searchQuery && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-800 border border-slate-200 font-semibold">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
                 Search: &ldquo;{searchQuery}&rdquo;
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="hover:text-slate-950 cursor-pointer ml-1 font-bold"
+                  className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
                 >
                   ✕
                 </button>
