@@ -5,7 +5,6 @@ import fs from 'fs';
 import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
-import { createServer as createViteServer } from 'vite';
 import crypto from 'crypto';
 import { isResourceOrStageMatch, getCanonicalResourceName } from './src/utils/resourceMatching.ts';
 
@@ -3043,26 +3042,31 @@ app.post('/api/blank-forms/custom-employees', async (req: Request, res: Response
       existing = [...hubState.blankForms];
     }
 
-    // Map-based merge with normalized keys (employmentId, idIqama, passport, name+unit, id)
-    const getNormalizedKey = (e: any): string => {
+    // Map-based merge preserving distinct visits and history while merging updates
+    const getExactRecordKey = (e: any): string => {
       if (!e) return '';
+      if (e.id) return String(e.id).trim();
       const emp = e.employmentId ? String(e.employmentId).trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
-      const iq = e.idIqama ? String(e.idIqama).replace(/\D/g, '') : '';
-      const pass = e.passport ? String(e.passport).trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '';
-      const nameUnit = e.name ? `${String(e.name).trim().toLowerCase()}_${String(e.unitNo || e.room || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '')}` : '';
-      return emp || iq || pass || nameUnit || String(e.id || '').trim().toLowerCase();
+      const unit = String(e.unitNo || e.room || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      const moveIn = String(e.moveInDate || '').trim();
+      if (emp) return `emp_${emp}_${unit}_${moveIn}`;
+      const name = String(e.name || '').trim().toLowerCase().replace(/\s+/g, '_');
+      return `name_${name}_${unit}_${moveIn}`;
     };
 
     const empMap = new Map<string, any>();
     existing.forEach((e) => {
-      const key = getNormalizedKey(e);
+      const key = getExactRecordKey(e);
       if (key) empMap.set(key, e);
     });
 
     employees.forEach((e) => {
-      const key = getNormalizedKey(e);
+      const key = getExactRecordKey(e);
       if (key) {
         empMap.set(key, { ...(empMap.get(key) || {}), ...e });
+      } else {
+        const fallbackKey = `res_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        empMap.set(fallbackKey, { ...e, id: e.id || fallbackKey });
       }
     });
 
@@ -3121,7 +3125,9 @@ app.delete('/api/blank-forms/custom-employees/:id', (req: Request, res: Response
     const filtered = existing.filter(
       (e) =>
         String(e.id || '').toLowerCase().trim() !== rawId &&
-        String(e.employmentId || '').toLowerCase().trim() !== rawId
+        String(e.employmentId || '').toLowerCase().trim() !== rawId &&
+        String(e.idIqama || '').toLowerCase().trim() !== rawId &&
+        String(e.passport || '').toLowerCase().trim() !== rawId
     );
 
     fs.writeFileSync(CUSTOM_EMPLOYEES_FILE_PATH, JSON.stringify(filtered, null, 2), 'utf-8');
@@ -4178,7 +4184,7 @@ app.post('/api/export-excel', async (req: Request, res: Response) => {
         if (img) {
           try {
             const imageId = workbook.addImage({
-              buffer: img.buffer,
+              buffer: img.buffer as any,
               extension: img.ext,
             });
 
@@ -4200,7 +4206,7 @@ app.post('/api/export-excel', async (req: Request, res: Response) => {
         if (cImg) {
           try {
             const cId = workbook.addImage({
-              buffer: cImg.buffer,
+              buffer: cImg.buffer as any,
               extension: cImg.ext,
             });
 
@@ -4273,21 +4279,16 @@ app.post('/api/export-excel', async (req: Request, res: Response) => {
   }
 });
 
-// 4. Vite Dev / Production Static Server
+// 4. Static File Server & SPA Fallback
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req: Request, res: Response) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
+  const distDir = path.join(process.cwd(), 'dist');
+  const docsDir = path.join(process.cwd(), 'docs');
+  const staticPath = fs.existsSync(path.join(distDir, 'index.html')) ? distDir : docsDir;
+
+  app.use(express.static(staticPath));
+  app.get('*', (req: Request, res: Response) => {
+    res.sendFile(path.join(staticPath, 'index.html'));
+  });
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Executive Facility Booking Server running on http://0.0.0.0:${PORT}`);

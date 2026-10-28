@@ -32,6 +32,7 @@ import {
   Sliders,
   Plus,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BlankFromRow, EMPTY_BLANK_FROM_ROW } from '../../data/initialBlankFromData';
@@ -107,6 +108,38 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
   const [isAddEmployeeModalOpen, setIsAddEmployeeModalOpen] = useState(false);
   const [isSyncingServer, setIsSyncingServer] = useState(false);
 
+  // Multi-Visit Resident History & Smart Merge
+  const [selectedResidentVisits, setSelectedResidentVisits] = useState<BlankFromRow[]>([]);
+  const [showVisitHistory, setShowVisitHistory] = useState(false);
+  const [residentToDelete, setResidentToDelete] = useState<BlankFromRow | null>(null);
+
+  // Permanently delete resident handler
+  const handleConfirmDeleteResident = async () => {
+    if (!residentToDelete) return;
+    const name = residentToDelete.name || 'Resident';
+    const id = residentToDelete.id || residentToDelete.employmentId || residentToDelete.idIqama;
+
+    BlankFromService.deleteCustomEmployee(id);
+    const updated = BlankFromService.getRows();
+    setRows(updated);
+
+    if (
+      selectedRow?.id === residentToDelete.id ||
+      (selectedRow?.employmentId && selectedRow?.employmentId === residentToDelete.employmentId)
+    ) {
+      const nextRow = updated[0] || null;
+      setSelectedRow(nextRow);
+      if (nextRow) {
+        setFormValues({ ...EMPTY_BLANK_FROM_ROW, ...nextRow });
+      } else {
+        setFormValues({ ...EMPTY_BLANK_FROM_ROW });
+      }
+    }
+
+    setResidentToDelete(null);
+    ToastService.hub(`Resident "${name}" deleted successfully.`);
+  };
+
   const handleManualSyncCheck = async () => {
     setIsSyncingServer(true);
     try {
@@ -179,12 +212,58 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
     );
   };
 
-  // Synchronize when selected row changes
+  // Find all historical visits/records for a resident across the database
+  const findResidentVisits = (resident: BlankFromRow | null, allRows: BlankFromRow[]): BlankFromRow[] => {
+    if (!resident) return [];
+    const cleanAlpha = (v?: string | number) => (v ? String(v).trim().toLowerCase().replace(/[^a-z0-9]/g, '') : '');
+    const cleanDigits = (v?: string | number) => (v ? String(v).replace(/\D/g, '') : '');
+
+    const empKey = cleanAlpha(resident.employmentId);
+    const iqamaKey = cleanDigits(resident.idIqama);
+    const passportKey = cleanAlpha(resident.passport);
+    const nameKey = (resident.name || '').trim().toLowerCase();
+
+    return allRows.filter((r) => {
+      if (!r) return false;
+      if (r.id === resident.id) return true;
+      if (empKey && empKey.length >= 2 && cleanAlpha(r.employmentId) === empKey) return true;
+      if (iqamaKey && iqamaKey.length >= 5 && cleanDigits(r.idIqama) === iqamaKey) return true;
+      if (passportKey && passportKey.length >= 5 && cleanAlpha(r.passport) === passportKey) return true;
+      if (nameKey && nameKey.length >= 4 && (r.name || '').trim().toLowerCase() === nameKey) return true;
+      return false;
+    });
+  };
+
+  // Consolidates non-empty fields from all visits into one master merged profile
+  const consolidateResidentVisits = (visits: BlankFromRow[], primary: BlankFromRow): BlankFromRow => {
+    const merged: BlankFromRow = { ...EMPTY_BLANK_FROM_ROW, ...primary };
+    visits.forEach((v) => {
+      for (const [key, val] of Object.entries(v) as [keyof BlankFromRow, any][]) {
+        if (
+          val !== undefined &&
+          val !== null &&
+          String(val).trim() !== '' &&
+          (!merged[key] ||
+            String(merged[key]).trim() === '' ||
+            String(merged[key]) === 'None' ||
+            String(merged[key]) === 'Staff')
+        ) {
+          (merged as any)[key] = val;
+        }
+      }
+    });
+    return merged;
+  };
+
+  // Synchronize and consolidate across all visits when selected row changes
   useEffect(() => {
     if (selectedRow) {
-      setFormValues({ ...EMPTY_BLANK_FROM_ROW, ...selectedRow });
+      const visits = findResidentVisits(selectedRow, rows);
+      const merged = consolidateResidentVisits(visits, selectedRow);
+      setSelectedResidentVisits(visits);
+      setFormValues(merged);
     }
-  }, [selectedRow]);
+  }, [selectedRow, rows]);
 
   // Reset unit filter when building changes
   const handleBuildingChange = (bldg: string) => {
@@ -288,44 +367,53 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
         if (cat !== categoryFilter.toLowerCase()) return false;
       }
 
-      // 4. Free-text Search
+      // 4. Free-text Search (Multi-Token Composite Search)
       if (!q) return true;
 
-      const name = (r.name || '').toLowerCase();
-      const empId = (r.employmentId || '').toLowerCase();
-      const bldg = (r.buildingNo || r.house || '').toLowerCase();
-      const unit = (r.unitNo || r.room || '').toLowerCase();
-      const serial = (r.unitSerialNo || '').toLowerCase();
-      const iqama = (r.idIqama || '').toLowerCase();
-      const passport = (r.passport || '').toLowerCase();
-      const mobile = (r.mobile || '').toLowerCase();
-      const dept = (r.department || '').toLowerCase();
-      const comp = (r.company || '').toLowerCase();
+      const searchableText = [
+        r.employmentId,
+        r.idIqama,
+        r.passport,
+        r.name,
+        r.buildingNo,
+        r.house,
+        r.unitNo,
+        r.room,
+        r.unitSerialNo,
+        r.mobile,
+        r.company,
+        r.department,
+        r.designation,
+        r.nationality,
+        r.id,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
 
-      if (
-        name.includes(q) ||
-        empId.includes(q) ||
-        bldg.includes(q) ||
-        unit.includes(q) ||
-        serial.includes(q) ||
-        iqama.includes(q) ||
-        passport.includes(q) ||
-        mobile.includes(q) ||
-        dept.includes(q) ||
-        comp.includes(q)
-      ) {
+      const searchableAlpha = searchableText.replace(/[^a-z0-9]/g, '');
+
+      // Direct match
+      if (searchableText.includes(q) || (cleanAlphaNum && searchableAlpha.includes(cleanAlphaNum))) {
         return true;
       }
 
-      if (cleanAlphaNum && cleanAlphaNum.length >= 2) {
-        if (
-          name.replace(/[^a-z0-9]/g, '').includes(cleanAlphaNum) ||
-          empId.replace(/[^a-z0-9]/g, '').includes(cleanAlphaNum) ||
-          iqama.replace(/[^a-z0-9]/g, '').includes(cleanAlphaNum) ||
-          mobile.replace(/[^a-z0-9]/g, '').includes(cleanAlphaNum)
-        ) {
-          return true;
-        }
+      // Multi-token match: splits query by hyphens, spaces, slashes, commas, underscores
+      // (e.g. "2045284789-Mohammed Fauda" splits into "2045284789", "mohammed", "fauda")
+      // Ensures ALL tokens must exist within the resident's composite record
+      const tokens = q.split(/[\s\-_,/:;+()]+/).filter(Boolean);
+      if (tokens.length > 0) {
+        const matchesAllTokens = tokens.every((token) => {
+          const cleanToken = token.replace(/[^a-z0-9]/g, '');
+          if (!cleanToken) return true;
+          const noZeros = cleanToken.replace(/^0+/, '');
+          return (
+            searchableText.includes(token) ||
+            searchableAlpha.includes(cleanToken) ||
+            (noZeros.length >= 2 && searchableAlpha.includes(noZeros))
+          );
+        });
+        if (matchesAllTokens) return true;
       }
 
       return false;
@@ -363,12 +451,25 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
     ToastService.hub('All filters reset.');
   };
 
-  // Select resident handler
+  // Select resident handler with Smart Multi-Record Auto-Merge
   const handleSelectEmployee = (emp: BlankFromRow) => {
     if (!emp) return;
+    const visits = findResidentVisits(emp, rows);
+    const mergedProfile = consolidateResidentVisits(visits, emp);
+
     setSelectedRow(emp);
-    setFormValues({ ...EMPTY_BLANK_FROM_ROW, ...emp });
-    ToastService.hub(`Selected: ${emp.name || 'Resident'} (ID: ${emp.employmentId || 'N/A'}) - Unit ${emp.unitNo || emp.room || 'N/A'}`);
+    setSelectedResidentVisits(visits);
+    setFormValues(mergedProfile);
+
+    if (visits.length > 1) {
+      ToastService.hub(
+        `✨ Auto-Merged ${visits.length} visit records for ${emp.name || 'Resident'} (ID: ${emp.employmentId || emp.idIqama || 'N/A'}). Form filled with complete profile!`
+      );
+    } else {
+      ToastService.hub(
+        `Selected: ${emp.name || 'Resident'} (ID: ${emp.employmentId || 'N/A'}) - Unit ${emp.unitNo || emp.room || 'N/A'}`
+      );
+    }
   };
 
   // Field change handler
@@ -483,10 +584,12 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
 
             let isDup = false;
             let reason = '';
+            
+            // Only consider duplicate if strictly matching official ID or exact name & unit
             if (currentSettings.matchByEmpId && emp && emp.length >= 2 && mapEmpId.has(emp)) {
               isDup = true;
               reason = `Matched Employment ID: ${inc.employmentId}`;
-            } else if (currentSettings.matchByIqama && iq && iq.length >= 7 && mapIqama.has(iq)) {
+            } else if (currentSettings.matchByIqama && iq && iq.length >= 5 && mapIqama.has(iq)) {
               isDup = true;
               reason = `Matched Iqama/Nat ID: ${inc.idIqama}`;
             } else if (currentSettings.matchByPassport && p && p.length >= 5 && mapPassport.has(p)) {
@@ -495,24 +598,14 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
             } else if (currentSettings.matchByNameAndUnit && nu && mapNameUnit.has(nu)) {
               isDup = true;
               reason = `Matched Name & Room: ${inc.name} (${inc.unitNo || inc.room})`;
-            } else if (currentSettings.matchByMobile && m && m.length >= 8 && mapMobile.has(m)) {
-              isDup = true;
-              reason = `Matched Mobile: ${inc.mobile}`;
             }
 
-            if (!isDup) {
-              if (emp && emp.length >= 2 && batchEmp.has(emp)) {
-                isDup = true;
-                reason = `File Duplicate (Emp ID: ${inc.employmentId})`;
-              } else if (iq && iq.length >= 7 && batchIq.has(iq)) {
-                isDup = true;
-                reason = `File Duplicate (Iqama: ${inc.idIqama})`;
-              } else if (p && p.length >= 5 && batchPass.has(p)) {
-                isDup = true;
-                reason = `File Duplicate (Passport: ${inc.passport})`;
-              } else if (nu && batchNu.has(nu)) {
-                isDup = true;
-                reason = `File Duplicate (${inc.name} in Unit ${inc.unitNo})`;
+            // If incoming record has a different room or unit serial, it is a distinct visit record - allow importing!
+            if (isDup && (inc.unitNo || inc.room)) {
+              const bldgUnitKey = `${b}_${u}`;
+              if (!mapNameUnit.has(`${n}_${bldgUnitKey}`)) {
+                // Different room or building: Keep as distinct historical visit
+                isDup = false;
               }
             }
 
@@ -795,8 +888,114 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
                   <Save className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                   <span>Save Draft</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setResidentToDelete(selectedRow)}
+                  className="h-9 px-3.5 rounded-xl bg-rose-50 hover:bg-rose-100 active:scale-95 text-rose-700 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 dark:text-rose-300 border border-rose-200 dark:border-rose-800 font-semibold text-xs flex items-center space-x-1.5 transition cursor-pointer"
+                  title="Permanently delete this resident profile"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+                  <span>Delete Resident</span>
+                </button>
               </div>
             </div>
+
+            {/* Smart Multi-Visit Auto-Merge Banner & Visit History Inspector */}
+            {selectedResidentVisits.length > 1 && (
+              <div className="bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/90 dark:border-emerald-800/80 rounded-xl p-3 space-y-2.5 transition-all">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                        <span>Smart Multi-Visit Auto-Merge Active: {selectedResidentVisits.length} Records Consolidated</span>
+                      </p>
+                      <p className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                        All missing room, bed, contact, and employment fields have been automatically unified from this resident's full visit history.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowVisitHistory(!showVisitHistory)}
+                    className="text-xs font-semibold text-emerald-800 dark:text-emerald-300 bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-50 dark:hover:bg-slate-800 px-3 py-1.5 rounded-lg shadow-2xs transition-colors self-start sm:self-auto cursor-pointer flex items-center space-x-1.5"
+                  >
+                    <span>{showVisitHistory ? 'Hide Visit History' : `View All ${selectedResidentVisits.length} Visits`}</span>
+                  </button>
+                </div>
+
+                {showVisitHistory && (
+                  <div className="mt-2 pt-2.5 border-t border-emerald-200/60 dark:border-emerald-800/60 overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="text-[11px] text-emerald-800 dark:text-emerald-300 border-b border-emerald-200/50 dark:border-emerald-800/50 font-semibold">
+                          <th className="pb-1.5 pr-3">Visit / Record ID</th>
+                          <th className="pb-1.5 px-3">Building & Unit</th>
+                          <th className="pb-1.5 px-3">Move-In / Move-Out</th>
+                          <th className="pb-1.5 px-3">Company & Dept</th>
+                          <th className="pb-1.5 px-3">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-emerald-100 dark:divide-emerald-900/40 text-[11px]">
+                        {selectedResidentVisits.map((v, vIdx) => {
+                          const isCurrent = v.id === selectedRow?.id;
+                          return (
+                            <tr key={v.id || vIdx} className={isCurrent ? 'bg-emerald-100/50 dark:bg-emerald-900/30' : ''}>
+                              <td className="py-2 pr-3 font-mono font-medium text-slate-700 dark:text-slate-300">
+                                {v.id || `VISIT-${vIdx + 1}`}
+                                {isCurrent && (
+                                  <span className="ml-1.5 px-1.5 py-0.5 text-[9px] bg-emerald-600 text-white rounded font-sans font-bold">
+                                    Primary
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 text-slate-800 dark:text-slate-200">
+                                Bldg {v.buildingNo || v.house || 'N/A'} • Unit {v.unitNo || v.room || 'N/A'} {v.unitSerialNo ? `(${v.unitSerialNo})` : ''}
+                              </td>
+                              <td className="py-2 px-3 text-slate-600 dark:text-slate-400">
+                                {v.moveInDate || 'N/A'} {v.moveOutDate ? `→ ${v.moveOutDate}` : ''}
+                              </td>
+                              <td className="py-2 px-3 text-slate-600 dark:text-slate-400">
+                                {v.company || 'N/A'} ({v.department || 'N/A'})
+                              </td>
+                              <td className="py-2 pl-3">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedRow(v);
+                                    setFormValues({ ...EMPTY_BLANK_FROM_ROW, ...v });
+                                    ToastService.hub(`Loaded specific visit: Unit ${v.unitNo || v.room || 'N/A'}`);
+                                  }}
+                                  className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-semibold cursor-pointer"
+                                >
+                                  Load this single record
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <div className="mt-2 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const merged = consolidateResidentVisits(selectedResidentVisits, selectedRow || selectedResidentVisits[0]);
+                          setFormValues(merged);
+                          ToastService.hub('Restored consolidated auto-merged profile!');
+                        }}
+                        className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/50 hover:bg-emerald-200 px-2.5 py-1 rounded-md transition cursor-pointer"
+                      >
+                        Re-apply Full Smart Merged Profile
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Unified Sleek Information Strip */}
             <div className="bg-slate-50/70 dark:bg-slate-800/40 rounded-xl p-3 border border-slate-200/70 dark:border-slate-800 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
@@ -1323,20 +1522,34 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
                         {emp.mobile || 'N/A'}
                       </td>
                       <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSelectEmployee(emp);
-                          }}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                            isCur
-                              ? 'bg-blue-600 text-white shadow-2xs'
-                              : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-blue-50 hover:text-blue-700 border border-slate-200 dark:border-slate-700'
-                          }`}
-                        >
-                          {isCur ? 'Selected' : 'Select'}
-                        </button>
+                        <div className="flex items-center justify-end space-x-1.5">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSelectEmployee(emp);
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                              isCur
+                                ? 'bg-blue-600 text-white shadow-2xs'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-blue-50 hover:text-blue-700 border border-slate-200 dark:border-slate-700'
+                            }`}
+                          >
+                            {isCur ? 'Selected' : 'Select'}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setResidentToDelete(emp);
+                            }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+                            title={`Delete resident "${emp.name || 'Resident'}"`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1839,6 +2052,48 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
           <span>Page 1 of 1</span>
         </div>
       </div>
+
+      {/* Delete Resident Confirmation Modal */}
+      {residentToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-start space-x-3.5">
+              <div className="p-2.5 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-base font-bold text-slate-900 dark:text-white">
+                  Delete Resident Profile
+                </h4>
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  Are you sure you want to permanently delete resident <span className="font-bold text-slate-900 dark:text-white underline decoration-rose-400 decoration-2">{residentToDelete.name || 'this resident'}</span> (ID: <span className="font-mono font-semibold">{residentToDelete.employmentId || residentToDelete.idIqama || 'N/A'}</span>)?
+                </p>
+                <p className="text-[11px] text-rose-600 dark:text-rose-400 font-medium">
+                  This will remove the master profile from this workstation and sync the deletion to all other connected workstations.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setResidentToDelete(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteResident}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 active:scale-95 transition shadow-xs cursor-pointer flex items-center space-x-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Confirm Delete</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
