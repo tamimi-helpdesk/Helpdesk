@@ -27,14 +27,19 @@ export interface BlankFromRow {
   email?: string; // {{Email}}
   nationality: string; // "Jordan" -> {{Nationality}}
   dob?: string; // {{DOB}}
-  moveInDate: string; // "8/24/2026" -> {{Move_In_Date}}
   contractStartDate?: string; // "8/24/2026"
+  contractEndDate?: string; // "12/31/2026"
   moveOutDate: string; // "8/26/2026" -> {{Move_Out_Date}}
+  asset?: string; // Assigned Project -> Asset (e.g. "Coastal Village")
+  idExpiryDate?: string; // Personal Documents -> ID/Iqama Expiry Date
+  passportExpiryDate?: string; // Personal Documents -> Passport Expiry Date
+  propertyName?: string; // Property Name (e.g. "TBCV")
   emergencyMobile: string; // "543084116" -> {{Emergency_contact}}
   emergencyName: string; // "None" -> {{Name of Contact}}
   vehicleRegNo?: string;
   vehicleModel?: string;
   carParkSpace?: string;
+  contractNumber?: string;
   isCustom?: boolean;
   uploadedAt?: string;
 }
@@ -75,10 +80,16 @@ export const EMPTY_BLANK_FROM_ROW: BlankFromRow = {
   dob: '',
   moveInDate: '8/24/2026',
   contractStartDate: '8/24/2026',
+  contractEndDate: '12/31/2026',
   moveOutDate: '12/31/2026',
+  asset: '',
+  idExpiryDate: '',
+  passportExpiryDate: '',
+  propertyName: 'TBCV',
   emergencyMobile: '',
   emergencyName: 'None',
   vehicleRegNo: '',
   vehicleModel: '',
   carParkSpace: '',
+  contractNumber: '',
 };

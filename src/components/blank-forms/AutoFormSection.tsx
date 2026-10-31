@@ -729,7 +729,7 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       {/* Hidden single file input */}
       <input
         type="file"
@@ -739,630 +739,668 @@ export const AutoFormSection: React.FC<AutoFormSectionProps> = ({ onSavedToDraft
         className="hidden"
       />
 
-      {/* Top Header Card (Clean, Executive UI) */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
+      {/* Unified Single Section: Consolidated Card for Header, Selected Resident & Directory Filters */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-xl shadow-2xs divide-y divide-slate-100 dark:divide-slate-800 overflow-hidden">
+        {/* Part 1: Top Header Bar (Compact Pro Bar) */}
+        <div className="px-3 py-2 bg-slate-50/60 dark:bg-slate-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <h2 className="text-sm sm:text-base font-bold tracking-tight text-slate-900 dark:text-white shrink-0">
               From.docx Auto-Fill Generator
             </h2>
             <button
               type="button"
               onClick={handleManualSyncCheck}
               disabled={isSyncingServer}
-              className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-50 hover:bg-emerald-100/70 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-200/70 dark:border-emerald-800/60 flex items-center gap-1.5 transition cursor-pointer active:scale-95"
+              className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 hover:bg-emerald-100/70 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-200/70 dark:border-emerald-800/60 inline-flex items-center gap-1.5 transition cursor-pointer active:scale-95 shrink-0"
               title="Click to check and force sync with central server"
             >
               <span className={`w-1.5 h-1.5 rounded-full ${isSyncingServer ? 'bg-amber-500 animate-spin' : 'bg-emerald-500 animate-pulse'}`} />
               <span>{rows.length.toLocaleString()} Residents Synced</span>
               <RefreshCw className={`w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400 ${isSyncingServer ? 'animate-spin' : ''}`} />
             </button>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
-            Select any resident to auto-fill the official Move-In & Move-Out Form (From.docx) with instant Word download and print.
-          </p>
-        </div>
-
-        {/* Clean, Unified Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => excelUploadRef.current?.click()}
-            className="h-9 px-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 dark:text-slate-900 active:scale-95 text-white text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
-            title="Import an Excel (.xlsx / .csv) file to add new unique residents and sync to all workstations"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span>Import Excel</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsAddEmployeeModalOpen(true)}
-            className="h-9 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer shadow-xs"
-            title="Manually add a new resident record"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>+ Add Resident</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadMasterExcel}
-            className="h-9 px-3 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium flex items-center space-x-1.5 transition active:scale-95 cursor-pointer"
-            title="Export full resident directory to Excel (.xlsx)"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-            <span>Export Excel</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadBlankFromDocx}
-            className="h-9 px-3 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium flex items-center space-x-1.5 transition active:scale-95 cursor-pointer"
-            title="Download blank From.docx template"
-          >
-            <FileText className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-            <span>Blank Template</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsSettingsModalOpen(true)}
-            className="h-9 w-9 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center transition active:scale-95 cursor-pointer"
-            title="Configure Deduplication Settings"
-          >
-            <Sliders className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Selected Resident & Form Action Panel */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-        {selectedRow ? (
-          <div className="space-y-4">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3.5 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center space-x-3.5">
-                <div className="w-11 h-11 rounded-xl bg-slate-900 dark:bg-slate-800 text-white font-bold text-sm flex items-center justify-center shrink-0 shadow-2xs tracking-wide">
-                  {(formValues.name || 'EM').trim().slice(0, 2).toUpperCase()}
-                </div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                      {formValues.name || 'Unnamed Resident'}
-                    </h3>
-                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                      ID: {formValues.employmentId || 'N/A'}
-                    </span>
-                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                      Bldg {formValues.buildingNo || formValues.house || 'N/A'} • Unit {formValues.unitNo || formValues.room || 'N/A'}
-                    </span>
-                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                      {formValues.propertyType || 'Executive'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    {formValues.designation || formValues.department || 'Operations'} • {formValues.company || 'Red Sea Global'}
-                  </p>
-                </div>
-              </div>
-
-              {/* Instant Form Action Buttons */}
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={handleDownloadWordDocx}
-                  disabled={isDownloadingDocx}
-                  className="h-9 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-semibold text-xs flex items-center space-x-2 shadow-xs transition cursor-pointer disabled:opacity-50"
-                  title="Download populated From.docx with exact employee information"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>{isDownloadingDocx ? 'Generating...' : 'Download Form (.docx)'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handlePrint}
-                  className="h-9 px-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-medium text-xs flex items-center space-x-1.5 transition cursor-pointer"
-                  title="Print official Move-In & Move-Out Form"
-                >
-                  <Printer className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-                  <span>Print Form</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setIsPreviewModalOpen(true)}
-                  className="h-9 px-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-medium text-xs flex items-center space-x-1.5 transition cursor-pointer"
-                  title="Preview official From.docx layout on demand"
-                >
-                  <Eye className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-                  <span>Preview</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleSaveToDrafts}
-                  className="h-9 px-3.5 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-95 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-medium text-xs flex items-center space-x-1.5 transition cursor-pointer"
-                  title="Save record to draft portal"
-                >
-                  <Save className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-                  <span>Save Draft</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setResidentToDelete(selectedRow)}
-                  className="h-9 px-3.5 rounded-xl bg-rose-50 hover:bg-rose-100 active:scale-95 text-rose-700 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 dark:text-rose-300 border border-rose-200 dark:border-rose-800 font-semibold text-xs flex items-center space-x-1.5 transition cursor-pointer"
-                  title="Permanently delete this resident profile"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
-                  <span>Delete Resident</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Smart Multi-Visit Auto-Merge Banner & Visit History Inspector */}
-            {selectedResidentVisits.length > 1 && (
-              <div className="bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/90 dark:border-emerald-800/80 rounded-xl p-3 space-y-2.5 transition-all">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                  <div className="flex items-center space-x-2.5">
-                    <div className="p-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300">
-                      <Sparkles className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
-                        <span>Smart Multi-Visit Auto-Merge Active: {selectedResidentVisits.length} Records Consolidated</span>
-                      </p>
-                      <p className="text-[11px] text-emerald-700 dark:text-emerald-400">
-                        All missing room, bed, contact, and employment fields have been automatically unified from this resident's full visit history.
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowVisitHistory(!showVisitHistory)}
-                    className="text-xs font-semibold text-emerald-800 dark:text-emerald-300 bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-50 dark:hover:bg-slate-800 px-3 py-1.5 rounded-lg shadow-2xs transition-colors self-start sm:self-auto cursor-pointer flex items-center space-x-1.5"
-                  >
-                    <span>{showVisitHistory ? 'Hide Visit History' : `View All ${selectedResidentVisits.length} Visits`}</span>
-                  </button>
-                </div>
-
-                {showVisitHistory && (
-                  <div className="mt-2 pt-2.5 border-t border-emerald-200/60 dark:border-emerald-800/60 overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="text-[11px] text-emerald-800 dark:text-emerald-300 border-b border-emerald-200/50 dark:border-emerald-800/50 font-semibold">
-                          <th className="pb-1.5 pr-3">Visit / Record ID</th>
-                          <th className="pb-1.5 px-3">Building & Unit</th>
-                          <th className="pb-1.5 px-3">Move-In / Move-Out</th>
-                          <th className="pb-1.5 px-3">Company & Dept</th>
-                          <th className="pb-1.5 px-3">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-emerald-100 dark:divide-emerald-900/40 text-[11px]">
-                        {selectedResidentVisits.map((v, vIdx) => {
-                          const isCurrent = v.id === selectedRow?.id;
-                          return (
-                            <tr key={v.id || vIdx} className={isCurrent ? 'bg-emerald-100/50 dark:bg-emerald-900/30' : ''}>
-                              <td className="py-2 pr-3 font-mono font-medium text-slate-700 dark:text-slate-300">
-                                {v.id || `VISIT-${vIdx + 1}`}
-                                {isCurrent && (
-                                  <span className="ml-1.5 px-1.5 py-0.5 text-[9px] bg-emerald-600 text-white rounded font-sans font-bold">
-                                    Primary
-                                  </span>
-                                )}
-                              </td>
-                              <td className="py-2 px-3 text-slate-800 dark:text-slate-200">
-                                Bldg {v.buildingNo || v.house || 'N/A'} • Unit {v.unitNo || v.room || 'N/A'} {v.unitSerialNo ? `(${v.unitSerialNo})` : ''}
-                              </td>
-                              <td className="py-2 px-3 text-slate-600 dark:text-slate-400">
-                                {v.moveInDate || 'N/A'} {v.moveOutDate ? `→ ${v.moveOutDate}` : ''}
-                              </td>
-                              <td className="py-2 px-3 text-slate-600 dark:text-slate-400">
-                                {v.company || 'N/A'} ({v.department || 'N/A'})
-                              </td>
-                              <td className="py-2 pl-3">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedRow(v);
-                                    setFormValues({ ...EMPTY_BLANK_FROM_ROW, ...v });
-                                    ToastService.hub(`Loaded specific visit: Unit ${v.unitNo || v.room || 'N/A'}`);
-                                  }}
-                                  className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-semibold cursor-pointer"
-                                >
-                                  Load this single record
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    <div className="mt-2 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const merged = consolidateResidentVisits(selectedResidentVisits, selectedRow || selectedResidentVisits[0]);
-                          setFormValues(merged);
-                          ToastService.hub('Restored consolidated auto-merged profile!');
-                        }}
-                        className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/50 hover:bg-emerald-200 px-2.5 py-1 rounded-md transition cursor-pointer"
-                      >
-                        Re-apply Full Smart Merged Profile
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Unified Sleek Information Strip */}
-            <div className="bg-slate-50/70 dark:bg-slate-800/40 rounded-xl p-3 border border-slate-200/70 dark:border-slate-800 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
-              <div className="space-y-0.5">
-                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Building</span>
-                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
-                  {formValues.buildingNo || formValues.house || 'N/A'}
-                </span>
-              </div>
-
-              <div className="space-y-0.5">
-                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Unit / Room</span>
-                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
-                  {formValues.unitNo || formValues.room || 'N/A'}
-                </span>
-              </div>
-
-              <div className="space-y-0.5">
-                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Unit Serial No</span>
-                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
-                  {formValues.unitSerialNo || 'N/A'}
-                </span>
-              </div>
-
-              <div className="space-y-0.5">
-                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">National ID / Iqama</span>
-                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
-                  {formValues.idIqama || 'N/A'}
-                </span>
-              </div>
-
-              <div className="space-y-0.5">
-                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Mobile</span>
-                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
-                  {formValues.mobile || 'N/A'}
-                </span>
-              </div>
-
-              <div className="space-y-0.5">
-                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Stay Dates</span>
-                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
-                  {formValues.moveInDate || '8/24/2026'} - {formValues.moveOutDate || '8/26/2026'}
-                </span>
-              </div>
-            </div>
-
-            {/* Optional Collapsible Field Customizer */}
-            <div className="pt-1">
-              <button
-                type="button"
-                onClick={() => setIsEditingFields(!isEditingFields)}
-                className="text-xs font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 inline-flex items-center gap-1.5 transition cursor-pointer"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>{isEditingFields ? 'Hide Field Customizer' : 'Customize Form Fields Before Downloading (Optional)'}</span>
-              </button>
-
-              {isEditingFields && (
-                <div className="mt-3 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Building No</label>
-                    <input
-                      type="text"
-                      value={formValues.buildingNo || ''}
-                      onChange={(e) => handleFieldChange('buildingNo', e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Unit / Room No</label>
-                    <input
-                      type="text"
-                      value={formValues.unitNo || ''}
-                      onChange={(e) => handleFieldChange('unitNo', e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Resident Name</label>
-                    <input
-                      type="text"
-                      value={formValues.name || ''}
-                      onChange={(e) => handleFieldChange('name', e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Employment ID</label>
-                    <input
-                      type="text"
-                      value={formValues.employmentId || ''}
-                      onChange={(e) => handleFieldChange('employmentId', e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Check In Date</label>
-                    <input
-                      type="text"
-                      value={formValues.moveInDate || ''}
-                      onChange={(e) => handleFieldChange('moveInDate', e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Check Out Date</label>
-                    <input
-                      type="text"
-                      value={formValues.moveOutDate || ''}
-                      onChange={(e) => handleFieldChange('moveOutDate', e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">National ID / Iqama</label>
-                    <input
-                      type="text"
-                      value={formValues.idIqama || ''}
-                      onChange={(e) => handleFieldChange('idIqama', e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Mobile No</label>
-                    <input
-                      type="text"
-                      value={formValues.mobile || ''}
-                      onChange={(e) => handleFieldChange('mobile', e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="py-6 text-center text-xs text-slate-400 space-y-1.5">
-            <User className="w-7 h-7 mx-auto text-slate-300 dark:text-slate-600" />
-            <p className="font-bold text-slate-700 dark:text-slate-300">No resident selected</p>
-            <p className="text-[11px] text-slate-500">
-              Filter and click any resident from the table below to generate the official Move-In & Move-Out Form.
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Directory Filters & Search Toolbar */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 shadow-xs space-y-3">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-              Directory Filters
-            </h3>
-            <span className="text-[11px] text-slate-500 font-medium bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-md">
-              {filteredResults.length.toLocaleString()} matching
+            <span className="text-[11px] text-slate-400 dark:text-slate-500 hidden xl:inline-block border-l border-slate-200 dark:border-slate-700 pl-2 truncate max-w-md">
+              Select any resident to auto-fill Move-In &amp; Move-Out Form (From.docx) with instant download
             </span>
           </div>
 
-          {/* Reset Filters Action */}
-          {isFilterActive && (
+          {/* Action Buttons in Compact Row */}
+          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
             <button
               type="button"
-              onClick={handleResetFilters}
-              className="text-xs font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 flex items-center space-x-1 cursor-pointer transition"
+              onClick={() => excelUploadRef.current?.click()}
+              className="h-7 px-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 dark:text-slate-900 active:scale-95 text-white text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer shadow-2xs"
+              title="Import an Excel (.xlsx / .csv) file to add new unique residents"
             >
-              <RotateCcw className="w-3 h-3" />
-              <span>Reset Filters</span>
+              <Upload className="w-3.5 h-3.5" />
+              <span>Import Excel</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setIsAddEmployeeModalOpen(true)}
+              className="h-7 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer shadow-2xs"
+              title="Manually add a new resident record"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>+ Add Resident</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleDownloadMasterExcel}
+              className="h-7 px-2.5 rounded-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium flex items-center space-x-1.5 transition active:scale-95 cursor-pointer"
+              title="Export full resident directory to Excel (.xlsx)"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
+              <span>Export Excel</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsSettingsModalOpen(true)}
+              className="h-7 w-7 rounded-lg bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center transition active:scale-95 cursor-pointer"
+              title="Configure Deduplication Settings"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Part 2: Selected Resident & Form Action Panel */}
+        <div className="p-2.5 space-y-2">
+          {selectedRow ? (
+            <div className="space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-1.5 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center space-x-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-slate-900 dark:bg-slate-800 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs tracking-wide">
+                    {(formValues.name || 'EM').trim().slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                        {formValues.name || 'Unnamed Resident'}
+                      </h3>
+                      <span className="text-[10px] font-medium px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                        ID: {formValues.employmentId || 'N/A'}
+                      </span>
+                      <span className="text-[10px] font-medium px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                        Bldg {formValues.buildingNo || formValues.house || 'N/A'} • Unit {formValues.unitNo || formValues.room || 'N/A'}
+                      </span>
+                      <span className="text-[10px] font-medium px-1.5 py-0.2 rounded bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
+                        {formValues.propertyType || 'Executive'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                      {formValues.designation || formValues.department || 'Operations'} • {formValues.company || 'Red Sea Global'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Form Action Buttons: Download Form and Delete Resident */}
+                <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                  <button
+                    type="button"
+                    onClick={handleDownloadWordDocx}
+                    disabled={isDownloadingDocx}
+                    className="h-7 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-semibold text-xs flex items-center space-x-1.5 shadow-2xs transition cursor-pointer disabled:opacity-50"
+                    title="Download populated From.docx with exact employee information"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>{isDownloadingDocx ? 'Generating...' : 'Download Form (.docx)'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setResidentToDelete(selectedRow)}
+                    className="h-7 px-2.5 rounded-lg bg-rose-50 hover:bg-rose-100 active:scale-95 text-rose-700 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 dark:text-rose-300 border border-rose-200 dark:border-rose-800 font-semibold text-xs flex items-center space-x-1 transition cursor-pointer"
+                    title="Permanently delete this resident profile"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+                    <span>Delete Resident</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Smart Multi-Visit Auto-Merge Banner & Visit History Inspector */}
+              {selectedResidentVisits.length > 1 && (
+                <div className="bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/90 dark:border-emerald-800/80 rounded-lg p-2.5 space-y-2 transition-all">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center space-x-2">
+                      <div className="p-1 rounded-md bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300">
+                        <Sparkles className="w-3.5 h-3.5" />
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-1.5">
+                          <span>Smart Multi-Visit Auto-Merge Active: {selectedResidentVisits.length} Records Consolidated</span>
+                        </p>
+                        <p className="text-[10px] text-emerald-700 dark:text-emerald-400">
+                          Missing fields unified from full visit history into a single clean profile.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowVisitHistory(!showVisitHistory)}
+                      className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-50 dark:hover:bg-slate-800 px-2.5 py-1 rounded-md shadow-2xs transition-colors self-start sm:self-auto cursor-pointer flex items-center space-x-1"
+                    >
+                      <span>{showVisitHistory ? 'Hide Visits' : `View ${selectedResidentVisits.length} Visits`}</span>
+                    </button>
+                  </div>
+
+                  {showVisitHistory && (
+                    <div className="mt-1.5 pt-2 border-t border-emerald-200/60 dark:border-emerald-800/60 overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="text-[10px] text-emerald-800 dark:text-emerald-300 border-b border-emerald-200/50 dark:border-emerald-800/50 font-semibold">
+                            <th className="pb-1 pr-3">Visit ID</th>
+                            <th className="pb-1 px-3">Building &amp; Unit</th>
+                            <th className="pb-1 px-3">Move-In / Move-Out</th>
+                            <th className="pb-1 px-3">Company &amp; Dept</th>
+                            <th className="pb-1 px-3">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-emerald-100 dark:divide-emerald-900/40 text-[10px]">
+                          {selectedResidentVisits.map((v, vIdx) => {
+                            const isCurrent = v.id === selectedRow?.id;
+                            return (
+                              <tr key={v.id || vIdx} className={isCurrent ? 'bg-emerald-100/50 dark:bg-emerald-900/30' : ''}>
+                                <td className="py-1.5 pr-3 font-mono font-medium text-slate-700 dark:text-slate-300">
+                                  {v.id || `VISIT-${vIdx + 1}`}
+                                  {isCurrent && (
+                                    <span className="ml-1 px-1 py-0.2 text-[8px] bg-emerald-600 text-white rounded font-sans font-bold">
+                                      Primary
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-1.5 px-3 text-slate-800 dark:text-slate-200">
+                                  Bldg {v.buildingNo || v.house || 'N/A'} • Unit {v.unitNo || v.room || 'N/A'} {v.unitSerialNo ? `(${v.unitSerialNo})` : ''}
+                                </td>
+                                <td className="py-1.5 px-3 text-slate-600 dark:text-slate-400">
+                                  {v.moveInDate || 'N/A'} {v.moveOutDate ? `→ ${v.moveOutDate}` : ''}
+                                </td>
+                                <td className="py-1.5 px-3 text-slate-600 dark:text-slate-400">
+                                  {v.company || 'N/A'} ({v.department || 'N/A'})
+                                </td>
+                                <td className="py-1.5 pl-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedRow(v);
+                                      setFormValues({ ...EMPTY_BLANK_FROM_ROW, ...v });
+                                      ToastService.hub(`Loaded specific visit: Unit ${v.unitNo || v.room || 'N/A'}`);
+                                    }}
+                                    className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-semibold cursor-pointer"
+                                  >
+                                    Load this single record
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      <div className="mt-1.5 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const merged = consolidateResidentVisits(selectedResidentVisits, selectedRow || selectedResidentVisits[0]);
+                            setFormValues(merged);
+                            ToastService.hub('Restored consolidated auto-merged profile!');
+                          }}
+                          className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/50 hover:bg-emerald-200 px-2 py-0.5 rounded transition cursor-pointer"
+                        >
+                          Re-apply Full Smart Merged Profile
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Compact Information Ribbon (All 6 Data Points, Minimal Height) */}
+              <div className="bg-slate-50/70 dark:bg-slate-800/40 rounded-lg py-1.5 px-2.5 border border-slate-200/60 dark:border-slate-800 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
+                <div className="min-w-0">
+                  <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">BUILDING</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block text-xs">
+                    {formValues.buildingNo || formValues.house || 'N/A'}
+                  </span>
+                </div>
+
+                <div className="min-w-0">
+                  <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">UNIT / ROOM</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block text-xs">
+                    {formValues.unitNo || formValues.room || 'N/A'}
+                  </span>
+                </div>
+
+                <div className="min-w-0">
+                  <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">UNIT SERIAL NO</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block text-xs">
+                    {formValues.unitSerialNo || 'N/A'}
+                  </span>
+                </div>
+
+                <div className="min-w-0">
+                  <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">NATIONAL ID / IQAMA</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block text-xs">
+                    {formValues.idIqama || 'N/A'}
+                  </span>
+                </div>
+
+                <div className="min-w-0">
+                  <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">MOBILE</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block text-xs">
+                    {formValues.mobile || 'N/A'}
+                  </span>
+                </div>
+
+                <div className="min-w-0">
+                  <span className="text-[9px] font-semibold text-slate-400 uppercase tracking-wider block">STAY DATES</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 truncate block text-xs">
+                    {formValues.moveInDate || '8/24/2026'} - {formValues.moveOutDate || '8/26/2026'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Optional Collapsible Field Customizer */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingFields(!isEditingFields)}
+                  className="text-[11px] font-medium text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 inline-flex items-center gap-1 transition cursor-pointer"
+                >
+                  <Edit3 className="w-3 h-3" />
+                  <span>{isEditingFields ? 'Hide Field Customizer' : 'Customize Form Fields Before Downloading (Optional)'}</span>
+                </button>
+
+                {isEditingFields && (
+                  <div className="mt-2.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 text-xs">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Building No</label>
+                      <input
+                        type="text"
+                        value={formValues.buildingNo || ''}
+                        onChange={(e) => handleFieldChange('buildingNo', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Unit / Room No</label>
+                      <input
+                        type="text"
+                        value={formValues.unitNo || ''}
+                        onChange={(e) => handleFieldChange('unitNo', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Resident Name</label>
+                      <input
+                        type="text"
+                        value={formValues.name || ''}
+                        onChange={(e) => handleFieldChange('name', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Employment ID</label>
+                      <input
+                        type="text"
+                        value={formValues.employmentId || ''}
+                        onChange={(e) => handleFieldChange('employmentId', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Check In Date</label>
+                      <input
+                        type="text"
+                        value={formValues.moveInDate || ''}
+                        onChange={(e) => handleFieldChange('moveInDate', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Check Out Date</label>
+                      <input
+                        type="text"
+                        value={formValues.moveOutDate || ''}
+                        onChange={(e) => handleFieldChange('moveOutDate', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Contract Start Date</label>
+                      <input
+                        type="text"
+                        value={formValues.contractStartDate || formValues.moveInDate || ''}
+                        onChange={(e) => handleFieldChange('contractStartDate', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Contract End Date</label>
+                      <input
+                        type="text"
+                        value={formValues.contractEndDate || formValues.moveOutDate || ''}
+                        onChange={(e) => handleFieldChange('contractEndDate', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Property Name</label>
+                      <input
+                        type="text"
+                        value={formValues.propertyName || formValues.property || 'TBCV'}
+                        onChange={(e) => {
+                          handleFieldChange('propertyName', e.target.value);
+                          handleFieldChange('property', e.target.value);
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Program (Division)</label>
+                      <input
+                        type="text"
+                        value={formValues.division || ''}
+                        onChange={(e) => handleFieldChange('division', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Assigned Asset</label>
+                      <input
+                        type="text"
+                        value={formValues.asset || ''}
+                        onChange={(e) => handleFieldChange('asset', e.target.value)}
+                        placeholder="e.g. Coastal Village"
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">National ID / Iqama</label>
+                      <input
+                        type="text"
+                        value={formValues.idIqama || ''}
+                        onChange={(e) => handleFieldChange('idIqama', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">ID / Iqama Expiry Date</label>
+                      <input
+                        type="date"
+                        value={formValues.idExpiryDate || ''}
+                        onChange={(e) => handleFieldChange('idExpiryDate', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Passport Number</label>
+                      <input
+                        type="text"
+                        value={formValues.passport || ''}
+                        onChange={(e) => handleFieldChange('passport', e.target.value)}
+                        placeholder="e.g. N1234567"
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Passport Expiry Date</label>
+                      <input
+                        type="date"
+                        value={formValues.passportExpiryDate || ''}
+                        onChange={(e) => handleFieldChange('passportExpiryDate', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 block mb-1">Mobile No</label>
+                      <input
+                        type="text"
+                        value={formValues.mobile || ''}
+                        onChange={(e) => handleFieldChange('mobile', e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="py-4 text-center text-xs text-slate-400 space-y-1">
+              <User className="w-6 h-6 mx-auto text-slate-300 dark:text-slate-600" />
+              <p className="font-bold text-slate-700 dark:text-slate-300">No resident selected</p>
+              <p className="text-[11px] text-slate-500">
+                Filter and click any resident from the table below to generate the official Move-In & Move-Out Form.
+              </p>
+            </div>
           )}
         </div>
 
-        {/* The Filter Grid: Building -> Unit -> Category -> Text Search */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5">
-          {/* Building Filter Dropdown */}
-          <div className="lg:col-span-3 space-y-1">
-            <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
-              <Building className="w-3 h-3 text-slate-400" />
-              <span>Building</span>
-            </label>
-            <div className="relative">
-              <select
-                value={selectedBuilding}
-                onChange={(e) => handleBuildingChange(e.target.value)}
-                className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
-              >
-                <option value="ALL">All Buildings ({buildingOptions.length} bldgs / {rows.length} total)</option>
-                {buildingOptions.map((b) => (
-                  <option key={`bldg-${b.building}`} value={b.building}>
-                    Building {b.building} ({b.count} {b.count === 1 ? 'resident' : 'residents'})
-                  </option>
-                ))}
-              </select>
+        {/* Part 3: Directory Filters & Search Toolbar (Integrated Pro Bar) */}
+        <div className="p-2.5 bg-slate-50/50 dark:bg-slate-900/40 space-y-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <SlidersHorizontal className="w-3 h-3 text-slate-500 dark:text-slate-400" />
+              <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                Directory Filters
+              </h3>
+              <span className="text-[10px] text-slate-500 font-semibold bg-slate-100 dark:bg-slate-800 px-1.5 py-0.2 rounded">
+                {filteredResults.length.toLocaleString()} matching
+              </span>
             </div>
-          </div>
 
-          {/* Unit Filter Dropdown (Cascading) */}
-          <div className="lg:col-span-3 space-y-1">
-            <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
-              <Layers className="w-3 h-3 text-slate-400" />
-              <span>Unit / Room</span>
-            </label>
-            <div className="relative">
-              <select
-                value={selectedUnit}
-                onChange={(e) => {
-                  setSelectedUnit(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
-              >
-                <option value="ALL">
-                  {selectedBuilding !== 'ALL'
-                    ? `All Units in Bldg ${selectedBuilding} (${unitOptions.length} units)`
-                    : `All Units (${unitOptions.length} units)`}
-                </option>
-                {unitOptions.map((u) => (
-                  <option key={`unit-${u.unit}`} value={u.unit}>
-                    Unit {u.unit} ({u.count} {u.count === 1 ? 'resident' : 'residents'})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Property Type Filter */}
-          <div className="lg:col-span-2 space-y-1">
-            <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
-              <Filter className="w-3 h-3 text-slate-400" />
-              <span>Property Type</span>
-            </label>
-            <select
-              value={categoryFilter}
-              onChange={(e) => {
-                setCategoryFilter(e.target.value as any);
-                setCurrentPage(1);
-              }}
-              className="w-full pl-3 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer"
-            >
-              <option value="ALL">All Categories</option>
-              <option value="Executive">Executive</option>
-              <option value="Senior">Senior</option>
-              <option value="Junior">Junior</option>
-              <option value="Worker">Worker</option>
-            </select>
-          </div>
-
-          {/* Quick Search Input */}
-          <div className="lg:col-span-4 space-y-1">
-            <label className="text-[11px] font-medium text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
-              <Search className="w-3 h-3 text-slate-400" />
-              <span>Quick Search</span>
-            </label>
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search name, ID, Iqama, passport, mobile..."
-                className="w-full pl-8 pr-8 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Active Filter Chips */}
-        {isFilterActive && (
-          <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 dark:border-slate-800 text-[11px]">
-            <span className="text-slate-400 font-medium mr-1">Active Filters:</span>
-
-            {selectedBuilding !== 'ALL' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
-                Building: {selectedBuilding}
-                <button
-                  type="button"
-                  onClick={() => handleBuildingChange('ALL')}
-                  className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
-                >
-                  ✕
-                </button>
-              </span>
-            )}
-
-            {selectedUnit !== 'ALL' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
-                Unit: {selectedUnit}
-                <button
-                  type="button"
-                  onClick={() => setSelectedUnit('ALL')}
-                  className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
-                >
-                  ✕
-                </button>
-              </span>
-            )}
-
-            {categoryFilter !== 'ALL' && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
-                Category: {categoryFilter}
-                <button
-                  type="button"
-                  onClick={() => setCategoryFilter('ALL')}
-                  className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
-                >
-                  ✕
-                </button>
-              </span>
-            )}
-
-            {searchQuery && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
-                Search: &ldquo;{searchQuery}&rdquo;
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
-                >
-                  ✕
-                </button>
-              </span>
-            )}
-
-            {newlyAddedIds.size > 0 && (
+            {/* Reset Filters Action */}
+            {isFilterActive && (
               <button
                 type="button"
-                onClick={() => setShowOnlyNewlyAdded(!showOnlyNewlyAdded)}
-                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                  showOnlyNewlyAdded
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100'
-                }`}
+                onClick={handleResetFilters}
+                className="text-[10px] font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 flex items-center space-x-1 cursor-pointer transition self-end sm:self-auto"
               >
-                <Sparkles className="w-3 h-3" />
-                <span>{showOnlyNewlyAdded ? 'Showing Newly Added Only' : `Show Newly Added (${newlyAddedIds.size})`}</span>
-                {showOnlyNewlyAdded && (
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowOnlyNewlyAdded(false);
-                    }}
-                    className="ml-1 hover:text-emerald-200"
-                  >
-                    ✕
-                  </span>
-                )}
+                <RotateCcw className="w-3 h-3" />
+                <span>Reset Filters</span>
               </button>
             )}
-
-            <button
-              type="button"
-              onClick={handleResetFilters}
-              className="text-[11px] text-blue-600 hover:underline font-semibold ml-2 cursor-pointer"
-            >
-              Clear all
-            </button>
           </div>
-        )}
+
+          {/* The Filter Grid: Compact 4-Control Toolbar */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2">
+            {/* Building Filter Dropdown */}
+            <div className="lg:col-span-3">
+              <label className="text-[10px] font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1 mb-0.5">
+                <Building className="w-3 h-3 text-slate-400" />
+                <span>Building</span>
+              </label>
+              <div className="relative">
+                <select
+                  value={selectedBuilding}
+                  onChange={(e) => handleBuildingChange(e.target.value)}
+                  className="w-full h-7.5 pl-2.5 pr-7 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                >
+                  <option value="ALL">All Buildings ({buildingOptions.length} bldgs / {rows.length} total)</option>
+                  {buildingOptions.map((b) => (
+                    <option key={`bldg-${b.building}`} value={b.building}>
+                      Building {b.building} ({b.count} {b.count === 1 ? 'resident' : 'residents'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Unit Filter Dropdown (Cascading) */}
+            <div className="lg:col-span-3">
+              <label className="text-[10px] font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1 mb-0.5">
+                <Layers className="w-3 h-3 text-slate-400" />
+                <span>Unit / Room</span>
+              </label>
+              <div className="relative">
+                <select
+                  value={selectedUnit}
+                  onChange={(e) => {
+                    setSelectedUnit(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-full h-7.5 pl-2.5 pr-7 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                >
+                  <option value="ALL">
+                    {selectedBuilding !== 'ALL'
+                      ? `All Units in Bldg ${selectedBuilding} (${unitOptions.length} units)`
+                      : `All Units (${unitOptions.length} units)`}
+                  </option>
+                  {unitOptions.map((u) => (
+                    <option key={`unit-${u.unit}`} value={u.unit}>
+                      Unit {u.unit} ({u.count} {u.count === 1 ? 'resident' : 'residents'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Property Type Filter */}
+            <div className="lg:col-span-2">
+              <label className="text-[10px] font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1 mb-0.5">
+                <Filter className="w-3 h-3 text-slate-400" />
+                <span>Property Type</span>
+              </label>
+              <select
+                value={categoryFilter}
+                onChange={(e) => {
+                  setCategoryFilter(e.target.value as any);
+                  setCurrentPage(1);
+                }}
+                className="w-full h-7.5 pl-2.5 pr-7 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+              >
+                <option value="ALL">All Categories</option>
+                <option value="Executive">Executive</option>
+                <option value="Senior">Senior</option>
+                <option value="Junior">Junior</option>
+                <option value="Worker">Worker</option>
+              </select>
+            </div>
+
+            {/* Quick Search Input */}
+            <div className="lg:col-span-4">
+              <label className="text-[10px] font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1 mb-0.5">
+                <Search className="w-3 h-3 text-slate-400" />
+                <span>Quick Search</span>
+              </label>
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search name, ID, Iqama, passport, mobile..."
+                  className="w-full h-7.5 pl-8 pr-7 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Active Filter Chips */}
+          {isFilterActive && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/50 dark:border-slate-800 text-[11px]">
+              <span className="text-slate-400 font-medium mr-1">Active Filters:</span>
+
+              {selectedBuilding !== 'ALL' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
+                  Building: {selectedBuilding}
+                  <button
+                    type="button"
+                    onClick={() => handleBuildingChange('ALL')}
+                    className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+
+              {selectedUnit !== 'ALL' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
+                  Unit: {selectedUnit}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedUnit('ALL')}
+                    className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+
+              {categoryFilter !== 'ALL' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
+                  Category: {categoryFilter}
+                  <button
+                    type="button"
+                    onClick={() => setCategoryFilter('ALL')}
+                    className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+
+              {searchQuery && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
+                  Search: &ldquo;{searchQuery}&rdquo;
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="hover:text-slate-950 dark:hover:text-white cursor-pointer ml-1 font-bold"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+
+              {newlyAddedIds.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowOnlyNewlyAdded(!showOnlyNewlyAdded)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                    showOnlyNewlyAdded
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-emerald-50 text-emerald-800 border border-emerald-300 hover:bg-emerald-100'
+                  }`}
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>{showOnlyNewlyAdded ? 'Showing Newly Added Only' : `Show Newly Added (${newlyAddedIds.size})`}</span>
+                  {showOnlyNewlyAdded && (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowOnlyNewlyAdded(false);
+                      }}
+                      className="ml-1 hover:text-emerald-200"
+                    >
+                      ✕
+                    </span>
+                  )}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="text-[11px] text-blue-600 hover:underline font-semibold ml-2 cursor-pointer"
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* EXCEL-STYLE INTERACTIVE DATA TABLE */}

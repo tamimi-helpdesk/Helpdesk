@@ -237,6 +237,54 @@ export const FacilityDocumentPrintModal: React.FC<FacilityDocumentPrintModalProp
       id="facility-doc-print-modal"
       className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/85 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200"
     >
+      <style>{`
+        @media print {
+          body > *:not(#facility-doc-print-modal) {
+            display: none !important;
+          }
+          #facility-doc-print-modal {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            background: #ffffff !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: visible !important;
+            z-index: 99999 !important;
+          }
+          #facility-doc-print-modal > div {
+            max-width: 100% !important;
+            border: none !important;
+            box-shadow: none !important;
+            background: #ffffff !important;
+            overflow: visible !important;
+          }
+          #facility-doc-print-modal > div > div:first-child {
+            display: none !important;
+          }
+          #facility-doc-print-modal > div > div:nth-child(2) {
+            background: #ffffff !important;
+            padding: 0 !important;
+            overflow: visible !important;
+          }
+          #printable-a4-sheet {
+            box-shadow: none !important;
+            border: 1px solid #cbd5e1 !important;
+            margin: 0 auto !important;
+            width: 100% !important;
+            max-width: 210mm !important;
+            page-break-inside: avoid !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          img {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            max-width: 100% !important;
+          }
+        }
+      `}</style>
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -407,6 +455,34 @@ export const FacilityDocumentPrintModal: React.FC<FacilityDocumentPrintModalProp
                         <div className="flex justify-between items-center py-0.5 text-emerald-800 font-bold border-b border-slate-100">
                           <span>Actual Return Timestamp:</span>
                           <span className="font-mono">{handoverData.actualReturnDate}</span>
+                        </div>
+                      )}
+
+                      {/* Attached Item Photo Evidence in Particulars Block */}
+                      {handoverData.photoUrl && (
+                        <div className="mt-2 pt-2 border-t border-slate-200 flex items-center gap-2.5 bg-white p-2 rounded-lg border border-slate-200/90 shadow-2xs">
+                          <div
+                            onClick={() => setPhotoZoomOpen(true)}
+                            className="relative w-16 h-14 rounded-md border-2 border-slate-300 overflow-hidden bg-slate-100 shrink-0 cursor-pointer shadow-2xs hover:border-cyan-600 transition"
+                            title="Click to zoom attached photo"
+                          >
+                            <img
+                              src={handoverData.photoUrl}
+                              alt={handoverData.itemName || 'Attached item photo'}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-black/30 opacity-0 hover:opacity-100 flex items-center justify-center transition">
+                              <Eye className="w-3.5 h-3.5 text-white" />
+                            </div>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[9px] font-black uppercase tracking-wider text-cyan-800 bg-cyan-50 px-1.5 py-0.5 rounded border border-cyan-200 inline-block">
+                              Attached Item Photo
+                            </span>
+                            <span className="text-[10px] text-slate-700 font-semibold block mt-0.5 truncate">
+                              Physical asset recorded at handover
+                            </span>
+                          </div>
                         </div>
                       )}
                     </div>

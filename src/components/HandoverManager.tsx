@@ -217,6 +217,32 @@ export const HandoverManager: React.FC<HandoverManagerProps> = ({ onRefresh }) =
     setIsFormModalOpen(true);
   };
 
+  // On-mount: pull authoritative handovers from server hub to prevent data loss across refreshes
+  useEffect(() => {
+    fetch('/api/hub/state')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && data.success && Array.isArray(data.handovers) && data.handovers.length > 0) {
+          const localList = StorageService.getHandoverRecords();
+          const map = new Map<string, HandoverItemRecord>();
+          localList.forEach((item) => {
+            if (item && item.id) map.set(String(item.id).toLowerCase().trim(), item);
+          });
+          data.handovers.forEach((item: HandoverItemRecord) => {
+            if (item && item.id) {
+              const key = String(item.id).toLowerCase().trim();
+              const prev = map.get(key);
+              map.set(key, prev ? { ...item, photoUrl: item.photoUrl || prev.photoUrl } : item);
+            }
+          });
+          const merged = Array.from(map.values());
+          StorageService.saveHandoverRecords(merged);
+          setRecords(merged);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Submit Save
   const handleSaveForm = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -248,6 +274,23 @@ export const HandoverManager: React.FC<HandoverManagerProps> = ({ onRefresh }) =
         photoUrl: formData.photoUrl || '',
         status: selectedRecord ? selectedRecord.status : (formData.type === 'TAKEN_IN' ? 'IN_CUSTODY_HOLDING' : 'ACTIVE_BORROWED'),
       });
+
+      // 1. Instantly push to server hub and database to ensure permanent durability across devices
+      try {
+        await fetch('/api/hub/mutate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            mutationType: 'UPSERT',
+            entity: 'handovers',
+            id: savedRecord.id,
+            data: savedRecord,
+          }),
+        });
+      } catch (hubErr) {
+        console.warn('Notice syncing handover to central server:', hubErr);
+      }
 
       // Reset filters so the new record is prominently visible in the list immediately
       setTypeFilter('ALL');
@@ -282,14 +325,33 @@ export const HandoverManager: React.FC<HandoverManagerProps> = ({ onRefresh }) =
     if (!selectedRecord) return;
     const newStatus = selectedRecord.type === 'TAKEN_IN' ? 'CLAIMED_PICKED_UP' : 'RETURNED';
     
+    // Retain original photoUrl and save returnSignature to secondaryPhotoUrl without destroying proof photo
     const updatedRecord = StorageService.saveHandoverRecord({
       ...selectedRecord,
       status: newStatus,
       actualReturnDate: getTodayDateString(),
       condition: returnCondition,
-      photoUrl: returnSignature || selectedRecord.photoUrl,
+      photoUrl: selectedRecord.photoUrl || '',
+      secondaryPhotoUrl: returnSignature || selectedRecord.secondaryPhotoUrl || '',
       notes: selectedRecord.notes ? `${selectedRecord.notes} | Returned on ${getTodayDateString()}: ${returnNotes || 'Satisfactory condition'}` : `Returned: ${returnNotes || 'Good condition'}`,
     });
+
+    // Push update to central server hub
+    try {
+      await fetch('/api/hub/mutate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          mutationType: 'UPSERT',
+          entity: 'handovers',
+          id: updatedRecord.id,
+          data: updatedRecord,
+        }),
+      });
+    } catch (hubErr) {
+      console.warn('Notice syncing return to central server:', hubErr);
+    }
 
     // Push update to Google Sheets
     GasService.pushHandoverToRemote(updatedRecord).catch((err) =>
@@ -319,7 +381,23 @@ export const HandoverManager: React.FC<HandoverManagerProps> = ({ onRefresh }) =
       StorageService.deleteHandoverRecord(idToDelete);
       setRecords([...StorageService.getHandoverRecords()]);
 
-      // 2. Delete from Google Sheets
+      // 2. Delete from central server hub
+      try {
+        await fetch('/api/hub/mutate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            mutationType: 'DELETE',
+            entity: 'handovers',
+            id: idToDelete,
+          }),
+        });
+      } catch (hubErr) {
+        console.warn('Notice syncing delete to central server:', hubErr);
+      }
+
+      // 3. Delete from Google Sheets
       await GasService.deleteHandoverFromRemote(idToDelete);
 
       if (onRefresh) onRefresh();
