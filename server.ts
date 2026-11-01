@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import crypto from 'crypto';
 import { isResourceOrStageMatch, getCanonicalResourceName } from './src/utils/resourceMatching.ts';
+import { handlePrintDocument } from './src/serverPrintDocument.ts';
 
 export const app = express();
 const PORT = process.env.PORT && process.env.PORT !== '8080' ? parseInt(process.env.PORT, 10) : 3000;
@@ -1338,6 +1339,14 @@ app.get('/api/hub/isolation-history', requireAuth(['Super Administrator', 'Admin
     count: historyList.length,
     history: historyList,
   });
+});
+
+// 2.6 Dedicated Standalone Document Print Engine
+app.get('/api/documents/print/:type/:id', (req: Request, res: Response) => {
+  return handlePrintDocument(req, res, hubState);
+});
+app.get('/api/documents/print/:type', (req: Request, res: Response) => {
+  return handlePrintDocument(req, res, hubState);
 });
 
 // Authentication Endpoints
