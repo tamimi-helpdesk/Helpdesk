@@ -134,7 +134,15 @@ export const FacilityDocumentPrintModal: React.FC<FacilityDocumentPrintModalProp
   };
 
   const handlePrint = () => {
-    window.print();
+    const scrollContainer = document.getElementById('facility-doc-print-modal-scroll');
+    if (scrollContainer) scrollContainer.scrollTop = 0;
+    const modalContainer = document.getElementById('facility-doc-print-modal');
+    if (modalContainer) modalContainer.scrollTop = 0;
+    window.scrollTo(0, 0);
+
+    setTimeout(() => {
+      window.print();
+    }, 50);
   };
 
   return (
@@ -205,12 +213,12 @@ export const FacilityDocumentPrintModal: React.FC<FacilityDocumentPrintModalProp
         </div>
 
         {/* Modal Scrollable Body - Live A4 Page Preview */}
-        <div className="p-3 sm:p-6 overflow-y-auto flex-1 flex flex-col items-center bg-slate-300/60 dark:bg-slate-950/80">
+        <div id="facility-doc-print-modal-scroll" className="p-3 sm:p-6 overflow-y-auto flex-1 flex flex-col items-center bg-slate-300/60 dark:bg-slate-950/80">
           
           {/* Printable A4 Canvas Container */}
           <div
             id="printable-a4-sheet"
-            className="bg-white text-slate-900 w-full max-w-[210mm] p-5 sm:p-6 rounded-xl shadow-2xl border border-slate-300 flex flex-col justify-between space-y-3 font-sans text-xs min-h-[280mm] sm:min-h-[282mm] box-border"
+            className="bg-white text-slate-900 w-full max-w-[210mm] p-4 sm:p-5 rounded-xl shadow-2xl border border-slate-300 flex flex-col justify-start space-y-2.5 font-sans text-xs box-border print:m-0 print:p-4 print:shadow-none print:border-slate-300 print:w-full print:max-w-[195mm]"
           >
             {/* 1. Official Bilingual Company Header with Gold Logo */}
             <div className="border-b-2 border-slate-950 pb-2.5 shrink-0">
